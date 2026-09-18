@@ -27,8 +27,11 @@ odin check src/<package> -no-entry-point -vet -strict-style
 # package tests: unit tests of src/<package> live in tests/<package>/
 odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style
 
-# runtime object (from T1.5)
-odin build src/runtime -build-mode:obj -out:dist/tsnc_rt-<target>.obj -vet -strict-style
+# runtime subpackage tests: src/runtime/<package> is tested in tests/runtime/<package>/
+odin test tests/runtime/<package> -out:dist/runtime-<package>-tests.exe -vet -strict-style
+
+# runtime object; without -use-single-module Odin writes one .obj per package
+odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style
 
 # test runs (smoke from T1.8, negative from T2.9, diff from T4.7)
 odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff
