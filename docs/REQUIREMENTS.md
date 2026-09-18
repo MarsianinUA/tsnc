@@ -5,7 +5,7 @@ Version 0.1 · September 15, 2026 · status: agreed (13-question interview, cros
 ## 0. Summary in six points
 
 - `tsnc` compiles a statically typed subset of TypeScript directly to machine code, like Go or Clang. It does not generate or support JavaScript.
-- Written in Odin. LLVM 20 backend through the LLVM-C API, linking with LLD; both are already in the Odin distribution (`E:\Odin\dist`).
+- Written in Odin. LLVM 20 backend through the LLVM-C API, already in the Odin distribution (`E:\Odin\dist`). Linking goes through LLD from the same distribution on Windows and through the system C compiler on Linux and macOS, as Odin itself does.
 - TypeScript is the single source of truth. Whatever cannot be compiled honestly and fast produces a compile error with file and line. There are no silent workarounds.
 - Runtime in Odin: its own garbage collector (mark-sweep, without moving objects), UTF-16 strings, tagged values for `any` and union.
 - The compiler is multithreaded: parsing and type checking run in parallel from the first version, code generation from the second.
@@ -125,12 +125,12 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 3. **Semantic analysis.** Name and module resolution, type checking and inference (section 5), union narrowing, subset checking. The result is a typed AST.
 4. **Custom IR.** A low-level representation with explicit layouts, tags, and runtime calls. The place for custom optimizations (v2: integer narrowing, escape analysis for closures, objects, and arrays: a value that does not leave its function goes on the stack or splits into separate variables and never reaches the GC heap).
 5. **Code generation.** IR → LLVM IR through the LLVM-C API in memory, not as text. LLVM optimizations through the new pass manager (`LLVMRunPasses`, pipelines `default<O2>` / `default<O3>`). Object file through `LLVMTargetMachineEmitToFile`.
-6. **Linking.** LLD from the Odin distribution (`lld-link`, `ld.lld`, `ld64.lld` are one binary with a flavor choice). It links the program object file, the runtime object file, and system libraries. Flags come from `odin build -print-linker-flags`.
+6. **Linking.** On Windows, `lld-link` from the Odin distribution. On Linux and macOS, the system C compiler (`cc`) as the linker driver, as Odin and Rust do: only it knows where the C runtime startup files, the dynamic loader, and the SDK live on a given machine. It links the program object file, the runtime object file, and system libraries. Flags come from `odin build -print-linker-flags`.
 
 ### 4.2 LLVM
 - The LLVM version is pinned: 20.x, the same `LLVM-C.dll` that ships with Odin. Changing the major version is a separate task.
 - The LLVM-C bindings are our own: generated from the LLVM 20 headers with `odin-c-bindgen` or written by hand for the needed subset. No suitable ready-made bindings exist: the existing ones target LLVM 17 and 22, and the API changed between versions (opaque pointers, removal of the legacy pass manager, `LLVMConst*`).
-- The project's first smoke test: "hello world" built through the bindings into an object file and linked with LLD.
+- The project's first smoke test: "hello world" built through the bindings into an object file and linked into an executable.
 - The `-emit-llvm` flag outputs textual LLVM IR for debugging.
 
 ### 4.3 Runtime
@@ -146,7 +146,7 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 
 General rule: the project reuses `core` wherever it conflicts with neither the GC heap nor ECMAScript semantics. The compiler and the runtime follow different defaults, because they work with memory in different ways.
 
-**The compiler uses `core` freely.** It is an ordinary Odin application, and there is no reason to hide the standard library from it. Key packages: `core:mem/virtual` (the growing arenas of section 4.4), `core:thread` (section 8), `core:flags` (Odin-style CLI, section 9), `core:container/topological_sort` (module initialization order and import-graph partitions for the checkers), `core:strings`, `core:slice`, `core:hash` (name interning), `core:fmt` and `core:log` (diagnostics), `core:os` (files, running LLD and Node in tests). The frontend's structure follows `core:odin` (`tokenizer`, `parser`, `ast`): the code is not reused, since the language is different, but the AST layout in an arena and the positions inside tokens work the same way.
+**The compiler uses `core` freely.** It is an ordinary Odin application, and there is no reason to hide the standard library from it. Key packages: `core:mem/virtual` (the growing arenas of section 4.4), `core:thread` (section 8), `core:flags` (Odin-style CLI, section 9), `core:container/topological_sort` (module initialization order and import-graph partitions for the checkers), `core:strings`, `core:slice`, `core:hash` (name interning), `core:fmt` and `core:log` (diagnostics), `core:os` (files, running the linker, and Node in tests). The frontend's structure follows `core:odin` (`tokenizer`, `parser`, `ast`): the code is not reused, since the language is different, but the AST layout in an arena and the positions inside tokens work the same way.
 
 **The runtime uses `core` along the memory-ownership boundary.** All of `core` is built on explicit allocators: what it creates belongs to the caller, and the collector does not trace it. Hence the rule:
 - everything that **holds references to TS values** lives in the GC heap, and the project writes it: objects, array buffers, closures, string cells, `Map` and `Set` hash tables (v2). The runtime never uses Odin's built-in `map` and `[dynamic]` for program data: the collector would not see references inside them;
@@ -210,7 +210,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 
 ## 9. Platforms, CLI, artifacts
 
-- Target platforms: Windows x64, Linux x64, macOS arm64 and x64. The compiler and the runtime are portable and build natively on each OS; the target is a parameter (target triple, LLD flavor, runtime OS layer through `core:os`). v2 adds WebAssembly through WASI (`wasm32-wasi`, linking with `wasm-ld`).
+- Target platforms: Windows x64, Linux x64, macOS arm64 and x64. The compiler and the runtime are portable and build natively on each OS; the target is a parameter (target triple, linker, runtime OS layer through `core:os`). v2 adds WebAssembly through WASI (`wasm32-wasi`, linking with `wasm-ld`).
 - Cross-compilation is out of scope for v1: Linux from Windows becomes reachable in v2 through `ld.lld` from the Odin distribution and a sysroot or static musl, without third-party tools; macOS requires the Apple SDK and signing, native build only.
 - Testing on three OSes through GitHub Actions: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64), `macos-26-intel` (x64).
 - CLI modeled on Odin:
@@ -226,7 +226,7 @@ tsnc build src/main.ts -target:linux_amd64 -j:8     # target and number of threa
 ```
 
 - Artifacts: an executable; on request, an object file, textual LLVM IR, and a custom IR dump. Debug info (PDB / DWARF) in v2.
-- Third-party tools: only LLVM and LLD from the Odin distribution. Only the tests need Node and `tsc`, as a reference; they take no part in the build.
+- Third-party tools: LLVM and LLD from the Odin distribution, plus the system C compiler on Linux and macOS for linking (Odin needs it there too). Only the tests need Node and `tsc`, as a reference; they take no part in the build.
 
 ## 10. Quality and verification
 
@@ -238,7 +238,7 @@ tsnc build src/main.ts -target:linux_amd64 -j:8     # target and number of threa
 - **GC stress mode.** A runtime flag that runs a collection on every allocation and checks heap integrity after each collection. The differential tests also run in this mode.
 - **AddressSanitizer.** A separate CI test run builds the runtime with `-sanitize:address`.
 - **Benchmarks.** A set of programs (numeric loops, strings, arrays of objects, closures, allocations) against Node and Go equivalents, plus startup time and exe size for hello world. The repository records results per version, with no hard limits.
-- **Infrastructure smoke test.** "Hello world" through the LLVM-C bindings and LLD, runs in CI on three OSes.
+- **Infrastructure smoke test.** "Hello world" through the LLVM-C bindings and the linker, runs in CI on three OSes.
 - **v1 acceptance criterion.** The reference set of programs in the v1 subset passes the differential tests on Windows, Linux, and macOS in CI; the GC survives a stress test with allocations and closures in a loop without leaks or crashes.
 
 ## 11. Non-functional requirements
