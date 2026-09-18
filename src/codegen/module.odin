@@ -54,7 +54,8 @@ add_hello_world :: proc(ctx: llvm.LLVMContextRef, module: llvm.LLVMModuleRef) {
 }
 
 // declare_runtime declares every export of abi.RUNTIME_EXPORTS, so generated code calls the runtime
-// by the symbols and signatures the runtime exports.
+// by the symbols and signatures the runtime exports. A diverging export is noreturn, so LLVM treats
+// the code after its call as unreachable.
 @(private)
 declare_runtime :: proc(
 	ctx: llvm.LLVMContextRef,
@@ -62,6 +63,12 @@ declare_runtime :: proc(
 ) -> (
 	functions: [abi.Runtime_Proc]Runtime_Function,
 ) {
+	NORETURN :: "noreturn"
+	noreturn := llvm.LLVMCreateEnumAttribute(
+		ctx,
+		llvm.LLVMGetEnumAttributeKindForName(NORETURN, len(NORETURN)),
+		0,
+	)
 	exports := abi.RUNTIME_EXPORTS
 	for export, id in exports {
 		params := make([]llvm.LLVMTypeRef, len(export.params), context.temp_allocator)
@@ -75,7 +82,11 @@ declare_runtime :: proc(
 			false,
 		)
 		symbol := strings.clone_to_cstring(export.symbol, context.temp_allocator)
-		functions[id] = {signature, llvm.LLVMAddFunction(module, symbol, signature)}
+		function := llvm.LLVMAddFunction(module, symbol, signature)
+		if export.diverges {
+			llvm.LLVMAddAttributeAtIndex(function, llvm.LLVMAttributeFunctionIndex, noreturn)
+		}
+		functions[id] = {signature, function}
 	}
 	return
 }

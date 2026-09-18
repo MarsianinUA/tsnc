@@ -19,9 +19,11 @@ Runtime_Proc :: enum u8 {
 }
 
 Runtime_Export :: struct {
-	symbol: string,
-	params: []C_Type,
-	result: C_Type,
+	symbol:   string,
+	params:   []C_Type,
+	result:   C_Type,
+	// The export never returns: the runtime declares it `-> !`, codegen declares it noreturn.
+	diverges: bool,
 }
 
 // RUNTIME_EXPORTS gives each runtime export its symbol and C signature. The runtime names its
@@ -29,7 +31,7 @@ Runtime_Export :: struct {
 // Every symbol starts with `tsnc_` to stay clear of libc and Odin.
 RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Log_String = {symbol = "tsnc_log_string", params = {.Ptr}, result = .Void},
-	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void},
+	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 
 Runtime_Error :: enum i32 {

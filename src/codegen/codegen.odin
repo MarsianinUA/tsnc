@@ -28,11 +28,12 @@ import "../target"
 // compiles nothing of the program yet; T4.4 replaces this with the unit type of package ir.
 Unit :: struct {}
 
-// Optimization uses the names of `tsnc -o:`.
+// Optimization values are lowercase because they are the values of `tsnc -o:`: core:flags matches
+// them against the command line by exact name, and Odin's `-o:` spells them the same way.
 Optimization :: enum u8 {
-	None, // pipeline default<O0>, machine code level None
-	Speed, // pipeline default<O2>, machine code level Default
-	Aggressive, // pipeline default<O3>, machine code level Aggressive
+	none, // pipeline default<O0>, machine code level None
+	speed, // pipeline default<O2>, machine code level Default
+	aggressive, // pipeline default<O3>, machine code level Aggressive
 }
 
 Artifact :: enum u8 {
@@ -166,14 +167,14 @@ emit :: proc(
 
 @(private, rodata)
 PIPELINES := [Optimization]cstring {
-	.None       = "default<O0>",
-	.Speed      = "default<O2>",
-	.Aggressive = "default<O3>",
+	.none       = "default<O0>",
+	.speed      = "default<O2>",
+	.aggressive = "default<O3>",
 }
 
 @(private, rodata)
 MACHINE_CODE_LEVELS := [Optimization]llvm.LLVMCodeGenOptLevel {
-	.None       = .LLVMCodeGenLevelNone,
-	.Speed      = .LLVMCodeGenLevelDefault,
-	.Aggressive = .LLVMCodeGenLevelAggressive,
+	.none       = .LLVMCodeGenLevelNone,
+	.speed      = .LLVMCodeGenLevelDefault,
+	.aggressive = .LLVMCodeGenLevelAggressive,
 }

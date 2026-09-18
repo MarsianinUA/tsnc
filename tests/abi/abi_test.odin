@@ -27,6 +27,15 @@ symbols_start_with_tsnc_prefix :: proc(t: ^testing.T) {
 	}
 }
 
+// Readers index SLOT_SIZE by the slot kind of a field, a value known only at run time.
+@(test)
+slot_size_is_indexed_by_a_variable :: proc(t: ^testing.T) {
+	for kind in abi.Slot_Kind {
+		want := size_of(abi.Tagged) if kind == .Tagged else 8
+		testing.expectf(t, abi.SLOT_SIZE[kind] == want, "%v: %d bytes", kind, abi.SLOT_SIZE[kind])
+	}
+}
+
 @(test)
 symbols_are_distinct :: proc(t: ^testing.T) {
 	exports := abi.RUNTIME_EXPORTS

@@ -20,7 +20,8 @@ log_string :: proc "c" (text: ^abi.String_Cell) {
 	console.log_string(text)
 }
 
-// No temp guard: the process ends inside.
+// No temp guard: the process ends inside. The row tells codegen the same through `diverges`.
+#assert(abi.RUNTIME_EXPORTS[.Fail].diverges)
 @(export, link_name = abi.RUNTIME_EXPORTS[.Fail].symbol)
 fail_at :: proc "c" (site: ^abi.Fail_Site) -> ! {
 	context = export_context()

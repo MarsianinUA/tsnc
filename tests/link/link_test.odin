@@ -22,7 +22,7 @@ RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out
 @(test)
 hello_world_links_and_runs :: proc(t: ^testing.T) {
 	object := "dist/link-hello.obj"
-	emit_err := codegen.emit(codegen.Unit{}, target.HOST, .Speed, .Object, object)
+	emit_err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .Object, object)
 	if !testing.expect_value(t, emit_err, codegen.Error.None) {
 		return
 	}
