@@ -18,7 +18,7 @@ init_llvm :: proc "contextless" () {
 
 V1_TARGETS :: bit_set[target.Target]{.windows_amd64, .linux_amd64, .darwin_arm64, .darwin_amd64}
 
-// T1.7 links dist/hello.obj with the runtime object; dist/hello.ll is the same module as text.
+// dist/hello.obj and dist/hello.ll are the same module as an object file and as text.
 @(test)
 hello_world_writes_object_and_llvm_ir :: proc(t: ^testing.T) {
 	object_err := codegen.emit(codegen.Unit{}, target.HOST, .Speed, .Object, "dist/hello.obj")

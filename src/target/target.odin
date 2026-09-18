@@ -4,8 +4,10 @@ flags, the runtime object name and the pointer size. codegen, link and driver re
 platform knowledge lives in one place. The package imports nothing, not even core.
 
 The link flags follow Odin dev-2026-09-nightly:a2fb372, so the program links the way Odin links
-the runtime object. On Windows they are the output of `odin build -linker:lld -print-linker-flags`:
-Odin runs lld-link. On Linux and macOS Odin, like Rust, runs the system C compiler as the linker
+the runtime object. On Windows Odin runs lld-link, and the flags are the output of
+`odin build -linker:lld -print-linker-flags` plus tsnc's own /noimplib: the runtime object exports
+its procedures to generated code, and for an executable with exports lld-link would also write an
+import library. On Linux and macOS Odin, like Rust, runs the system C compiler as the linker
 driver, because only the C compiler knows where crt1.o, the dynamic loader and the SDK live on a
 given machine. There the flags are what `odin build -print-linker-flags` prints, in clang syntax,
 read from Odin's src/linker.cpp.
@@ -78,6 +80,7 @@ SPECS := #partial [Target]Spec {
 			"/opt:ref",
 			"/subsystem:CONSOLE",
 			"/machine:x64",
+			"/noimplib",
 			"kernel32.lib",
 			"bcrypt.lib",
 		},
