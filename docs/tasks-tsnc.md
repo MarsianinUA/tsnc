@@ -76,7 +76,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T1.2, T1.3, T1.4.
 Done: the package test writes `dist/hello.obj` and `dist/hello.ll`; the module passes the LLVM verifier.
 
-### [ ] T1.7 `link` package
+### [x] T1.7 `link` package
 
 What: run the linker that `target` names (the distribution's `bin/lld-link.exe` on Windows, the system C compiler on Linux and macOS) with the flags from `target`; find the library directories the table leaves out because they depend on the machine (Windows SDK and MSVC); inputs: program object, runtime object (found next to `tsnc.exe`, a parameter overrides the path), system libraries; the linker's stderr inside `Link_Error`.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `link`; [External boundaries](architecture-plan-tsnc.md#external-boundaries); requirements §4.1 item 6, §9.

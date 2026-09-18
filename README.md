@@ -2,7 +2,7 @@
 
 TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
-Status: milestone 1. The CLI parses its flags and answers "not implemented" with exit code 1.
+Status: milestone 1. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The CLI parses its flags and answers "not implemented" with exit code 1.
 
 ## Docs
 
@@ -34,8 +34,9 @@ odin test tests/runtime/<package> -out:dist/runtime-<package>-tests.exe -vet -st
 # runtime object; without -use-single-module Odin writes one .obj per package
 odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style
 
-# test runs (smoke from T1.8, negative from T2.9, diff from T4.7)
-odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff
+# test runs (smoke from T1.8, negative from T2.9, diff from T4.7);
+# smoke links against the runtime object in dist/, so build it first
+odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke | negative | diff
 ```
 
 `-vet -strict-style` is part of every build, so there is no separate linter. An unused variable, a stray semicolon or spaces instead of tabs fail the build.
@@ -44,7 +45,7 @@ odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff
 
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
-- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe` or the `llvm`, `codegen` and `link` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
+- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe`, the test runner or the `llvm`, `codegen` and `link` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
 - Linux and macOS: install LLVM 20 (`llvm-20-dev` from apt.llvm.org, `llvm@20` from Homebrew). How the build finds it gets set up together with CI. Linking there goes through the system C compiler (`cc`), which Odin needs anyway.
 
 ## Linking
