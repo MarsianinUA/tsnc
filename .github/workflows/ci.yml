@@ -1,0 +1,95 @@
+# Build, unit tests and the smoke test on every v1 platform (requirements 9 and 10).
+# T2.9 (negative), T4.7 (diff) and T5.10 (GC stress, ASan) add their runs to this job.
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: windows_amd64 }
+          - { os: ubuntu-latest, target: linux_amd64 }
+          - { os: macos-latest, target: darwin_arm64 }
+          - { os: macos-26-intel, target: darwin_amd64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # dev-2026-09 is the build of commit a2fb372, the Odin the project pins (requirements 13). It
+      # is the last Odin release for Intel Macs (Odin commit 75d06fc): a newer Odin on
+      # macos-26-intel has to be built from source.
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: dev-2026-09
+
+      - name: LLVM 20
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20-dev
+
+      # The macOS 26 images carry Homebrew's llvm@20. No brew install: Homebrew has no Intel
+      # bottles since 6.0, and on macos-26-intel it would build LLVM from source.
+      - name: LLVM 20
+        if: runner.os == 'macOS'
+        run: |
+          lib="$(brew --prefix llvm@20)/lib/libLLVM-20.dylib"
+          if [ ! -e "$lib" ]; then
+            echo "::error::$lib is missing: the image no longer carries llvm@20"
+            exit 1
+          fi
+
+      - name: Odin
+        run: odin report
+
+      - name: Compiler
+        run: |
+          mkdir dist
+          odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style
+
+      - name: Runtime object
+        run: odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-${{ matrix.target }}.obj -vet -strict-style
+
+      # Every test package: tests/<package> and tests/runtime/<package>. A failing package does not
+      # stop the others, so one log shows every failure.
+      - name: Unit tests
+        run: |
+          shopt -s nullglob
+          failed=()
+          for dir in tests/*/ tests/*/*/; do
+            dir=${dir%/}
+            files=("$dir"/*_test.odin)
+            [ ${#files[@]} -gt 0 ] || continue
+            name=${dir#tests/}
+            echo "::group::odin test $dir"
+            odin test "$dir" -out:"dist/${name//\//-}-tests.exe" -vet -strict-style || failed+=("$dir")
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::odin test failed: ${failed[*]}"
+            exit 1
+          fi
+
+      - name: Smoke
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke

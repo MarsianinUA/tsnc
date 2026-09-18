@@ -2,8 +2,11 @@ package llvm
 
 // Analysis.h
 
-@(ignore_duplicates)
-foreign import lib {LLVM_C_LIB}
+// when true: see LLVM_LINKER_FLAGS in llvm.odin.
+when true {
+	@(ignore_duplicates, extra_linker_flags = LLVM_LINKER_FLAGS)
+	foreign import lib {LLVM_C_LIB}
+}
 
 LLVMVerifierFailureAction :: enum i32 {
 	LLVMAbortProcessAction = 0, // prints to stderr and calls abort()
