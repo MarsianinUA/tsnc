@@ -83,14 +83,14 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T1.4, T1.5, T1.6.
 Done: a test links `hello.obj` with the runtime object, runs the result, stdout equals the expected string, exit code 0.
 
-### [ ] T1.8 Smoke test: `tests/runner smoke`
+### [x] T1.8 Smoke test: `tests/runner smoke`
 
 What: a `tests/runner` program (package `main`) with a `smoke` mode: `codegen` hello world, `link`, run, compare output. The same program later gets the `negative` (T2.9) and `diff` (T4.7) modes.
 Where: [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools); requirements §10 "Infrastructure smoke test".
 After: T1.7.
 Done: `odin run tests/runner -- smoke` is green on the host.
 
-### [ ] T1.9 CI on four images
+### [x] T1.9 CI on four images
 
 What: GitHub Actions: `windows-latest`, `ubuntu-latest`, `macos-latest`, `macos-26-intel`; install Odin nightly and LLVM 20 (Linux, macOS); build the compiler and the runtime object; `odin test` of all packages; smoke. T2.9, T4.7 and T5.10 extend the matrix.
 Where: [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools), row CI; requirements §9, §10, §13 (macOS only in CI).

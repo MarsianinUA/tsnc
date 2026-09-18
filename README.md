@@ -2,7 +2,7 @@
 
 TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
-Status: milestone 1. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The CLI parses its flags and answers "not implemented" with exit code 1.
+Status: milestone 1. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. CI runs the build, the unit tests and the smoke test on Windows, Linux and macOS (arm64 and x64). The CLI parses its flags and answers "not implemented" with exit code 1.
 
 ## Docs
 
@@ -46,7 +46,10 @@ odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke | negativ
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
 - Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe`, the test runner or the `llvm`, `codegen` and `link` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
-- Linux and macOS: install LLVM 20 (`llvm-20-dev` from apt.llvm.org, `llvm@20` from Homebrew). How the build finds it gets set up together with CI. Linking there goes through the system C compiler (`cc`), which Odin needs anyway.
+- Linux: `sudo apt install llvm-20-dev` (Ubuntu 24.04 and later have it; elsewhere apt.llvm.org). The bindings link `libLLVM-20.so`, which the package puts on the default library path.
+- macOS: `brew install llvm@20`. Homebrew keeps it off the default library path, so `src/llvm` gives the linker its directory: `/opt/homebrew/opt/llvm@20/lib` on Apple silicon, `/usr/local/opt/llvm@20/lib` on Intel. For LLVM 20 installed elsewhere, add `-extra-linker-flags:-L<dir>` to `odin build`, `odin test` and `odin run`.
+
+On Linux and macOS the bindings link `LLVM-20` by name, so a machine without LLVM 20 fails at link time instead of picking up another version. Linking programs there goes through the system C compiler (`cc`), which Odin needs anyway.
 
 ## Linking
 
@@ -66,9 +69,17 @@ tsnc build src/main.ts -emit-ir -out:dist/app.ir    # tsnc IR dump
 tsnc build src/main.ts -target:linux_amd64 -j:8     # target and thread count
 ```
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, runs `odin test` on every package under `tests/` and then the smoke test, with the commands above.
+
+- Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
+- LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.
+
 ## Layout
 
 ```
+.github/      CI workflow
 src/          compiler, package main
 src/runtime/  runtime, package rt, built as an object file
 src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
