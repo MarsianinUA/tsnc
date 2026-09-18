@@ -60,6 +60,7 @@ tsnc build src/main.ts -target:linux_amd64 -j:8     # target and thread count
 ```
 src/          compiler, package main
 src/runtime/  runtime, package rt, built as an object file
+src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
 src/llvm/     LLVM-C 20 bindings
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora
