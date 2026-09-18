@@ -25,7 +25,7 @@ Every agent reads it before any task.
    - compiler: `odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style`;
    - package check: `odin check src/<package> -no-entry-point -vet -strict-style` (drop `-no-entry-point` for a package with `main`);
    - package tests: `odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style`; unit tests of `src/<package>` live in `tests/<package>/`, never next to the code;
-   - runtime: `odin build src/runtime -build-mode:obj -out:dist/tsnc_rt-<target>.obj -vet -strict-style`;
+   - runtime: `odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style` (without `-use-single-module` Odin writes one `.obj` per package);
    - runs: `odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff`.
 5. General done criterion for any task: `odin check` and `odin test` of the affected packages are green; no new package, mode flag, package-level state or import against the pipeline beyond the plan; every new diagnostic has a code in the `diag` registry and a hint; all text in English: comments, documentation, compiler messages; the agent makes no commits.
 6. The agent's report to the operator at the end: what was done, how it was checked, what is left or what was blocked by the plan.
@@ -55,14 +55,14 @@ Where: [Contracts → ABI](architecture-plan-tsnc.md#abi-package-abi); [Package 
 After: T1.1.
 Done: `odin check src/abi`; the package imports only `base`.
 
-### [ ] T1.4 `target` package
+### [x] T1.4 `target` package
 
 What: enum `Target` (windows_amd64, linux_amd64, darwin_arm64, darwin_amd64; `wasm32_wasi` is declared but has no table rows), a table: LLVM triple, linker (`lld-link` on Windows, the system C compiler on Linux and macOS), link flags taken from `odin build -print-linker-flags` on each OS, runtime object name, pointer size; parsing of the `-target:` value.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `target`; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Target platform"; requirements §9.
 After: T1.1.
 Done: tests for parsing target strings and for a non-empty table for each v1 target.
 
-### [ ] T1.5 Runtime shell: `rt`, `console`, `fail`
+### [x] T1.5 Runtime shell: `rt`, `console`, `fail`
 
 What: `src/runtime`, package `rt`: `main` initializes the context, calls `tsnc_main`, exits the process; an export that prints a string cell (header followed by `u16` units) as UTF-8 through `core:io` regardless of the code page; `fail`: message to stderr and exit code 1; `context` setup on entry to each export (per-call scratch arena, `temp_allocator` reset, `assertion_failure_proc`).
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), rows `rt`, `console`, `fail`; [Contracts → Runtime exports](architecture-plan-tsnc.md#runtime-exports-package-rt); requirements §3.9, §4.3, §4.5.
