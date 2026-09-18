@@ -25,6 +25,7 @@ odin run src -out:dist/tsnc-debug.exe -debug -vet -strict-style -- build main.ts
 odin check src/<package> -no-entry-point -vet -strict-style
 
 # package tests: unit tests of src/<package> live in tests/<package>/
+# (the link tests link against the runtime object, so build it first)
 odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style
 
 # runtime subpackage tests: src/runtime/<package> is tested in tests/runtime/<package>/
@@ -43,8 +44,14 @@ odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff
 
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
-- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe` or the `llvm` and `codegen` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
+- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe` or the `llvm`, `codegen` and `link` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
 - Linux and macOS: install LLVM 20 (`llvm-20-dev` from apt.llvm.org, `llvm@20` from Homebrew). How the build finds it gets set up together with CI. Linking there goes through the system C compiler (`cc`), which Odin needs anyway.
+
+## Linking
+
+On Windows tsnc runs `bin/lld-link.exe` from the Odin that built it and needs what Odin needs: Visual Studio or Build Tools with the C++ x64 tools, and the Windows 10 or 11 SDK. It finds them the way Odin does, so the Developer Command Prompt is not required: the SDK through the registry, Visual Studio through `vswhere.exe`. On Linux and macOS it runs `cc`.
+
+The runtime object `tsnc_rt-<target>.obj` must lie next to `tsnc.exe`. The runtime object command under [Commands](#commands) puts it there.
 
 The compiler CLI follows Odin (see [requirements, section 9](docs/REQUIREMENTS.md#9-platforms-cli-artifacts)):
 
@@ -66,6 +73,7 @@ src/runtime/  runtime, package rt, built as an object file
 src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
 src/llvm/     LLVM-C 20 bindings
 src/codegen/  LLVM module to an object file or textual LLVM IR
+src/link/     program and runtime objects to an executable
 src/target/   target platforms: LLVM triple, linker, link flags
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora
