@@ -248,7 +248,7 @@ tsnc build src/main.ts -target:linux_amd64 -j:8     # target and number of threa
 - No global mutable state; deterministic output for any number of threads.
 - Runtime errors in the generated program always come with a message and exit code `1`, never silent continuation.
 - All repository text is in English: documentation, code comments, identifiers, and compiler messages.
-- Repository structure of `E:\Odin\projects\tsnc`: `src/` compiler, `src/runtime/` runtime, `src/llvm/` bindings, `tests/` (differential and negative), `bench/`, `dist/`, `docs/` project documentation (requirements, architecture plan, task board).
+- Repository structure of `E:\Odin\projects\tsnc`: `src/` compiler, `src/runtime/` runtime, `src/llvm/` bindings, `tests/` (unit, differential and negative), `bench/`, `dist/`, `docs/` project documentation (requirements, architecture plan, task board).
 
 ## 12. Explicitly out of scope
 
