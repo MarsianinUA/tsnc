@@ -2,9 +2,9 @@ package llvm
 
 // Core.h
 
-// when true: see LLVM_LINKER_FLAGS in llvm.odin.
+// The one import with LLVM_LINKER_FLAGS; see llvm.odin.
 when true {
-	@(ignore_duplicates, extra_linker_flags = LLVM_LINKER_FLAGS)
+	@(ignore_duplicates, priority_index = -1, extra_linker_flags = LLVM_LINKER_FLAGS)
 	foreign import lib {LLVM_C_LIB}
 }
 

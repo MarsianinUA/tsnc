@@ -27,12 +27,14 @@ smoke :: proc() -> (passed: bool) {
 	}
 
 	// --- Executable. An absolute path, so the run below does not depend on how the OS resolves a
-	// relative one.
-	program, path_err := os.get_absolute_path("dist/smoke-hello.exe", context.temp_allocator)
+	// relative one. It is built from dist/, because on Linux and macOS get_absolute_path resolves
+	// only a path that exists.
+	dist, path_err := os.get_absolute_path("dist", context.temp_allocator)
 	if path_err != nil {
-		fmt.eprintfln("smoke: absolute path of dist/smoke-hello.exe: %v", path_err)
+		fmt.eprintfln("smoke: absolute path of dist: %v", path_err)
 		return false
 	}
+	program, _ := os.join_path({dist, "smoke-hello.exe"}, context.temp_allocator)
 	runtime_object := fmt.tprintf("dist/%s", target.SPECS[target.HOST].runtime_object)
 	link_err := link.link({object}, target.HOST, program, runtime_object, context.temp_allocator)
 	if link_err.kind != .None {

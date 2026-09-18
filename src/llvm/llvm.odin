@@ -34,10 +34,13 @@ process-global state; call them once, before any other thread uses LLVM.
 */
 package llvm
 
-// Every file's foreign import carries LLVM_LINKER_FLAGS, and Odin drops an empty value. The import
-// sits in a `when true` block: an attribute at file level sees only built-in constants, one inside
-// a when block sees package constants too. The constants themselves stay out of when blocks: Odin
-// resolves those file by file, and a file sorted before this one would not see them.
+// LLVM_LINKER_FLAGS goes on the foreign import of core.odin only, the file every LLVM user calls
+// into; Odin drops an empty value. Odin writes a library's flags with no space after them, so the
+// next flag sticks to them unless the library itself follows: priority_index puts that import
+// first in the link order, where its -lLLVM-20 comes right after the flags. The import sits in a
+// `when true` block: an attribute at file level sees only built-in constants, one inside a when
+// block sees package constants too. The constants themselves stay out of when blocks: Odin
+// resolves those file by file, and core.odin sorts before this file.
 @(private)
 LLVM_C_LIB :: "windows/LLVM-C.lib" when ODIN_OS == .Windows else "system:LLVM-20"
 @(private)
