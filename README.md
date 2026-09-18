@@ -1,6 +1,6 @@
 # tsnc
 
-TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend and LLD for linking.
+TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
 Status: milestone 1. The CLI parses its flags and answers "not implemented" with exit code 1.
 
@@ -41,7 +41,7 @@ odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
 - Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe` or the `llvm` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
-- Linux and macOS: install LLVM 20 (`llvm-20-dev` from apt.llvm.org, `llvm@20` from Homebrew). How the build finds it gets set up together with CI.
+- Linux and macOS: install LLVM 20 (`llvm-20-dev` from apt.llvm.org, `llvm@20` from Homebrew). How the build finds it gets set up together with CI. Linking there goes through the system C compiler (`cc`), which Odin needs anyway.
 
 The compiler CLI follows Odin (see [requirements, section 9](docs/REQUIREMENTS.md#9-platforms-cli-artifacts)):
 
@@ -62,6 +62,7 @@ src/          compiler, package main
 src/runtime/  runtime, package rt, built as an object file
 src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
 src/llvm/     LLVM-C 20 bindings
+src/target/   target platforms: LLVM triple, linker, link flags
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora
 bench/        benchmarks

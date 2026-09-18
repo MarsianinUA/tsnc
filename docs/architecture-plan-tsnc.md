@@ -60,7 +60,7 @@ Eight rules. Every package and every milestone is checked against them.
 3. **Imports point only up the pipeline.** A consumer imports a producer for the shape of its result. `ast` and `ir` are split out as separate data packages because each has three consumers and independent tools live around them: traversal, printing, verification.
 4. **One imperative layer.** Only `driver` owns the thread pool, arenas, the file system, temporary files and external processes. Only `main` prints and sets the exit code.
 5. **Parallelism is fork-join.** `driver` hands out pure tasks (a file, a graph partition, a codegen unit) and waits for all of them. Results go into arrays indexed by `File_ID`, and diagnostics are sorted by position, so the output is the same at `-j:1` and at `-j:32`.
-6. **Diagnostics are data.** A phase does not stop at the first error: it returns a partial result (a `Bad` node, an error type) and a list of diagnostics. An infrastructure failure (a file cannot be read, LLD crashed) is a package enum error that `driver` translates into its own.
+6. **Diagnostics are data.** A phase does not stop at the first error: it returns a partial result (a `Bad` node, an error type) and a list of diagnostics. An infrastructure failure (a file cannot be read, the linker crashed) is a package enum error that `driver` translates into its own.
 7. **Three type worlds, three owners.** TS types belong to `check`, IR layouts and types belong to `ir`, LLVM types belong to `codegen`. A layout is a pure function of the canonical structure of a TS type, so two checkers that built `Point` and `Vec2` independently get one layout without sharing data.
 8. **A subset rule lives in the earliest phase that can decide it.** `parse` rejects `var` and decorators, `check` rejects `==` between different types and an extra object field, all with a code from the `diag` registry.
 
@@ -77,6 +77,7 @@ Adopted:
 - Static Hermes (https://github.com/facebook/hermes/blob/static_h/doc/TypedLanguage.md): exact objects, numbers as double with integer refinements in the IR. We take it as the model for optimization at the `opt` level.
 - Go GC, Oilpan, bdwgc: non-moving mark-sweep, register flush before the stack scan, an object start map. Architecturally this gives the `gc` package with a per-platform assembly stub.
 - LLVM new pass manager via `LLVMRunPasses`: the only path in LLVM 20, affects only `codegen`.
+- Odin (`src/linker.cpp`) and Rust: on Linux and macOS the system C compiler drives the linker, because only it knows where the C runtime startup files, the dynamic loader and the SDK live on a given machine. We take it for `link`.
 
 Rejected:
 
@@ -102,7 +103,7 @@ The detailed planner and the writer stop and ask before changing any row.
 | Program data umbrella | The `program` package: files, AST, `Bound_File`, module graph, initialization order; frozen before `check` | Reversible | `check` and `lower` read one value; the module graph is a pure function of the import lists | The import discovery loop with file reading lives in `driver`; sorting and cycle detection live in `program` |
 | Compiler memory | A phase takes `allocator` as its last parameter; `driver` provides an arena per task and per phase, everything lives until the end of the build | Reversible | Requirements, 4.4; a phase result belongs to an arena, not to individual objects | Not a single `free`; temporary data goes through the thread's `context.temp_allocator` |
 | Codegen unit | `codegen` takes a `Unit` (a slice of `Func_ID`) from day one; in v1 there is one unit | Reversible | v2 cuts the program into N units and optimizes them in the pool without changing the entry point | `Program_IR` knows the split into units only as data |
-| Target platform | The `target` package as data: triple, LLD flavor, link flags, runtime object name, pointer size | Reversible | Cross-compilation and wasm in v2 add a row to the table | `codegen` and `link` take a `Target` value as a parameter |
+| Target platform | The `target` package as data: triple, linker, link flags, runtime object name, pointer size | Reversible | Cross-compilation and wasm in v2 add a row to the table | `codegen` and `link` take a `Target` value as a parameter |
 | Runtime memory | The GC heap is the only package-level state; `context` is set up at the entry of every `proc "c"` export | Irreversible | Requirements, 4.3, 4.5, 6 | Allocating a TS value always takes a type table identifier; `core` only for data without references |
 | Errors | A diagnostic as a value with a code from the `diag` registry; infrastructure failures as a package enum | Irreversible | Requirements, 5; `tsnc check` in one pass | A phase keeps working after an error and returns a partial layer |
 
@@ -129,10 +130,10 @@ Directory `src/`, package `main` at the root. The table order is the pipeline or
 | `ir` | Our own intermediate representation | `Program_IR` (functions, interned layouts, module global cells, string pool, GC type tables, initialization order, units), `Func` (blocks, SSA instructions, values), builder, printer for `-emit-ir`, verifier | The closed set of IR types (`F64`, `Bool`, `Tagged`, `Ref(Layout)`, `Str`, `Closure`, in v2 `I32` and `I64`) and instructions: arithmetic, branches, `phi`, allocation, field load and store, `store_ref`, element access with an explicit bounds check, tag check, boxing and unboxing, call, closure call, runtime call, intrinsic, failure with a code and a position | Nothing: the data is fully readable | `source`, `abi` | Passes: three consumers (`lower`, `opt`, `codegen`) |
 | `lower` | Typed program to IR | `lower(^Program, []Check_Result, allocator)` returns `Program_IR` and diagnostics | All TS semantics in IR terms: control flow, closures and capture (mutable ones on the heap, immutable ones by copy), a new `let` binding on every iteration, narrowing as a tag check, boxing into a union, the checks from section 3.8, the table "lib name to intrinsic, runtime call, inline loop or libm", module initialization order and `tsnc_main`, the canonical layout key | AST traversal and SSA construction | `program`, `check`, `bind`, `ast`, `ir`, `abi`, `diag` | Passes |
 | `opt` (v2) | IR to IR | `optimize(^Program_IR, level)` | Integer narrowing, escape analysis, bounds check elimination | Analyses | `ir` | Passes in v2; in v1 the package does not exist |
-| `target` | Target platform as data | The `Target` enum and a table: LLVM triple, LLD flavor, link flags, runtime object name, pointer size | All platform knowledge in one place | Nothing | `base` | Passes: three consumers (`driver`, `codegen`, `link`) |
+| `target` | Target platform as data | The `Target` enum and a table: LLVM triple, linker, link flags, runtime object name, pointer size | All platform knowledge in one place | Nothing | `base` | Passes: three consumers (`driver`, `codegen`, `link`) |
 | `llvm` | Raw LLVM-C 20 bindings | `foreign import` of LLVM-C, names as in C | Declarations | Nothing | none | Passes: adapter package |
 | `codegen` | IR to an object file or LLVM IR text | `emit(^Program_IR, Unit, Target, level, artifact kind, path)` returns an error; `init_global_options` is called once before the pool | `LLVMContext`, module, builder, `TargetMachine`, the mapping of IR types and instructions to LLVM, runtime function declarations from the `abi` table, intrinsics, the pass pipeline and `-disable-lsr` | All LLVM handles | `ir`, `abi`, `target`, `llvm` | Passes |
-| `link` | Building the executable | `link(objects, Target, output path)` returns an error | Flavor and flags from `Target`, finding the runtime object next to the compiler, running LLD, capturing stderr | The LLD command line | `target`, `core:os` | Passes |
+| `link` | Building the executable | `link(objects, Target, output path)` returns an error | The linker and flags from `Target`, finding the runtime object next to the compiler, running the linker (`lld-link` on Windows, the system C compiler on Linux and macOS), capturing stderr | The linker command line | `target`, `core:os` | Passes |
 | `driver` | Build orchestration | `build(Options)` returns a report and an error; `check_only` and `run` are stages | The thread pool, arenas per task and per phase, the import graph closure loop (reading files, resolving relative paths, assigning `File_ID` in traversal order), splitting into partitions and units, the "go to `lower` only without errors" policy, temporary files, running the built program for `tsnc run` | How exactly the phases are connected | all packages above | Passes |
 | `main` | Command line | `main`: `core:flags` into `Options`, calling `driver`, rendering diagnostics to stderr, exit code | Odin-style flags (requirements, 9) | Nothing | `driver`, `diag`, `source` | Passes |
 
@@ -182,7 +183,7 @@ All interactions are synchronous calls. Parallelism exists only in the form "`dr
 | `driver` | `lower` | `^Program`, `[]Check_Result`, borrowed for the duration of the call | Call | synchronous | Diagnostics |
 | `driver` | `opt` (v2) | `^Program_IR` | Call | synchronous | none |
 | `driver` | `codegen` | `^Program_IR`, `Unit`, `Target`, level, artifact kind, path | Call; in v2 a pool task per unit | synchronous; fork-join in v2 | Codegen error |
-| `driver` | `link` | Paths of the program and runtime objects, `Target`, output path | Call | synchronous | Link error with the LLD stderr text |
+| `driver` | `link` | Paths of the program and runtime objects, `Target`, output path | Call | synchronous | Link error with the linker's stderr text |
 | `driver` | OS | Reading files, temporary files, running the built program | `core:os` | synchronous | Driver error |
 | `main` | `diag` | All build diagnostics and the `source` table | Sort and render call | synchronous | none |
 | Generated code | `rt` | Arguments per the `abi.Runtime_Proc` signatures | `proc "c"` call | synchronous | A runtime error exits the process with code 1 |
@@ -246,7 +247,7 @@ Every `@(export) proc "c"` first sets up `context`: the call's scratch arena as 
 ## Simplicity and robustness
 
 - Type model: the identifiers `File_ID`, `Node_ID`, `Symbol_ID`, `Type_ID`, `Func_ID`, `Layout_ID` are `distinct` integers. AST nodes and TS types are a `union` with an exhaustive `switch`. IR instructions and types are closed `enum`s and `union`s. `Target`, `Runtime_Proc`, diagnostic codes and runtime error codes are `enum`s with tables indexed by that same enum. No boolean mode flags in contracts: `check_only`, `run` and the artifact kind are separate procedures or an enum.
-- Validation boundary: file text becomes an AST in `parse`; foreign entities (LLVM, LLD, the OS) live only in `codegen`, `link`, `driver`; the lib file goes through the same `parse` and `bind` as user files. Pure core: `parse`, `bind`, `program`, `check`, `lower`, `opt`, `ir` and the runtime subpackages except `console` and `fail`. Imperative shell: `driver`, `main`, `codegen`, `link`, `rt`.
+- Validation boundary: file text becomes an AST in `parse`; foreign entities (LLVM, the linker, the OS) live only in `codegen`, `link`, `driver`; the lib file goes through the same `parse` and `bind` as user files. Pure core: `parse`, `bind`, `program`, `check`, `lower`, `opt`, `ir` and the runtime subpackages except `console` and `fail`. Imperative shell: `driver`, `main`, `codegen`, `link`, `rt`.
 - Errors and atomicity: a diagnostic is a value, phases return a partial layer; codegen, link and driver errors are enums of their packages, and `driver` translates them; the build is atomic at the artifact level, output goes to a temporary file that is then renamed.
 - Dispatch model: direct calls everywhere. One exhaustive `switch` on the node in `bind`, `check` and `lower`; on the instruction in `codegen`; on the tag in `value`. The only set that looks open, the runtime functions, is closed by the `Runtime_Proc` enum. The only procedure value is the closure calling convention in `abi`, because generated code is a foreign context.
 - State model: the build state is a sequence of frozen layers held by `driver`: sources, AST and `Bound_File`, `Program`, `Check_Result`, `Program_IR`, artifacts. Transitions go only forward. The runtime has one piece of state, the heap.
@@ -259,12 +260,12 @@ DDD relevance: light.
 
 - Ubiquitous language: File, Module (a file as an ESM unit), Node, Symbol, Scope, Type (TS), Layout (IR layout), Cell (GC heap cell), Tag, Tagged value, Closure, Environment, Runtime_Proc, Unit (codegen unit), Target, Diagnostic, Code.
 - Bounded contexts: the three type worlds (`check`, `ir`, `codegen`); the runtime as a separate context, with a shared vocabulary only through `abi`.
-- Boundaries that keep out foreign concepts: the lib file goes through the normal `parse` and `bind`; LLVM inside `codegen`; LLD inside `link`; the OS inside `driver` and `rt`.
+- Boundaries that keep out foreign concepts: the lib file goes through the normal `parse` and `bind`; LLVM inside `codegen`; the linker inside `link`; the OS inside `driver` and `rt`.
 
 ## External boundaries
 
 - LLVM-C 20 (`E:\Odin\dist\LLVM-C.dll` and its Linux and macOS equivalents): only through `llvm` and `codegen`. `codegen` sets the global options (`LLVMParseCommandLineOptions`, `-disable-lsr`), and `driver` calls this once before starting the pool.
-- LLD: the `lld-link` process with the flavor from `target`; the flags are recorded in `target` from the output of `odin build -print-linker-flags` on each OS.
+- Linker: on Windows the `lld-link` process from the distribution; on Linux and macOS the system C compiler (`cc`), which adds the C runtime startup files, the dynamic loader and the SDK. `target` records which one and its flags, taken from the output of `odin build -print-linker-flags` on each OS without the paths that depend on the machine; `link` finds those paths.
 - Runtime object: built separately for each target (`dist/tsnc_rt-<target>.obj` plus a `-sanitize:address` variant for CI), `link` looks for it next to the compiler.
 - Node and `tsc`: only `tests/runner` through `core:os`, they take no part in the build.
 - Generated code and the runtime: through `abi`. The entry point belongs to the runtime: Odin initializes the context, calls `tsnc_main`, and exits the process with the code.
@@ -298,7 +299,7 @@ Architecture milestones, not tasks. Each one leaves the system working. Order: i
 
 | Milestone | What appears | Packages touched | What is true after |
 | --- | --- | --- | --- |
-| 1 | A `projects/tsnc` skeleton from `odin-template`; `abi`, `target`, `llvm`, `codegen` without IR (a "hello world" module built by hand), `link`, `rt` with `main`, `console`, `fail`; CI on four images | Infrastructure packages and the runtime shell | The smoke test passes: an executable built through the bindings and LLD prints a line on three OSes |
+| 1 | A `projects/tsnc` skeleton from `odin-template`; `abi`, `target`, `llvm`, `codegen` without IR (a "hello world" module built by hand), `link`, `rt` with `main`, `console`, `fail`; CI on four images | Infrastructure packages and the runtime shell | The smoke test passes: an executable built through the bindings and the linker prints a line on three OSes |
 | 2 | `source`, `diag` with the registry, `ast`, `parse` with the `tokenize` and `parse_tokens` stages, `bind`, unit tests, `main` and `driver` in syntax check mode | Frontend up to `bind` | `tsnc check` finds all syntactic subset violations in one pass; the lib file parses |
 | 3 | `program` with the module graph; `check` with a single partition: primitives, literal types, functions and closures, objects under the exact-type rule, arrays, unions and narrowing, generic built-in types, contextual typing, the lib file | `program`, `check`, `driver` | `tsnc check` works fully for the v1 subset; negative tests pass |
 | 4 | `ir` with builder, printer and verifier; `lower` for numbers, strings, booleans, functions and control flow; `codegen` from IR; the `-emit-ir` and `-emit-llvm` flags | `ir`, `lower`, `codegen`, `driver` | The first differential tests (numbers, strings, control flow) pass; objects and arrays do not build yet |

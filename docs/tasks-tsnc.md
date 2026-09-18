@@ -34,21 +34,21 @@ Every agent reads it before any task.
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 1. Requirements §4.2 (first smoke test), §10.
 
-### [ ] T1.1 Repository skeleton `projects/tsnc`
+### [x] T1.1 Repository skeleton `projects/tsnc`
 
 What: copy `projects/odin-template`; create `src/`, `src/runtime/`, `src/llvm/`, `src/lib/`, `tests/`, `bench/`, `dist/`; `src/main.odin` parses flags through `core:flags` into an `Options` struct (commands `build`, `run`, `check`; `-out`, `-o`, `-emit-llvm`, `-emit-ir`, `-target`, `-j`) and answers "not implemented" with exit code 1; a README with the commands from the shared handoff kit; move `REQUIREMENTS.md`, `architecture-plan-tsnc.md`, `tasks-tsnc.md` into `docs/`, translated to English.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `main`; requirements §9 (CLI), §11 (repository structure).
 After: none.
 Done: `odin build src -out:dist/tsnc.exe -vet -strict-style` builds; `tsnc build x.ts` prints the parsed options and exits with code 1.
 
-### [ ] T1.2 LLVM-C 20 bindings: `llvm` package
+### [x] T1.2 LLVM-C 20 bindings: `llvm` package
 
 What: generate with odin-c-bindgen or write by hand a subset of LLVM-C 20: Core (context, module, types, builder, constants, functions, attributes, module verifier), Target and TargetMachine, PassBuilder (`LLVMRunPasses`), `LLVMParseCommandLineOptions`, printing a module to text. Names as in C. `foreign import` for `LLVM-C.dll` on Windows; on Linux and macOS the system LLVM 20 provides the library, since the Odin distribution does not ship it there.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `llvm`; [External boundaries](architecture-plan-tsnc.md#external-boundaries); [Precedents](architecture-plan-tsnc.md#precedents), the item on the new pass manager; requirements §4.2, §13 (bindings risk).
 After: T1.1.
 Done: `odin check src/llvm`; a test creates a context and a module, adds a function, prints the text, frees everything.
 
-### [ ] T1.3 `abi` contract, v1 minimum
+### [x] T1.3 `abi` contract, v1 minimum
 
 What: cell header, tags and the tagged value, string, array, closure and environment cells; type table format (size, kind of each slot, field names, array element kind); enum `Runtime_Proc` with a table of symbol names and signatures (in this milestone only string output and failure; the table grows in the runtime tasks); closure procedure type `proc "c"` with the environment as the first parameter; the name `tsnc_main`; runtime error codes; `#assert` on sizes (tagged 16 bytes, reference 8).
 Where: [Contracts → ABI](architecture-plan-tsnc.md#abi-package-abi); [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `abi`; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Compiler and runtime contract"; requirements §3.2-3.6, §4.3, §6.
@@ -57,7 +57,7 @@ Done: `odin check src/abi`; the package imports only `base`.
 
 ### [ ] T1.4 `target` package
 
-What: enum `Target` (windows_amd64, linux_amd64, darwin_arm64, darwin_amd64; `wasm32_wasi` is declared but has no table rows), a table: LLVM triple, LLD flavor, link flags taken from `odin build -print-linker-flags` on each OS, runtime object name, pointer size; parsing of the `-target:` value.
+What: enum `Target` (windows_amd64, linux_amd64, darwin_arm64, darwin_amd64; `wasm32_wasi` is declared but has no table rows), a table: LLVM triple, linker (`lld-link` on Windows, the system C compiler on Linux and macOS), link flags taken from `odin build -print-linker-flags` on each OS, runtime object name, pointer size; parsing of the `-target:` value.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `target`; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Target platform"; requirements §9.
 After: T1.1.
 Done: tests for parsing target strings and for a non-empty table for each v1 target.
@@ -78,7 +78,7 @@ Done: the package test writes `dist/hello.obj` and `dist/hello.ll`; the module p
 
 ### [ ] T1.7 `link` package
 
-What: run LLD (the distribution's `bin/lld-link.exe` on Windows, `ld.lld` and `ld64.lld` from the system LLVM on Linux and macOS) with the flavor and flags from `target`; inputs: program object, runtime object (found next to `tsnc.exe`, a parameter overrides the path), system libraries; LLD's stderr inside `Link_Error`.
+What: run the linker that `target` names (the distribution's `bin/lld-link.exe` on Windows, the system C compiler on Linux and macOS) with the flags from `target`; find the library directories the table leaves out because they depend on the machine (Windows SDK and MSVC); inputs: program object, runtime object (found next to `tsnc.exe`, a parameter overrides the path), system libraries; the linker's stderr inside `Link_Error`.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `link`; [External boundaries](architecture-plan-tsnc.md#external-boundaries); requirements §4.1 item 6, §9.
 After: T1.4, T1.5, T1.6.
 Done: a test links `hello.obj` with the runtime object, runs the result, stdout equals the expected string, exit code 0.
