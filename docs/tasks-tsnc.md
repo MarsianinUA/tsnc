@@ -23,8 +23,8 @@ Every agent reads it before any task.
 3. Skills: `$direct-plan`, then `$direct-writer`. Rules: `$direct-principles`, `$design-language`, `$code-conventions`. Before handing in: `$code-review-and-quality`.
 4. Commands from the root of `projects/tsnc`:
    - compiler: `odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style`;
-   - package check: `odin check src/<package> -vet -strict-style`;
-   - package tests: `odin test src/<package> -out:dist/<package>-tests.exe -vet -strict-style`;
+   - package check: `odin check src/<package> -no-entry-point -vet -strict-style` (drop `-no-entry-point` for a package with `main`);
+   - package tests: `odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style`; unit tests of `src/<package>` live in `tests/<package>/`, never next to the code;
    - runtime: `odin build src/runtime -build-mode:obj -out:dist/tsnc_rt-<target>.obj -vet -strict-style`;
    - runs: `odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff`.
 5. General done criterion for any task: `odin check` and `odin test` of the affected packages are green; no new package, mode flag, package-level state or import against the pipeline beyond the plan; every new diagnostic has a code in the `diag` registry and a hint; all text in English: comments, documentation, compiler messages; the agent makes no commits.
@@ -67,7 +67,7 @@ Done: tests for parsing target strings and for a non-empty table for each v1 tar
 What: `src/runtime`, package `rt`: `main` initializes the context, calls `tsnc_main`, exits the process; an export that prints a string cell (header followed by `u16` units) as UTF-8 through `core:io` regardless of the code page; `fail`: message to stderr and exit code 1; `context` setup on entry to each export (per-call scratch arena, `temp_allocator` reset, `assertion_failure_proc`).
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), rows `rt`, `console`, `fail`; [Contracts → Runtime exports](architecture-plan-tsnc.md#runtime-exports-package-rt); requirements §3.9, §4.3, §4.5.
 After: T1.3.
-Done: the runtime object builds on the host; `odin test src/runtime/console` checks UTF-8 for Cyrillic and emoji.
+Done: the runtime object builds on the host; `odin test tests/runtime/console` checks UTF-8 for Cyrillic and emoji.
 
 ### [ ] T1.6 `codegen`, minimum: hello world module to an object file
 
