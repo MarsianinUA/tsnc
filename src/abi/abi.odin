@@ -97,7 +97,10 @@ Slot_Kind :: enum u8 {
 	Tagged, // Tagged, the GC traces payload.ref when the tag holds a reference
 }
 
-SLOT_SIZE :: [Slot_Kind]int {
+// SLOT_SIZE is @(rodata) rather than a constant: Odin indexes a constant array only by a constant,
+// and its readers index it by the slot kind of a field.
+@(rodata)
+SLOT_SIZE := [Slot_Kind]int {
 	.Number  = size_of(f64),
 	.Boolean = size_of(b64),
 	.Ref     = size_of(rawptr),
@@ -119,8 +122,9 @@ Field :: struct {
 }
 
 // Type_Table tells the GC how to scan a cell and console how to print it. The compiler emits
-// these as static data, so the struct keeps a C shape: a kind plus the fields that kind reads, not
-// an Odin union.
+// these as static data, so the struct is flat: a kind plus the fields that kind reads, not an Odin
+// union. `fields` and Field.name keep the Odin layout of a slice and a string, a pointer and a
+// length; the #asserts at the end of this file pin every offset codegen writes.
 Type_Table :: struct {
 	kind:    Cell_Kind,
 	size:    int, // bytes, header included; the fixed part for String and Array
@@ -139,3 +143,12 @@ Builtin_Table :: enum u32 {
 #assert(size_of(Tagged) == 16)
 #assert(offset_of(Tagged, payload) == 8)
 #assert(offset_of(String_Cell, units) == size_of(String_Cell))
+
+// Static data the compiler emits: type tables and failure sites (calls.odin). A string and a slice
+// are a pointer and a length.
+#assert(size_of(string) == 16 && size_of([]Field) == 16)
+#assert(size_of(Field) == 32 && offset_of(Field, offset) == 16 && offset_of(Field, kind) == 24)
+#assert(size_of(Type_Table) == 40 && offset_of(Type_Table, size) == 8)
+#assert(offset_of(Type_Table, fields) == 16 && offset_of(Type_Table, element) == 32)
+#assert(size_of(Fail_Site) == 32 && offset_of(Fail_Site, line) == 16)
+#assert(offset_of(Fail_Site, column) == 20 && offset_of(Fail_Site, error) == 24)

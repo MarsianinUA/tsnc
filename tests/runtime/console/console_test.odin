@@ -42,11 +42,7 @@ emoji_surrogate_pair_is_one_utf8_character :: proc(t: ^testing.T) {
 unpaired_surrogate_is_replacement_character :: proc(t: ^testing.T) {
 	testing.expect_value(t, line(cell_from_units({'a', 0xd83d})), "a\xef\xbf\xbd\n")
 	testing.expect_value(t, line(cell_from_units({0xde00, 'b'})), "\xef\xbf\xbdb\n")
-	testing.expect_value(
-		t,
-		line(cell_from_units({0xde00, 0xd83d})),
-		"\xef\xbf\xbd\xef\xbf\xbd\n",
-	)
+	testing.expect_value(t, line(cell_from_units({0xde00, 0xd83d})), "\xef\xbf\xbd\xef\xbf\xbd\n")
 }
 
 line :: proc(text: ^abi.String_Cell) -> string {

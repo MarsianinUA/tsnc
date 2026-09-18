@@ -20,24 +20,14 @@ the command above when the runtime imports a new core package.
 */
 package target
 
-// Target values are lowercase to match NAMES, the spelling of `-target:` in tsnc and in Odin.
+// Target values are lowercase because they are the values of `tsnc -target:`: core:flags matches
+// them against the command line by exact name, and Odin's `-target:` spells them the same way.
 Target :: enum u8 {
 	windows_amd64,
 	linux_amd64,
 	darwin_arm64,
 	darwin_amd64,
 	wasm32_wasi, // v2: the name is reserved, SPECS has no row for it yet
-}
-
-// NAMES and SPECS are @(rodata) rather than constants: Odin indexes a constant array only by a
-// constant.
-@(rodata)
-NAMES := [Target]string {
-	.windows_amd64 = "windows_amd64",
-	.linux_amd64   = "linux_amd64",
-	.darwin_arm64  = "darwin_arm64",
-	.darwin_amd64  = "darwin_amd64",
-	.wasm32_wasi   = "wasm32_wasi",
 }
 
 // HOST is the platform the compiler itself runs on, the default target.
@@ -67,6 +57,7 @@ Spec :: struct {
 	pointer_size:   int, // bytes
 }
 
+// SPECS is @(rodata) rather than a constant: Odin indexes a constant array only by a constant.
 @(rodata)
 SPECS := #partial [Target]Spec {
 	.windows_amd64 = {
@@ -88,13 +79,13 @@ SPECS := #partial [Target]Spec {
 		pointer_size = 8,
 	},
 	.linux_amd64 = {
-		triple = "x86_64-pc-linux-gnu",
-		linker = .Cc,
+		triple         = "x86_64-pc-linux-gnu",
+		linker         = .Cc,
 		// -no-pie: distributions build PIE executables by default, and Odin and LLVM emit
 		// position-dependent code by default.
-		link_flags = {"-no-pie", "-Wl,-z,now", "-Wl,-z,relro", "-lm", "-lc"},
+		link_flags     = {"-no-pie", "-Wl,-z,now", "-Wl,-z,relro", "-lm", "-lc"},
 		runtime_object = "tsnc_rt-linux_amd64.obj",
-		pointer_size = 8,
+		pointer_size   = 8,
 	},
 	.darwin_arm64 = {
 		triple = "arm64-apple-macosx11.0.0",
@@ -116,21 +107,4 @@ SPECS := #partial [Target]Spec {
 // for it.
 supported :: proc(t: Target) -> bool {
 	return SPECS[t].triple != nil
-}
-
-Parse_Error :: enum u8 {
-	None,
-	Unknown, // the text is not one of NAMES
-	Unsupported, // a declared target without a row in SPECS
-}
-
-// parse turns a `-target:` value into a Target. The match is exact: no case folding, no trimming.
-@(require_results)
-parse :: proc(name: string) -> (Target, Parse_Error) {
-	for target_name, t in NAMES {
-		if target_name == name {
-			return t, .None if supported(t) else .Unsupported
-		}
-	}
-	return {}, .Unknown
 }

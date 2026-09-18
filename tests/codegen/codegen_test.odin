@@ -16,14 +16,12 @@ init_llvm :: proc "contextless" () {
 	codegen.init_global_options()
 }
 
-V1_TARGETS :: bit_set[target.Target]{.windows_amd64, .linux_amd64, .darwin_arm64, .darwin_amd64}
-
 // dist/hello.obj and dist/hello.ll are the same module as an object file and as text.
 @(test)
 hello_world_writes_object_and_llvm_ir :: proc(t: ^testing.T) {
-	object_err := codegen.emit(codegen.Unit{}, target.HOST, .Speed, .Object, "dist/hello.obj")
+	object_err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .Object, "dist/hello.obj")
 	testing.expect_value(t, object_err, codegen.Error.None)
-	ir_err := codegen.emit(codegen.Unit{}, target.HOST, .Speed, .LLVM_IR, "dist/hello.ll")
+	ir_err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .LLVM_IR, "dist/hello.ll")
 	testing.expect_value(t, ir_err, codegen.Error.None)
 
 	object, object_read_err := os.read_entire_file("dist/hello.obj", context.allocator)
@@ -57,6 +55,41 @@ hello_world_writes_object_and_llvm_ir :: proc(t: ^testing.T) {
 	}
 }
 
+// tsnc_fail never returns, so LLVM may treat the code after its call as unreachable. Level none
+// keeps the declaration: the stub does not call tsnc_fail, and the optimizer drops it.
+@(test)
+diverging_export_is_declared_noreturn :: proc(t: ^testing.T) {
+	path := "dist/codegen-noreturn.ll"
+	err := codegen.emit(codegen.Unit{}, target.HOST, .none, .LLVM_IR, path)
+	if !testing.expect_value(t, err, codegen.Error.None) {
+		return
+	}
+	ir, read_err := os.read_entire_file(path, context.allocator)
+	defer delete(ir)
+	if !testing.expectf(t, read_err == nil, "read %s: %v", path, read_err) {
+		return
+	}
+	// On Windows LLVM writes the text with CRLF, so the patterns stop short of the line end.
+	wants := []string{"declare void @tsnc_fail(ptr) #0", "attributes #0 = { noreturn }"}
+	for want in wants {
+		testing.expectf(
+			t,
+			strings.contains(string(ir), want),
+			"%s lacks %q:\n%s",
+			path,
+			want,
+			string(ir),
+		)
+	}
+	returning := "declare void @tsnc_log_string(ptr) #"
+	testing.expectf(
+		t,
+		!strings.contains(string(ir), returning),
+		"tsnc_log_string has attributes:\n%s",
+		string(ir),
+	)
+}
+
 @(test)
 every_level_emits_an_object :: proc(t: ^testing.T) {
 	for level in codegen.Optimization {
@@ -66,9 +99,10 @@ every_level_emits_an_object :: proc(t: ^testing.T) {
 	}
 }
 
-// Every v1 triple gets its own object format on any host, so the triple really reaches LLVM.
+// Every supported triple gets its own object format on any host, so the triple really reaches
+// LLVM.
 @(test)
-every_v1_target_emits_its_object_format :: proc(t: ^testing.T) {
+every_supported_target_emits_its_object_format :: proc(t: ^testing.T) {
 	// The first bytes of each format: the COFF machine type for x86-64, the ELF magic, the 64-bit
 	// Mach-O magic, all little-endian.
 	magics := #partial [target.Target]string {
@@ -77,9 +111,15 @@ every_v1_target_emits_its_object_format :: proc(t: ^testing.T) {
 		.darwin_arm64  = "\xcf\xfa\xed\xfe",
 		.darwin_amd64  = "\xcf\xfa\xed\xfe",
 	}
-	for id in V1_TARGETS {
+	for id in target.Target {
+		if !target.supported(id) {
+			continue
+		}
+		if !testing.expectf(t, magics[id] != "", "%v: no object format magic in this test", id) {
+			continue
+		}
 		path := fmt.tprintf("dist/codegen-%v.obj", id)
-		err := codegen.emit(codegen.Unit{}, id, .Speed, .Object, path)
+		err := codegen.emit(codegen.Unit{}, id, .speed, .Object, path)
 		if !testing.expectf(t, err == .None, "%v: %v", id, err) {
 			continue
 		}
@@ -99,7 +139,7 @@ every_v1_target_emits_its_object_format :: proc(t: ^testing.T) {
 @(test)
 target_without_a_row_is_unsupported :: proc(t: ^testing.T) {
 	path := "dist/codegen-wasm32_wasi.obj"
-	err := codegen.emit(codegen.Unit{}, .wasm32_wasi, .Speed, .Object, path)
+	err := codegen.emit(codegen.Unit{}, .wasm32_wasi, .speed, .Object, path)
 	testing.expect_value(t, err, codegen.Error.Unsupported_Target)
 	testing.expectf(t, !os.exists(path), "%s was written", path)
 }
@@ -113,7 +153,7 @@ missing_directory_is_a_write_error :: proc(t: ^testing.T) {
 			// emit logs LLVM's reason at error level, and the test runner fails a test on any
 			// error log. The scope keeps the expects below on the runner's logger.
 			context.logger = log.nil_logger()
-			err = codegen.emit(codegen.Unit{}, target.HOST, .Speed, artifact, path)
+			err = codegen.emit(codegen.Unit{}, target.HOST, .speed, artifact, path)
 		}
 		testing.expectf(t, err == .Write_Failed, "%v: %v", artifact, err)
 	}

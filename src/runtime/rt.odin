@@ -20,7 +20,7 @@ import "base:runtime"
 import "../abi"
 import "fail"
 
-foreign {
+foreign _ {
 	@(link_name = abi.MAIN_SYMBOL)
 	tsnc_main :: proc "c" () ---
 }
