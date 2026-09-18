@@ -43,7 +43,7 @@ odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff
 
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
-- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe` or the `llvm` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
+- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe` or the `llvm` and `codegen` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
 - Linux and macOS: install LLVM 20 (`llvm-20-dev` from apt.llvm.org, `llvm@20` from Homebrew). How the build finds it gets set up together with CI. Linking there goes through the system C compiler (`cc`), which Odin needs anyway.
 
 The compiler CLI follows Odin (see [requirements, section 9](docs/REQUIREMENTS.md#9-platforms-cli-artifacts)):
@@ -65,6 +65,7 @@ src/          compiler, package main
 src/runtime/  runtime, package rt, built as an object file
 src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
 src/llvm/     LLVM-C 20 bindings
+src/codegen/  LLVM module to an object file or textual LLVM IR
 src/target/   target platforms: LLVM triple, linker, link flags
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora

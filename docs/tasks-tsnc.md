@@ -69,7 +69,7 @@ Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundarie
 After: T1.3.
 Done: the runtime object builds on the host; `odin test tests/runtime/console` checks UTF-8 for Cyrillic and emoji.
 
-### [ ] T1.6 `codegen`, minimum: hello world module to an object file
+### [x] T1.6 `codegen`, minimum: hello world module to an object file
 
 What: `init_global_options` (once, `-disable-lsr`); context, module and `TargetMachine` from `Target`; runtime function declarations from the `abi.Runtime_Proc` table; a static string cell in the data section with the `abi` layout; a `tsnc_main` function that calls string output; a pass pipeline by level (`default<O2>`, `default<O3>`, no optimization); output of the object file and the `.ll` text. The entry point already has the form `emit(..., Unit, Target, level, artifact kind, path)`; for now a built-in hello world stands in for the IR.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `codegen`; [Key decisions](architecture-plan-tsnc.md#key-decisions), rows "Codegen unit", "Target platform"; [External boundaries](architecture-plan-tsnc.md#external-boundaries); requirements §4.1 item 5, §4.2.

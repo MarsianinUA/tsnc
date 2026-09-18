@@ -12,7 +12,8 @@ and offset_of of these structs. The #asserts at the end of this file pin what co
 types.
 
 Memory rules:
-- Every cell starts with a Cell_Header, whether it lives in the GC heap or in static data.
+- Every cell starts with a Cell_Header, whether it lives in the GC heap or in static data. A static
+  cell is read-only: the GC marks and frees only cells in its own heap.
 - A reference is a plain pointer to the start of a cell. Generated code never disguises pointers.
 - A slot other than Tagged is one 8-byte word; a boolean is b64, 0 or 1.
 */
