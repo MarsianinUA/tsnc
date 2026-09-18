@@ -1,0 +1,12 @@
+// Builds first, then launches the debug binary under CodeLLDB.
+// Zed downloads the CodeLLDB adapter on first use.
+[
+	{
+		"label": "tsnc",
+		"adapter": "CodeLLDB",
+		"request": "launch",
+		"program": "$ZED_WORKTREE_ROOT/dist/tsnc-debug.exe",
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"build": "odin: build (debug)"
+	}
+]

@@ -1,0 +1,50 @@
+// Hot commands. Run them with shift-alt-t, or press the > button next to `main`.
+// Every task calls `odin` directly, so one definition works on Windows, macOS and Linux.
+[
+	{
+		"label": "odin: run",
+		"command": "odin",
+		"args": ["run", "src", "-out:dist/tsnc-debug.exe", "-debug", "-vet", "-strict-style"],
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"save": "all",
+		// Overrides the extension's own odin-main task, which builds outside dist/.
+		"tags": ["odin-main"]
+	},
+	{
+		"label": "odin: build (debug)",
+		"command": "odin",
+		"args": ["build", "src", "-out:dist/tsnc-debug.exe", "-debug", "-vet", "-strict-style"],
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"save": "all"
+	},
+	{
+		"label": "odin: build (release)",
+		"command": "odin",
+		"args": ["build", "src", "-out:dist/tsnc.exe", "-o:speed", "-vet", "-strict-style"],
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"save": "all"
+	},
+	{
+		"label": "odin: check",
+		"command": "odin",
+		"args": ["check", "src", "-vet", "-strict-style"],
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"save": "all"
+	},
+	{
+		"label": "odin: test",
+		"command": "odin",
+		"args": ["test", "src", "-out:dist/tsnc-tests.exe", "-vet", "-strict-style", "-define:ODIN_TEST_FANCY=false", "-define:ODIN_TEST_CLIPBOARD=false"],
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"save": "all",
+		"tags": ["odin-test-all"]
+	},
+	{
+		"label": "odin: test (current)",
+		"command": "odin",
+		"args": ["test", "src", "-out:dist/tsnc-tests.exe", "-vet", "-strict-style", "-define:ODIN_TEST_FANCY=false", "-define:ODIN_TEST_CLIPBOARD=false", "-define:ODIN_TEST_NAMES=$ZED_SYMBOL"],
+		"cwd": "$ZED_WORKTREE_ROOT",
+		"save": "all",
+		"tags": ["odin-test"]
+	}
+]
