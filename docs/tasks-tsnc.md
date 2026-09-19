@@ -150,7 +150,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.3.
 Done: tests for scopes, closure capture, import and export tables, the flow graph for `if`, `switch` and loops, and the effects flag.
 
-### [ ] T2.8 `driver` and `main`: `tsnc check` for syntax
+### [x] T2.8 `driver` and `main`: `tsnc check` for syntax
 
 What: reading the input file; the import closure loop (sequential for now): relative paths, `File_ID` in breadth-first order, the lib file as number zero; `parse_file` and `bind_file` per file in a task arena, written as a task procedure (the pool comes in T6.1); collecting diagnostics, sorting and rendering to stderr, exit code.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `driver`, `main`; [Interaction map](architecture-plan-tsnc.md#interaction-map), the "Determinism" paragraph; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rules 4 and 5; requirements §7, §9.

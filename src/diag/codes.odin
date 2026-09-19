@@ -41,10 +41,14 @@ Code :: enum u16 {
 	Regular_Expression,
 	Unsupported_Syntax, // {0} is construct_text of a Construct: "labels", "intersection types"
 
-	// T4xxx: names, modules and imports. bind (T2.7) reports these.
+	// T4xxx: names, modules and imports. bind (T2.7) reports these, and driver (T2.8) the three
+	// that need a file system to decide.
 	Redeclared_Name, // {0} is the name
 	Duplicate_Export, // {0} is the exported name
 	Undeclared_Export, // {0} is the exported name
+	Module_Not_Found, // {0} is the specifier as written
+	Bare_Specifier, // {0} is the specifier as written
+	Module_Unreadable, // {0} is the specifier, {1} why the file could not be read
 }
 
 @(private)
@@ -237,6 +241,21 @@ REGISTRY := [Code]Row {
 		number = 4003,
 		text = "`{0}` is not declared in this module",
 		hint = "declare `{0}` at the top level of this module, or re-export it from the module it comes from: `export { {0} } from \"./m\"`",
+	},
+	.Module_Not_Found = {
+		number = 4004,
+		text = "cannot find module `{0}`",
+		hint = "create the file, or fix the path: it is relative to the module it is written in, and `./m` and `./m.ts` both name `m.ts`",
+	},
+	.Bare_Specifier = {
+		number = 4005,
+		text = "cannot import `{0}`: only relative paths are supported",
+		hint = "write a relative path such as `./m`; tsnc reads no `node_modules`, so a package name never names a file",
+	},
+	.Module_Unreadable = {
+		number = 4006,
+		text = "cannot read module `{0}`: {1}",
+		hint = "check that the path names a file and not a directory, and that the file can be read",
 	},
 }
 
