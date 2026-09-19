@@ -1,9 +1,7 @@
-/*
-Source text to a syntax tree, in two public stages: tokenize turns the text of one file into a
-token array, and parse_tokens turns the tokens into an ast.File_AST. A stage never stops at an
-error: it reports a diag.Diagnostic and goes on.
+package parse
 
-Tokens (tokenize):
+/*
+Tokens (tokenize); the package doc is in parse.odin.
 - The array always ends with one EOF token. Spaces, line breaks and comments make no tokens; a line
   break before a token, also one inside a block comment, sets its line_break_before, which is what
   automatic semicolon insertion needs. A `#!` line at the very start is a comment.
@@ -30,7 +28,6 @@ Memory: the token array, the diagnostics and every cooked value that differs fro
 are allocated with the allocator passed in. Names, the other cooked values and the diagnostic
 arguments borrow the source text. Scratch data goes to context.temp_allocator.
 */
-package parse
 
 import "base:runtime"
 import "core:strconv"

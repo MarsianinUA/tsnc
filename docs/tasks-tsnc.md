@@ -129,7 +129,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.2, T2.3.
 Done: tests: operators, numbers (`1e21`, `0x10`, fractional), strings with escapes, nested templates, ASI flags.
 
-### [ ] T2.5 `parse.parse_tokens`: recursive descent
+### [x] T2.5 `parse.parse_tokens`: recursive descent
 
 What: expressions with precedence, statements, declarations, type syntax, import and export, ASI per the specification; syntactic rules of the subset (`var`, `with`, `namespace`, decorators, `arguments`, `delete`, `eval`, `new Function`) as diagnostics with a hint, recovery through a `Bad` node and continuation; `parse_file` as `tokenize` plus `parse_tokens`.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `parse`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rule 8; requirements §2.2 "Never", §2.3, §4.1 item 2.
