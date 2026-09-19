@@ -2,7 +2,7 @@
 
 TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
-Status: milestone 1. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. CI runs the build, the unit tests and the smoke test on Windows, Linux and macOS (arm64 and x64). The CLI parses its flags and answers "not implemented" with exit code 1.
+Status: milestone 2. `tsnc check` works: it reads an entry file, follows its relative imports, parses and binds every file it reaches and reports the syntax, subset and name errors of the whole program in one pass. `tsnc build` and `tsnc run` still answer "not implemented" with exit code 1, since type checking and code generation from real source start in milestones 3 and 4. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. CI runs the build, the unit tests and the smoke test on Windows, Linux and macOS (arm64 and x64).
 
 ## Docs
 
@@ -45,7 +45,7 @@ odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke | negativ
 
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
-- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe`, the test runner or the `llvm`, `codegen` and `link` package tests. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
+- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe`, the test runner or the `llvm`, `codegen`, `link` and `driver` package tests. `driver` is on that list because it owns `Options`, which names an optimization level, so the package links `codegen` even though `tsnc check` never generates code. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
 - Linux: `sudo apt install llvm-20-dev` (Ubuntu 24.04 and later have it; elsewhere apt.llvm.org). The bindings link `libLLVM-20.so`, which the package puts on the default library path.
 - macOS: `brew install llvm@20`. Homebrew keeps it off the default library path, so `src/llvm` gives the linker its directory: `/opt/homebrew/opt/llvm@20/lib` on Apple silicon, `/usr/local/opt/llvm@20/lib` on Intel. For LLVM 20 installed elsewhere, add `-extra-linker-flags:-L<dir>` to `odin build`, `odin test` and `odin run`.
 
@@ -91,6 +91,8 @@ src/source/   source files: File_ID, spans, lines and columns
 src/diag/     compile errors: code registry with hints, sorting, rendering
 src/ast/      syntax tree: nodes indexed by Node_ID, import list, traversal
 src/parse/    source text to tokens, then to a syntax tree
+src/bind/     symbols, scopes, import and export tables, the flow graph
+src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora
 bench/        benchmarks
