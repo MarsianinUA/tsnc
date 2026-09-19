@@ -122,7 +122,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.1.
 Done: `odin check src/ast`; a traversal test on a hand-built tree.
 
-### [ ] T2.4 `parse.tokenize`: tokenizer
+### [x] T2.4 `parse.tokenize`: tokenizer
 
 What: TS tokens for v1, number and string literals, template strings with nesting, a "line break before the token" flag for ASI, positions as `Span`; an unknown character or an unclosed literal produces a diagnostic with a code, and parsing continues.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `parse`, stage `tokenize`; [Key decisions](architecture-plan-tsnc.md#key-decisions), the alternative "`lex` as a separate package"; requirements §4.1 item 1.

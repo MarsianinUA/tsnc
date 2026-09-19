@@ -90,6 +90,7 @@ src/target/   target platforms: LLVM triple, linker, link flags
 src/source/   source files: File_ID, spans, lines and columns
 src/diag/     compile errors: code registry with hints, sorting, rendering
 src/ast/      syntax tree: nodes indexed by Node_ID, import list, traversal
+src/parse/    source text to tokens, then to a syntax tree
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora
 bench/        benchmarks
