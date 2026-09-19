@@ -115,7 +115,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.1.
 Done: rendering and sorting tests; a test that every code has non-empty text and hint.
 
-### [ ] T2.3 `ast`: tree nodes and `Node_ID`
+### [x] T2.3 `ast`: tree nodes and `Node_ID`
 
 What: node shapes for the v1 subset (§2.2 "v1"), type syntax (union, arrays, object types, function types, literal types, `Array<T>`), `interface` and `type`, ESM import and export, `declare` and generic interfaces for the lib file; `Bad` nodes; dense `Node_ID` within a file; `File_AST` with a list of imports; traversal. Only data and traversal.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `ast`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rules 2 and 3; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Shape of check facts"; [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the item on pointers or indices; requirements §4.1 item 2.
