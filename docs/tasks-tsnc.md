@@ -108,7 +108,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T1.1.
 Done: position conversion tests on files with `\r\n`, Cyrillic, empty lines.
 
-### [ ] T2.2 `diag`: code registry and diagnostic as a value
+### [x] T2.2 `diag`: code registry and diagnostic as a value
 
 What: an enum of codes of the form `T0001` with a table of text and hint; `Diagnostic` (code, span, arguments); sorting by (`File_ID`, offset, code); rendering `file:line:col: error[T0123]: text` plus a hint line; the first codes for syntax and the syntactic subset. New codes are added only here.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `diag`; [Contracts → Diagnostic](architecture-plan-tsnc.md#diagnostic-package-diag); [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rules 6 and 8; requirements §2.3, §5.
