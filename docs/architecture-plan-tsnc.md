@@ -238,7 +238,7 @@ Only what the linked sources do not already cover. In words, without code.
 
 ### `Diagnostic` (package `diag`)
 
-Value: a code from the enum registry, a span, message arguments. For each code, the registry stores the text and a "how to rewrite" hint. Code numbers are stable and go by range: T1xxx syntax, T2xxx constructs outside the subset, T3xxx types, T4xxx modules and imports. Rendering follows the requirements in section 5: the error line, then the hint on an indented line starting with `hint:`. Lines and columns are 1-based, and a column counts UTF-16 code units from the start of the line, as in tsc and VS Code; `source` computes them, and the registry states this rule. Sorting is by the triple (`File_ID`, offset, code). Messages are in English.
+Value: a code from the enum registry, a span, message arguments. For each code, the registry stores the text and a "how to rewrite" hint. Code numbers are stable and go by range: T1xxx syntax, T2xxx constructs outside the subset, T3xxx types, T4xxx names, modules and imports. Rendering follows the requirements in section 5: the error line, then the hint on an indented line starting with `hint:`. Lines and columns are 1-based, and a column counts UTF-16 code units from the start of the line, as in tsc and VS Code; `source` computes them, and the registry states this rule. Sorting is by the triple (`File_ID`, offset, code). Messages are in English.
 
 ### Runtime exports (package `rt`)
 
