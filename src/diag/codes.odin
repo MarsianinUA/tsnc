@@ -59,7 +59,7 @@ REGISTRY := [Code]Row {
 	.Invalid_Number = {
 		number = 1005,
 		text = "invalid number literal",
-		hint = "write digits after the prefix (`0x`, `0o`, `0b`) or the exponent (`e`), and separate the number from the name after it",
+		hint = "write digits after `0x`, `0o`, `0b` and `e`, put `_` only between digits, write `0o17` instead of `017`, and separate the number from the name after it",
 	},
 	.Invalid_Escape = {
 		number = 1006,
