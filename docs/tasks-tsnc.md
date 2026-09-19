@@ -101,7 +101,7 @@ Done: a green run on all four images.
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 2.
 
-### [ ] T2.1 `source`: file table and positions
+### [x] T2.1 `source`: file table and positions
 
 What: `File_ID`, `Span` (file, start, end), file table (normalized path, text), conversion of an offset to line and column through a table of line breaks; choose the column unit (code points or UTF-16 units) in the detailed plan and record it in the `diag` registry as a format rule.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `source`; requirements §5 (diagnostic format).
