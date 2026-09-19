@@ -5,8 +5,9 @@ Tokens (tokenize); the package doc is in parse.odin.
 - The array always ends with one EOF token. Spaces, line breaks and comments make no tokens; a line
   break before a token, also one inside a block comment, sets its line_break_before, which is what
   automatic semicolon insertion needs. A `#!` line at the very start is a comment.
-- Line terminators are \n, \r, \r\n, U+2028 and U+2029; spaces are tab, \v, \f, space, U+00A0,
-  U+FEFF and the Unicode space separators.
+- Line terminators are \n, \r, \r\n, U+2028 and U+2029, read by source.line_terminator_size, so a
+  line here is the line of a diagnostic. Spaces are tab, \v, \f, space, U+00A0, U+FEFF and the
+  Unicode space separators.
 - A name starts with a letter, `$` or `_` and goes on with those and digits, combining marks,
   U+200C and U+200D: ID_Start and ID_Continue as close as core:unicode gets. `\u` escapes in names
   are not supported: the backslash is an unexpected character.
@@ -422,7 +423,7 @@ scan_template_part :: proc(t: ^Tokenizer, start: int) {
 			// \r\n and a lone \r both cook to \n.
 			copy_run(t, &cooked)
 			append(&cooked.buffer, '\n')
-			t.offset += line_terminator_size(t.text, t.offset)
+			t.offset += source.line_terminator_size(t.text, t.offset)
 			cooked.run_start = t.offset
 		case:
 			t.offset += 1
@@ -491,7 +492,7 @@ scan_escape :: proc(t: ^Tokenizer, cooked: ^Cooked) {
 		}
 		t.offset = end
 	case:
-		if size := line_terminator_size(t.text, t.offset); size > 0 {
+		if size := source.line_terminator_size(t.text, t.offset); size > 0 {
 			// A line continuation adds nothing to the value.
 			t.offset += size
 		} else {
@@ -603,7 +604,7 @@ cooked_value :: proc(t: ^Tokenizer, cooked: ^Cooked) -> string {
 skip_trivia :: proc(t: ^Tokenizer) {
 	for t.offset < len(t.text) {
 		rest := t.text[t.offset:]
-		if size := line_terminator_size(t.text, t.offset); size > 0 {
+		if size := source.line_terminator_size(t.text, t.offset); size > 0 {
 			t.line_break_before = true
 			t.offset += size
 			continue
@@ -629,7 +630,7 @@ skip_trivia :: proc(t: ^Tokenizer) {
 // skip_trivia.
 @(private)
 skip_line_comment :: proc(t: ^Tokenizer) {
-	for t.offset < len(t.text) && line_terminator_size(t.text, t.offset) == 0 {
+	for t.offset < len(t.text) && source.line_terminator_size(t.text, t.offset) == 0 {
 		t.offset += 1
 	}
 }
@@ -643,30 +644,12 @@ skip_block_comment :: proc(t: ^Tokenizer) {
 			t.offset += 2
 			return
 		}
-		if line_terminator_size(t.text, t.offset) > 0 {
+		if source.line_terminator_size(t.text, t.offset) > 0 {
 			t.line_break_before = true
 		}
 		t.offset += 1
 	}
 	report(t, .Unterminated_Comment, start, t.offset)
-}
-
-// line_terminator_size is the length in bytes of the line terminator at text[i], \r\n counted as
-// one, or 0 if there is none.
-@(private)
-line_terminator_size :: proc(text: string, i: int) -> int {
-	switch byte_at(text, i) {
-	case '\n':
-		return 1
-	case '\r':
-		return 2 if byte_at(text, i + 1) == '\n' else 1
-	case 0xE2:
-		// U+2028 is E2 80 A8, U+2029 is E2 80 A9.
-		last := byte_at(text, i + 2)
-		is_separator := byte_at(text, i + 1) == 0x80 && (last == 0xA8 || last == 0xA9)
-		return 3 if is_separator else 0
-	}
-	return 0
 }
 
 // is_space reports the ECMAScript white space characters; line terminators are not among them.

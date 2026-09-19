@@ -39,7 +39,7 @@ Code :: enum u16 {
 	Function_Expression, // {0}: "function expressions", "object literal methods"
 	For_In,
 	Regular_Expression,
-	Unsupported_Syntax, // {0} names the construct in the plural: "labels", "intersection types"
+	Unsupported_Syntax, // {0} is construct_text of a Construct: "labels", "intersection types"
 }
 
 @(private)
@@ -218,4 +218,127 @@ REGISTRY := [Code]Row {
 		text = "{0} are not supported",
 		hint = "rewrite the code without them: tsnc supports the TypeScript subset listed in its requirements, section 2.2",
 	},
+}
+
+// Construct names a construct outside the subset that has no code of its own: Unsupported_Syntax
+// reports it, with construct_text as the argument. When a later version supports a construct, its
+// name goes away here and the compiler points at every place that reported it.
+Construct :: enum u8 {
+	// Declarations, statements and modules.
+	Function_Overloads,
+	Generators,
+	Interface_Extends_Clauses,
+	Default_Parameter_Values,
+	This_Parameters,
+	Labels,
+	Debugger_Statements,
+	For_Of_Without_Declaration,
+	Import_Equals_Aliases,
+	Import_Attributes,
+	Export_Star_Declarations,
+	Export_Assignments,
+	Export_Import_Aliases,
+	String_Specifiers,
+
+	// Expressions.
+	Comma_Operators,
+	As_Const_Assertions,
+	Satisfies_Expressions,
+	In_Expressions,
+	Instanceof_Expressions,
+	Void_Expressions,
+	Generic_Arrow_Functions,
+	Angle_Bracket_Assertions,
+	Tagged_Templates,
+	Explicit_Type_Arguments,
+	Import_Expressions,
+	New_Target,
+	Array_Holes,
+	Computed_Property_Names,
+	Number_Property_Keys,
+	Getters_And_Setters,
+
+	// Types.
+	Conditional_Types,
+	Intersection_Types,
+	Indexed_Access_Types,
+	Tuple_Types,
+	Template_Literal_Types,
+	Typeof_Types,
+	This_Types,
+	Constructor_Types,
+	Keyof_Types,
+	Readonly_Array_Types,
+	Unique_Symbol_Types,
+	Infer_Types,
+	Object_Symbol_Bigint_Types,
+	Type_Predicates,
+	Deep_Qualified_Names,
+	Type_Parameter_Constraints,
+	Type_Parameter_Defaults,
+	Index_Signatures,
+	Call_Signatures,
+	Construct_Signatures,
+}
+
+// construct_text is the text of c in the plural, which Unsupported_Syntax puts in place of {0}:
+// "labels are not supported".
+construct_text :: proc(c: Construct) -> string {
+	return CONSTRUCT_TEXTS[c]
+}
+
+// CONSTRUCT_TEXTS must have a text for every Construct, as REGISTRY has a row for every Code. The
+// texts follow the wording rules of the package doc.
+@(private, rodata)
+CONSTRUCT_TEXTS := [Construct]string {
+	.Function_Overloads         = "function overloads",
+	.Generators                 = "generators",
+	.Interface_Extends_Clauses  = "interface `extends` clauses",
+	.Default_Parameter_Values   = "default parameter values",
+	.This_Parameters            = "`this` parameters",
+	.Labels                     = "labels",
+	.Debugger_Statements        = "`debugger` statements",
+	.For_Of_Without_Declaration = "`for...of` loops over an existing variable",
+	.Import_Equals_Aliases      = "`import =` aliases",
+	.Import_Attributes          = "import attributes",
+	.Export_Star_Declarations   = "`export *` declarations",
+	.Export_Assignments         = "`export =` assignments",
+	.Export_Import_Aliases      = "`export import` aliases",
+	.String_Specifiers          = "string import and export names",
+	.Comma_Operators            = "comma operators",
+	.As_Const_Assertions        = "`as const` assertions",
+	.Satisfies_Expressions      = "`satisfies` expressions",
+	.In_Expressions             = "`in` expressions",
+	.Instanceof_Expressions     = "`instanceof` expressions",
+	.Void_Expressions           = "`void` expressions",
+	.Generic_Arrow_Functions    = "generic arrow functions",
+	.Angle_Bracket_Assertions   = "`<T>` type assertions",
+	.Tagged_Templates           = "tagged templates",
+	.Explicit_Type_Arguments    = "explicit type arguments",
+	.Import_Expressions         = "`import()` and `import.meta` expressions",
+	.New_Target                 = "`new.target` expressions",
+	.Array_Holes                = "array holes",
+	.Computed_Property_Names    = "computed property names",
+	.Number_Property_Keys       = "number property keys",
+	.Getters_And_Setters        = "getters and setters",
+	.Conditional_Types          = "conditional types",
+	.Intersection_Types         = "intersection types",
+	.Indexed_Access_Types       = "indexed access types",
+	.Tuple_Types                = "tuple types",
+	.Template_Literal_Types     = "template literal types",
+	.Typeof_Types               = "`typeof` types",
+	.This_Types                 = "`this` types",
+	.Constructor_Types          = "constructor types",
+	.Keyof_Types                = "`keyof` types",
+	.Readonly_Array_Types       = "`readonly` array types",
+	.Unique_Symbol_Types        = "`unique symbol` types",
+	.Infer_Types                = "`infer` types",
+	.Object_Symbol_Bigint_Types = "`object`, `symbol` and `bigint` types",
+	.Type_Predicates            = "type predicates",
+	.Deep_Qualified_Names       = "qualified names deeper than `m.T`",
+	.Type_Parameter_Constraints = "type parameter constraints",
+	.Type_Parameter_Defaults    = "type parameter defaults",
+	.Index_Signatures           = "index signatures",
+	.Call_Signatures            = "call signatures",
+	.Construct_Signatures       = "construct signatures",
 }

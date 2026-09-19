@@ -1,3 +1,4 @@
+#+private
 package parse
 
 import "../ast"
@@ -6,34 +7,21 @@ import "../source"
 
 // Binary operator precedences, loosest first. `??` stands below `||` and `&&`; mixing it with
 // them without parentheses is an error (T1009).
-@(private)
 COALESCE :: 1
-@(private)
 LOGICAL_OR :: 2
-@(private)
 LOGICAL_AND :: 3
-@(private)
 BIT_OR :: 4
-@(private)
 BIT_XOR :: 5
-@(private)
 BIT_AND :: 6
-@(private)
 EQUALITY :: 7
-@(private)
 RELATIONAL :: 8 // also `as`
-@(private)
 SHIFT :: 9
-@(private)
 ADDITIVE :: 10
-@(private)
 MULTIPLICATIVE :: 11
-@(private)
 POWER :: 12
 
 // parse_expression parses an expression. The comma operator is outside the subset: `a, b` is one
 // Bad node.
-@(private)
 parse_expression :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -41,7 +29,7 @@ parse_expression :: proc(p: ^Parser) -> ast.Node_ID {
 	if !at(p, .Comma) {
 		return expr
 	}
-	report_subset(p, .Unsupported_Syntax, peek(p).span, "comma operators")
+	report_unsupported(p, .Comma_Operators, peek(p).span)
 	for accept(p, .Comma) {
 		parse_assignment(p)
 	}
@@ -49,7 +37,6 @@ parse_expression :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_assignment parses an arrow function, an assignment or a conditional expression.
-@(private)
 parse_assignment :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -93,7 +80,6 @@ parse_assignment :: proc(p: ^Parser) -> ast.Node_ID {
 
 // assignment_operator is the assignment operator at the current token and the number of tokens it
 // takes: `>>=` and `>>>=` are several `>` and `=` tokens.
-@(private)
 assignment_operator :: proc(p: ^Parser) -> (op: ast.Assign_Op, token_count: int, ok: bool) {
 	#partial switch peek(p).kind {
 	case .Equal:
@@ -138,13 +124,11 @@ assignment_operator :: proc(p: ^Parser) -> (op: ast.Assign_Op, token_count: int,
 
 // Greater_Run describes the touching `>` and `=` tokens that start at the current `>`: tokenize
 // leaves every `>` single, and they join here into `>=`, `>>`, `>>=`, `>>>` and `>>>=`.
-@(private)
 Greater_Run :: struct {
 	greater_count: int, // 1 to 3
 	has_equal:     bool, // a `=` touches the last `>`
 }
 
-@(private)
 greater_run :: proc(p: ^Parser) -> (run: Greater_Run) {
 	run.greater_count = 1
 	for run.greater_count < 3 && touches_next(p, run.greater_count) {
@@ -160,14 +144,12 @@ greater_run :: proc(p: ^Parser) -> (run: Greater_Run) {
 
 // touches_next reports whether the token ahead tokens after the current one starts right where
 // the one before it ends, with no space between them.
-@(private)
 touches_next :: proc(p: ^Parser, ahead: int) -> bool {
 	return peek(p, ahead - 1).span.end == peek(p, ahead).span.start
 }
 
 // is_assignable reports whether a node can be assigned to: a variable, a field or an element. A
 // Bad node counts too: it has been reported already.
-@(private)
 is_assignable :: proc(node: ast.Node) -> bool {
 	#partial switch _ in node.variant {
 	case ast.Ident, ast.Member, ast.Index, ast.Non_Null, ast.Bad:
@@ -176,7 +158,6 @@ is_assignable :: proc(node: ast.Node) -> bool {
 	return false
 }
 
-@(private)
 parse_conditional :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	condition := parse_binary(p, COALESCE)
@@ -197,7 +178,6 @@ parse_conditional :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_binary parses the binary operators of min_precedence and tighter, by precedence climbing.
 // `as` binds like a relational operator, and its right side is a type.
-@(private)
 parse_binary :: proc(p: ^Parser, min_precedence: int) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -213,7 +193,7 @@ parse_binary :: proc(p: ^Parser, min_precedence: int) -> ast.Node_ID {
 		if RELATIONAL >= min_precedence && !token.line_break_before {
 			is_as := is_word(token, "as")
 			if is_as && peek(p, 1).kind == .Const {
-				report_subset(p, .Unsupported_Syntax, token.span, "`as const` assertions")
+				report_unsupported(p, .As_Const_Assertions, token.span)
 				advance(p)
 				advance(p)
 				left = discard(p, m, start)
@@ -226,15 +206,16 @@ parse_binary :: proc(p: ^Parser, min_precedence: int) -> ast.Node_ID {
 				continue
 			}
 			if is_word(token, "satisfies") {
-				report_subset(p, .Unsupported_Syntax, advance(p).span, "`satisfies` expressions")
+				report_unsupported(p, .Satisfies_Expressions, advance(p).span)
 				parse_type(p)
 				left = discard(p, m, start)
 				continue
 			}
 		}
 		if RELATIONAL >= min_precedence && (token.kind == .In || token.kind == .Instanceof) {
-			what := "`in` expressions" if token.kind == .In else "`instanceof` expressions"
-			report_subset(p, .Unsupported_Syntax, advance(p).span, what)
+			construct: diag.Construct =
+				.In_Expressions if token.kind == .In else .Instanceof_Expressions
+			report_unsupported(p, construct, advance(p).span)
 			parse_binary(p, RELATIONAL + 1)
 			left = discard(p, m, start)
 			continue
@@ -263,7 +244,6 @@ parse_binary :: proc(p: ^Parser, min_precedence: int) -> ast.Node_ID {
 
 // binary_operator is the binary operator at the current token, its precedence and the number of
 // tokens it takes.
-@(private)
 binary_operator :: proc(
 	p: ^Parser,
 ) -> (
@@ -333,7 +313,6 @@ binary_operator :: proc(
 // check_power_base reports a unary expression as the left side of `**`: `-2 ** 2` could mean
 // `(-2) ** 2` or `-(2 ** 2)`, so ECMAScript rejects it. start is where the left side starts; a
 // left side in parentheses starts before its node.
-@(private)
 check_power_base :: proc(p: ^Parser, left: ast.Node_ID, start: i32) {
 	node := p.nodes[left]
 	unary, is_unary := node.variant.(ast.Unary)
@@ -358,7 +337,6 @@ check_power_base :: proc(p: ^Parser, left: ast.Node_ID, start: i32) {
 
 // mixes_coalesce reports whether operand, an operand of op that starts at operand_start, is a
 // `??` next to `&&` or `||`, or an `&&` or `||` next to `??`, without parentheses around it.
-@(private)
 mixes_coalesce :: proc(
 	p: ^Parser,
 	op: ast.Binary_Op,
@@ -380,7 +358,6 @@ mixes_coalesce :: proc(
 	return is_logical(op) && binary.op == .Coalesce
 }
 
-@(private)
 parse_unary :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -403,7 +380,8 @@ parse_unary :: proc(p: ^Parser) -> ast.Node_ID {
 	case .Delete:
 		return parse_unsupported_unary(p, .Delete_Operator, "")
 	case .Void:
-		return parse_unsupported_unary(p, .Unsupported_Syntax, "`void` expressions")
+		what := diag.construct_text(.Void_Expressions)
+		return parse_unsupported_unary(p, .Unsupported_Syntax, what)
 	case .Await:
 		return parse_unsupported_unary(p, .Async, "")
 	case .Less:
@@ -412,7 +390,6 @@ parse_unary :: proc(p: ^Parser) -> ast.Node_ID {
 	return parse_postfix(p)
 }
 
-@(private)
 unary_op :: proc(kind: Token_Kind) -> ast.Unary_Op {
 	#partial switch kind {
 	case .Minus:
@@ -430,7 +407,6 @@ unary_op :: proc(kind: Token_Kind) -> ast.Unary_Op {
 }
 
 // parse_unsupported_unary reports a unary operator outside the subset and parses its operand.
-@(private)
 parse_unsupported_unary :: proc(p: ^Parser, code: diag.Code, arg: string) -> ast.Node_ID {
 	m := mark(p)
 	operator := advance(p)
@@ -441,22 +417,20 @@ parse_unsupported_unary :: proc(p: ^Parser, code: diag.Code, arg: string) -> ast
 
 // parse_angle_brackets parses `<T>x`, a type assertion, or `<T>(x: T) => x`, a generic arrow. Both
 // are outside the subset.
-@(private)
 parse_angle_brackets :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	less := peek(p)
 	parse_type_arguments(p)
 	if try_arrow(p) != ast.NO_NODE {
-		report_subset(p, .Unsupported_Syntax, less.span, "generic arrow functions")
+		report_unsupported(p, .Generic_Arrow_Functions, less.span)
 	} else {
-		report_subset(p, .Unsupported_Syntax, less.span, "`<T>` type assertions")
+		report_unsupported(p, .Angle_Bracket_Assertions, less.span)
 		parse_unary(p)
 	}
 	return discard(p, m, less.span.start)
 }
 
 // check_update_target reports the operand of `++` or `--` when it cannot be assigned to.
-@(private)
 check_update_target :: proc(p: ^Parser, operand: ast.Node_ID) {
 	node := p.nodes[operand]
 	if !is_assignable(node) {
@@ -466,7 +440,6 @@ check_update_target :: proc(p: ^Parser, operand: ast.Node_ID) {
 
 // parse_postfix parses a primary expression and what follows it: member access, indexing, calls,
 // `!`, and a postfix `++` or `--`. Optional chaining and tagged templates are outside the subset.
-@(private)
 parse_postfix :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -518,7 +491,7 @@ parse_postfix :: proc(p: ^Parser) -> ast.Node_ID {
 			expr = add_node(p, start, ast.Update{op = op, operand = expr})
 			break loop
 		case .No_Substitution_Template, .Template_Head:
-			report_subset(p, .Unsupported_Syntax, token.span, "tagged templates")
+			report_unsupported(p, .Tagged_Templates, token.span)
 			parse_template(p)
 			expr = discard(p, m, start)
 		case:
@@ -534,7 +507,6 @@ parse_postfix :: proc(p: ^Parser) -> ast.Node_ID {
 // try_type_arguments reads `<T>` before the `(` of a call or a template: explicit type arguments,
 // outside the subset. It reports them and drops them; the call stays. Otherwise the `<` is
 // less-than: try_type_arguments reads nothing and returns false.
-@(private)
 try_type_arguments :: proc(p: ^Parser) -> bool {
 	if p.current in p.failed_tries {
 		return false
@@ -547,7 +519,7 @@ try_type_arguments :: proc(p: ^Parser) -> bool {
 	case .Open_Paren, .No_Substitution_Template, .Template_Head:
 		if p.errors_seen == m.errors_seen {
 			drop(p, m)
-			report_subset(p, .Unsupported_Syntax, less.span, "explicit type arguments")
+			report_unsupported(p, .Explicit_Type_Arguments, less.span)
 			return true
 		}
 	}
@@ -556,7 +528,6 @@ try_type_arguments :: proc(p: ^Parser) -> bool {
 }
 
 // parse_member_name parses the name after `.`: any name, a reserved word included.
-@(private)
 parse_member_name :: proc(p: ^Parser) -> ast.Name {
 	if is_name_token(peek(p)) {
 		return name_of(advance(p))
@@ -566,7 +537,6 @@ parse_member_name :: proc(p: ^Parser) -> ast.Name {
 }
 
 // parse_arguments parses the `(a, b)` of a call.
-@(private)
 parse_arguments :: proc(p: ^Parser) -> []ast.Node_ID {
 	advance(p) // (
 	first := len(p.scratch)
@@ -582,7 +552,6 @@ parse_arguments :: proc(p: ^Parser) -> []ast.Node_ID {
 
 // parse_element parses an argument or an array element: an expression, or a spread `...xs`, which
 // is outside the subset and becomes a Bad node.
-@(private)
 parse_element :: proc(p: ^Parser) -> ast.Node_ID {
 	if !at(p, .Dot_Dot_Dot) {
 		return parse_assignment(p)
@@ -594,7 +563,6 @@ parse_element :: proc(p: ^Parser) -> ast.Node_ID {
 	return discard(p, m, spread.span.start)
 }
 
-@(private)
 parse_primary :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -645,12 +613,11 @@ parse_primary :: proc(p: ^Parser) -> ast.Node_ID {
 	case .Slash, .Slash_Equal:
 		return parse_regular_expression(p)
 	case .Import:
-		what := "`import()` and `import.meta` expressions"
-		report_subset(p, .Unsupported_Syntax, advance(p).span, what)
+		report_unsupported(p, .Import_Expressions, advance(p).span)
 		return add_node(p, start, ast.Bad{})
 	case .Yield:
 		m := mark(p)
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "generators")
+		report_unsupported(p, .Generators, advance(p).span)
 		next := peek(p)
 		if !next.line_break_before && can_start_expression(next.kind) {
 			parse_assignment(p)
@@ -663,7 +630,6 @@ parse_primary :: proc(p: ^Parser) -> ast.Node_ID {
 
 // can_start_expression reports the tokens that start an expression, the ones parse_primary and
 // parse_unary take.
-@(private)
 can_start_expression :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
 	case .Identifier,
@@ -704,7 +670,6 @@ can_start_expression :: proc(kind: Token_Kind) -> bool {
 
 // add_identifier adds the node for a use of a name: an Ident, or a Bad node for `arguments` and
 // `eval`, which are outside the subset.
-@(private)
 add_identifier :: proc(p: ^Parser, token: Token) -> ast.Node_ID {
 	name := token.value.(string)
 	switch name {
@@ -720,7 +685,6 @@ add_identifier :: proc(p: ^Parser, token: Token) -> ast.Node_ID {
 
 // parse_template parses `a${x}b${y}c`: the text parts from the template tokens, the expressions
 // between them.
-@(private)
 parse_template :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	head := advance(p)
@@ -743,7 +707,6 @@ parse_template :: proc(p: ^Parser) -> ast.Node_ID {
 // next_template_part consumes the Template_Middle or Template_Tail that ends a substitution. When
 // something else comes first, the `}` is reported missing and the tokens up to this template's next
 // part are skipped; at the end of the text the result is the EOF token, whose text is empty.
-@(private)
 next_template_part :: proc(p: ^Parser) -> Token {
 	if !at(p, .Template_Middle) && !at(p, .Template_Tail) {
 		error_expected(p, "`}`")
@@ -772,14 +735,13 @@ next_template_part :: proc(p: ^Parser) -> Token {
 
 // parse_array_literal parses `[a, b]`. A hole `[a, , b]` is outside the subset: arrays have no
 // holes (requirements 3.6).
-@(private)
 parse_array_literal :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // [
 	first := len(p.scratch)
 	for !at(p, .Close_Bracket) && !at(p, .EOF) {
 		if at(p, .Comma) {
-			report_subset(p, .Unsupported_Syntax, advance(p).span, "array holes")
+			report_unsupported(p, .Array_Holes, advance(p).span)
 			continue
 		}
 		append(&p.scratch, parse_element(p))
@@ -793,7 +755,6 @@ parse_array_literal :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_object_literal parses `{ a: 1, "b": 2, c }`. A member outside the subset is reported and
 // left out.
-@(private)
 parse_object_literal :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // {
@@ -813,7 +774,6 @@ parse_object_literal :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_property parses one member of an object literal: `name: value` or the shorthand `name`. A
 // member outside the subset is reported and skipped; the result is NO_NODE then.
-@(private)
 parse_property :: proc(p: ^Parser) -> ast.Node_ID {
 	token := peek(p)
 	next := peek(p, 1)
@@ -825,15 +785,19 @@ parse_property :: proc(p: ^Parser) -> ast.Node_ID {
 		drop(p, m)
 		return ast.NO_NODE
 	case .Open_Bracket:
-		return skip_property(p, .Unsupported_Syntax, token.span, "computed property names")
+		what := diag.construct_text(.Computed_Property_Names)
+		return skip_property(p, .Unsupported_Syntax, token.span, what)
 	case .Number:
-		return skip_property(p, .Unsupported_Syntax, token.span, "number property keys")
+		what := diag.construct_text(.Number_Property_Keys)
+		return skip_property(p, .Unsupported_Syntax, token.span, what)
 	case .Star:
-		return skip_property(p, .Unsupported_Syntax, token.span, "generators")
+		what := diag.construct_text(.Generators)
+		return skip_property(p, .Unsupported_Syntax, token.span, what)
 	}
 	is_accessor := (is_word(token, "get") || is_word(token, "set")) && starts_member_name(next)
 	if is_accessor {
-		return skip_property(p, .Unsupported_Syntax, token.span, "getters and setters")
+		what := diag.construct_text(.Getters_And_Setters)
+		return skip_property(p, .Unsupported_Syntax, token.span, what)
 	}
 	if is_word(token, "async") && starts_member_name(next) && !next.line_break_before {
 		return skip_property(p, .Async, token.span, "")
@@ -875,7 +839,6 @@ parse_property :: proc(p: ^Parser) -> ast.Node_ID {
 // skip_property reports a member of an object literal that is outside the subset, at span, and
 // skips it up to the `,` after it or the closing `}`: a value may go on over several lines. The
 // result is NO_NODE: the member is left out of its list.
-@(private)
 skip_property :: proc(p: ^Parser, code: diag.Code, span: source.Span, arg: string) -> ast.Node_ID {
 	report_subset(p, code, span, arg)
 	for {
@@ -892,7 +855,6 @@ skip_property :: proc(p: ^Parser, code: diag.Code, span: source.Span, arg: strin
 
 // starts_member_name reports whether token can start the name of an object member, after a
 // modifier such as `get` or `readonly`.
-@(private)
 starts_member_name :: proc(token: Token) -> bool {
 	#partial switch token.kind {
 	case .String, .Number, .Open_Bracket:
@@ -903,13 +865,12 @@ starts_member_name :: proc(token: Token) -> bool {
 
 // parse_new reports `new`: `new Function(...)` is a "never" rule, any other `new` a class
 // construct outside the subset.
-@(private)
 parse_new :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	keyword := advance(p)
 	start := keyword.span.start
 	if at(p, .Dot) {
-		report_subset(p, .Unsupported_Syntax, keyword.span, "`new.target` expressions")
+		report_unsupported(p, .New_Target, keyword.span)
 		advance(p)
 		parse_member_name(p)
 		return discard(p, m, start)
@@ -936,7 +897,6 @@ parse_new :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_function_expression reports a function expression, `async` included, and parses it, so
 // that the errors inside it are found too.
-@(private)
 parse_function_expression :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -956,7 +916,6 @@ parse_function_expression :: proc(p: ^Parser) -> ast.Node_ID {
 // parse_regular_expression reports a regular expression and skips it. tokenize reads its `/` as
 // division, so the literal is the tokens up to the next `/` on the same line, and the flags glued
 // to it. The diagnostic spans the whole literal: parse_file drops the tokenizer's errors inside it.
-@(private)
 parse_regular_expression :: proc(p: ^Parser) -> ast.Node_ID {
 	slash := advance(p)
 	for !at(p, .EOF) && !peek(p).line_break_before {
@@ -982,7 +941,6 @@ parse_regular_expression :: proc(p: ^Parser) -> ast.Node_ID {
 
 // try_arrow parses an arrow function if one starts at the current token. Otherwise it returns
 // NO_NODE and reads nothing.
-@(private)
 try_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 	token := peek(p)
 	next := peek(p, 1)
@@ -1002,7 +960,6 @@ try_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_arrow_with_name parses `x => body`.
-@(private)
 parse_arrow_with_name :: proc(p: ^Parser) -> ast.Node_ID {
 	token := advance(p)
 	name := name_of(token)
@@ -1013,11 +970,15 @@ parse_arrow_with_name :: proc(p: ^Parser) -> ast.Node_ID {
 
 // try_async_arrow parses `async x => body` or `async (x) => body`, outside the subset. `async(x)`
 // alone is a call of a function named async: then nothing is read.
-@(private)
 try_async_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 	if p.current in p.failed_tries {
 		return ast.NO_NODE
 	}
+	if !enter(p) {
+		return ast.NO_NODE
+	}
+	defer leave(p)
+
 	m := mark(p)
 	async := advance(p)
 	if try_arrow(p) == ast.NO_NODE {
@@ -1031,7 +992,6 @@ try_async_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 // try_parenthesized_arrow parses `(params) => body` or `(params): type => body`. A `(` whose `)` is
 // followed by `=>` starts an arrow for sure. One followed by `:` may also be a parenthesized
 // expression, as in `c ? (x) : y`: that case is tried from a Mark and undone when no `=>` comes.
-@(private)
 try_parenthesized_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 	if p.current in p.failed_tries {
 		return ast.NO_NODE
@@ -1063,7 +1023,6 @@ try_parenthesized_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 
 // finish_arrow parses the `=> body` of an arrow. A body that starts with `{` is a block; an object
 // literal body needs parentheses: `() => ({})`.
-@(private)
 finish_arrow :: proc(
 	p: ^Parser,
 	start: i32,

@@ -31,6 +31,31 @@ every_line_terminator_starts_a_line :: proc(t: ^testing.T) {
 }
 
 @(test)
+line_terminator_size_reads_one_terminator :: proc(t: ^testing.T) {
+	Case :: struct {
+		text: string,
+		i:    int,
+		size: int,
+	}
+	cases := []Case {
+		{"\n", 0, 1},
+		{"\r", 0, 1},
+		{"\r\n", 0, 2},
+		{"\r\n", 1, 1},
+		{"a\xe2\x80\xa8", 1, 3}, // U+2028
+		{"\xe2\x80\xa9", 0, 3}, // U+2029
+		{"\xe2\x80\xaa", 0, 0}, // U+202A is no terminator
+		{"\xe2\x80", 0, 0}, // cut short by the end of the text
+		{"a", 0, 0},
+		{"a", 1, 0}, // the end of the text
+	}
+	for c in cases {
+		got := source.line_terminator_size(c.text, c.i)
+		testing.expectf(t, got == c.size, "%q at %d: got %d, want %d", c.text, c.i, got, c.size)
+	}
+}
+
+@(test)
 empty_lines_keep_their_numbers :: proc(t: ^testing.T) {
 	expect_positions(t, "a\n\n\nb", {{1, {1, 2}}, {2, {2, 1}}, {3, {3, 1}}, {4, {4, 1}}})
 }

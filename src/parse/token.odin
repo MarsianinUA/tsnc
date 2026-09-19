@@ -99,7 +99,8 @@ Token_Kind :: enum u8 {
 	Question_Question_Equal, // ??=
 
 	// Reserved words of a module: the ECMAScript reserved words, the ones strict mode adds and
-	// `await`. Each is written in lower case: .Instanceof is `instanceof`.
+	// `await`. Each is written in lower case: .Instanceof is `instanceof`. They stay the last block
+	// with .Await first: is_name_token takes every kind from .Await on as a name.
 	Await,
 	Break,
 	Case,

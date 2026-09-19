@@ -50,17 +50,21 @@ make_file :: proc(path, text: string, allocator := context.allocator) -> File {
 	ensure(len(text) <= MAX_FILE_SIZE)
 
 	line_count := 1
-	for i in 0 ..< len(text) {
-		if ends_line(text, i) {
+	for i := 0; i < len(text); {
+		size := line_terminator_size(text, i)
+		i += max(size, 1)
+		if size > 0 {
 			line_count += 1
 		}
 	}
 
 	line_starts := make([]i32, line_count, allocator)
 	line := 1
-	for i in 0 ..< len(text) {
-		if ends_line(text, i) {
-			line_starts[line] = i32(i + 1)
+	for i := 0; i < len(text); {
+		size := line_terminator_size(text, i)
+		i += max(size, 1)
+		if size > 0 {
+			line_starts[line] = i32(i)
 			line += 1
 		}
 	}
@@ -83,19 +87,26 @@ position :: proc(file: File, offset: i32) -> Position {
 	return {line = i32(line + 1), column = i32(column)}
 }
 
-// ends_line reports whether a line terminator ends at text[i], so that the next line starts at
-// i + 1.
-@(private)
-ends_line :: proc(text: string, i: int) -> bool {
+// line_terminator_size is the length in bytes of the line terminator that starts at text[i], with
+// \r\n counted as one, or 0 if there is none or i is past the end. It is the one definition of a
+// line break: tokenize reads it for automatic semicolon insertion, so a line there is the line
+// that a diagnostic's position counts.
+line_terminator_size :: proc(text: string, i: int) -> int {
+	if i >= len(text) {
+		return 0
+	}
 	switch text[i] {
 	case '\n':
-		return true
+		return 1
 	case '\r':
-		// In \r\n the \n ends the line.
-		return i + 1 == len(text) || text[i + 1] != '\n'
-	case 0xA8, 0xA9:
-		// The last byte of U+2028 (E2 80 A8) or U+2029 (E2 80 A9).
-		return i >= 2 && text[i - 2] == 0xE2 && text[i - 1] == 0x80
+		has_newline := i + 1 < len(text) && text[i + 1] == '\n'
+		return 2 if has_newline else 1
+	case 0xE2:
+		// U+2028 is E2 80 A8, U+2029 is E2 80 A9.
+		if i + 2 < len(text) && text[i + 1] == 0x80 {
+			last := text[i + 2]
+			return 3 if last == 0xA8 || last == 0xA9 else 0
+		}
 	}
-	return false
+	return 0
 }
