@@ -87,6 +87,7 @@ src/llvm/     LLVM-C 20 bindings
 src/codegen/  LLVM module to an object file or textual LLVM IR
 src/link/     program and runtime objects to an executable
 src/target/   target platforms: LLVM triple, linker, link flags
+src/source/   source files: File_ID, spans, lines and columns
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, test corpora
 bench/        benchmarks
