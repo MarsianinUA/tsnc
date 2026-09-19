@@ -10,7 +10,8 @@ Format rules (requirements 5):
 - The position is the start of the span. Lines and columns are 1-based, and a column counts UTF-16
   code units from the start of the line, as in tsc and VS Code; source.position computes them.
 - Every code has a number, a text and a hint that says how to rewrite the code. Numbers go by
-  range: T1xxx syntax, T2xxx constructs outside the subset, T3xxx types, T4xxx modules and imports.
+  range: T1xxx syntax, T2xxx constructs outside the subset, T3xxx types, T4xxx names, modules and
+  imports.
   Tests and users refer to the numbers, so a number never changes and is never reused, even after
   its code is removed.
 - Texts and hints are in English, start with a lowercase letter, have no trailing period and put

@@ -40,6 +40,11 @@ Code :: enum u16 {
 	For_In,
 	Regular_Expression,
 	Unsupported_Syntax, // {0} is construct_text of a Construct: "labels", "intersection types"
+
+	// T4xxx: names, modules and imports. bind (T2.7) reports these.
+	Redeclared_Name, // {0} is the name
+	Duplicate_Export, // {0} is the exported name
+	Undeclared_Export, // {0} is the exported name
 }
 
 @(private)
@@ -217,6 +222,21 @@ REGISTRY := [Code]Row {
 		number = 2021,
 		text = "{0} are not supported",
 		hint = "rewrite the code without them: tsnc supports the TypeScript subset listed in its requirements, section 2.2",
+	},
+	.Redeclared_Name = {
+		number = 4001,
+		text = "`{0}` is already declared in this scope",
+		hint = "rename one of the declarations; one name holds at most one value and one type, and two interfaces of one name do not merge",
+	},
+	.Duplicate_Export = {
+		number = 4002,
+		text = "`{0}` is exported more than once",
+		hint = "export the name once, or rename one of the exports: `export { a as other }`",
+	},
+	.Undeclared_Export = {
+		number = 4003,
+		text = "`{0}` is not declared in this module",
+		hint = "declare `{0}` at the top level of this module, or re-export it from the module it comes from: `export { {0} } from \"./m\"`",
 	},
 }
 

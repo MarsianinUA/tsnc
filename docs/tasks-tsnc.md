@@ -136,14 +136,14 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.4.
 Done: tests for every v1 construct and every syntactic "never" rule (code, line, column); after an error the parser finds the next one.
 
-### [ ] T2.6 Lib file `src/lib/lib.d.ts`
+### [x] T2.6 Lib file `src/lib/lib.d.ts`
 
 What: v1 declarations: `console`, `process` (`argv`, `exit`), `Math`, `Number`, `String` and the string methods from §2.2, `Array<T>` with methods including `map<U>`; only syntax that T2.5 supports; included through `#load`.
 Where: [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Built-in types"; [Assumptions](architecture-plan-tsnc.md#assumptions), the item on `declare`; requirements §2.2 (standard library), §4.5 (`Math` bypasses the runtime).
 After: T2.5.
 Done: a test in `parse` parses the lib file with no diagnostics; the list of declarations matches §2.2.
 
-### [ ] T2.7 `bind`: symbols, scopes, flow graph
+### [x] T2.7 `bind`: symbols, scopes, flow graph
 
 What: the file's symbol table; scope tree (block-scoped `let` and `const`, functions, parameters); import and export tables by name; control flow graph for narrowing (branches, loops, assignments, in the style of tsc flow nodes); a top-level side effects flag; file-level diagnostics (redeclaration).
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `bind`; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Name binding"; [Precedents](architecture-plan-tsnc.md#precedents), the item on tsc; requirements §4.1 item 3, §5 (narrowing), §7 (side effects).
