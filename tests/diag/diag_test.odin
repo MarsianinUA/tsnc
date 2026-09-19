@@ -17,6 +17,14 @@ every_code_has_a_text_and_a_hint :: proc(t: ^testing.T) {
 }
 
 @(test)
+every_construct_has_a_text :: proc(t: ^testing.T) {
+	for construct in diag.Construct {
+		text := diag.construct_text(construct)
+		testing.expectf(t, text != "", "%v has no text", construct)
+	}
+}
+
+@(test)
 every_code_has_its_own_four_digit_number :: proc(t: ^testing.T) {
 	numbers: [diag.Code]string
 	for code in diag.Code {

@@ -1,10 +1,10 @@
+#+private
 package parse
 
 import "../ast"
 
 // parse_module_items parses the statements, imports and exports of a module up to closer: the end
 // of the file, or the `}` of a namespace body.
-@(private)
 parse_module_items :: proc(p: ^Parser, closer: Token_Kind) -> []ast.Node_ID {
 	first := len(p.scratch)
 	for !at(p, closer) && !at(p, .EOF) {
@@ -15,7 +15,6 @@ parse_module_items :: proc(p: ^Parser, closer: Token_Kind) -> []ast.Node_ID {
 }
 
 // parse_block_items parses the statements of a block up to its `}`.
-@(private)
 parse_block_items :: proc(p: ^Parser) -> []ast.Node_ID {
 	first := len(p.scratch)
 	for !at(p, .Close_Brace) && !at(p, .EOF) {
@@ -28,7 +27,6 @@ parse_block_items :: proc(p: ^Parser) -> []ast.Node_ID {
 // add_item appends an item that a list loop parsed to the list in scratch. An item that read
 // nothing started at a token that starts no statement: it is reported and skipped, so that the
 // loop moves on.
-@(private)
 add_item :: proc(p: ^Parser, item: ast.Node_ID, before: int) {
 	if item != ast.NO_NODE {
 		append(&p.scratch, item)
@@ -39,7 +37,6 @@ add_item :: proc(p: ^Parser, item: ast.Node_ID, before: int) {
 	}
 }
 
-@(private)
 parse_module_item :: proc(p: ^Parser) -> ast.Node_ID {
 	#partial switch peek(p).kind {
 	case .Import:
@@ -49,14 +46,13 @@ parse_module_item :: proc(p: ^Parser) -> ast.Node_ID {
 	case .Export:
 		return parse_export(p)
 	case .At:
-		parse_decorator(p)
+		parse_decorators(p)
 		return parse_module_item(p)
 	}
 	return parse_block_item(p)
 }
 
 // parse_block_item parses a statement or a declaration: an item of a block or a case.
-@(private)
 parse_block_item :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return ast.NO_NODE
@@ -75,7 +71,7 @@ parse_block_item :: proc(p: ^Parser) -> ast.Node_ID {
 		parse_module_item(p)
 		return discard(p, m, token.span.start)
 	case .At:
-		parse_decorator(p)
+		parse_decorators(p)
 		return parse_block_item(p)
 	case .Let, .Const, .Var, .Function, .Class, .Enum, .Interface:
 		return parse_declaration(p, token.span.start, {})
@@ -89,7 +85,6 @@ parse_block_item :: proc(p: ^Parser) -> ast.Node_ID {
 
 // starts_import_expression reports whether the current `import` starts `import(...)` or
 // `import.meta` rather than an import declaration.
-@(private)
 starts_import_expression :: proc(p: ^Parser) -> bool {
 	next := peek(p, 1).kind
 	return next == .Open_Paren || next == .Dot
@@ -97,7 +92,6 @@ starts_import_expression :: proc(p: ^Parser) -> bool {
 
 // starts_declaration_word reports whether the current name is a contextual keyword that starts a
 // declaration here: the token after it must be on the same line.
-@(private)
 starts_declaration_word :: proc(p: ^Parser) -> bool {
 	if !next_on_same_line(p) {
 		return false
@@ -122,7 +116,6 @@ starts_declaration_word :: proc(p: ^Parser) -> bool {
 
 // parse_declaration parses a declaration that starts at the current token, after the modifiers
 // already read from start on (`export`, `declare`).
-@(private)
 parse_declaration :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	token := peek(p)
 	#partial switch token.kind {
@@ -177,20 +170,10 @@ parse_declaration :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> a
 }
 
 // parse_var_decl parses `let a = 1, b: T;` from its keyword.
-@(private)
 parse_var_decl :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	keyword := advance(p)
 	kind: ast.Var_Kind = .Const if keyword.kind == .Const else .Let
-	first := len(p.scratch)
-	for {
-		declarator := parse_declarator(p)
-		check_initialized(p, kind, modifiers, declarator)
-		append(&p.scratch, declarator)
-		if !accept(p, .Comma) {
-			break
-		}
-	}
-	declarators := finish_list(p, first)
+	declarators := parse_declarator_list(p, parse_declarator(p), kind, modifiers)
 	end_statement(p)
 	return add_node(
 		p,
@@ -199,8 +182,29 @@ parse_var_decl :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.
 	)
 }
 
+// parse_declarator_list parses the declarators of a `let` or `const` after the first one, which
+// the caller has already parsed: a `for` header reads it before it knows whether a list or `of`
+// follows. The list holds them all, the first included.
+parse_declarator_list :: proc(
+	p: ^Parser,
+	first_declarator: ast.Node_ID,
+	kind: ast.Var_Kind,
+	modifiers: ast.Modifiers,
+) -> []ast.Node_ID {
+	first := len(p.scratch)
+	declarator := first_declarator
+	for {
+		check_initialized(p, kind, modifiers, declarator)
+		append(&p.scratch, declarator)
+		if !accept(p, .Comma) {
+			break
+		}
+		declarator = parse_declarator(p)
+	}
+	return finish_list(p, first)
+}
+
 // parse_declarator parses `name: type = init`.
-@(private)
 parse_declarator :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	name := parse_binding_name(p)
@@ -217,7 +221,6 @@ parse_declarator :: proc(p: ^Parser) -> ast.Node_ID {
 
 // check_initialized reports a `const` declarator without a value, which only `declare` allows.
 // The current token is the one after the declarator.
-@(private)
 check_initialized :: proc(
 	p: ^Parser,
 	kind: ast.Var_Kind,
@@ -233,7 +236,6 @@ check_initialized :: proc(
 // parse_binding_name parses the name a declaration or a parameter introduces. A destructuring
 // pattern in its place is outside the subset: it is reported and skipped, and the name stays
 // empty.
-@(private)
 parse_binding_name :: proc(p: ^Parser) -> ast.Name {
 	token := peek(p)
 	#partial switch token.kind {
@@ -253,7 +255,6 @@ parse_binding_name :: proc(p: ^Parser) -> ast.Name {
 
 // check_binding_name reports a variable or a parameter named `arguments` or `eval`: strict mode
 // forbids both names.
-@(private)
 check_binding_name :: proc(p: ^Parser, name: ast.Name) {
 	switch name.text {
 	case "arguments":
@@ -264,7 +265,6 @@ check_binding_name :: proc(p: ^Parser, name: ast.Name) {
 }
 
 // parse_type_name parses the name of an interface, a type alias or a type parameter.
-@(private)
 parse_type_name :: proc(p: ^Parser) -> ast.Name {
 	if at(p, .Identifier) {
 		return name_of(advance(p))
@@ -274,30 +274,32 @@ parse_type_name :: proc(p: ^Parser) -> ast.Name {
 }
 
 // parse_function_decl parses `function name<T>(params): type { body }`. Only `declare` allows a
-// function without a body; one without `declare` is an overload signature, outside the subset.
-@(private)
+// function without a body; one without `declare` is an overload signature, outside the subset. A
+// function with a syntax error is not reported as one: its body is more likely missing because of
+// that error, as in `function f() return 1`.
 parse_function_decl :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	m := mark(p)
 	keyword := advance(p)
 	is_generator := at(p, .Star)
 	if is_generator {
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "generators")
+		report_unsupported(p, .Generators, advance(p).span)
 	}
 	name := parse_binding_name(p)
 	function := parse_function_rest(p, start, modifiers, name)
 	if is_generator {
 		return discard(p, m, start)
 	}
-	is_overload := p.nodes[function].variant.(ast.Function_Decl).body == ast.NO_NODE
-	if is_overload && .Declare not_in modifiers {
-		report_subset(p, .Unsupported_Syntax, keyword.span, "function overloads")
-		return discard(p, m, start)
+	has_body := p.nodes[function].variant.(ast.Function_Decl).body != ast.NO_NODE
+	if has_body || .Declare in modifiers {
+		return function
 	}
-	return function
+	if p.errors_seen == m.errors_seen {
+		report_unsupported(p, .Function_Overloads, keyword.span)
+	}
+	return discard(p, m, start)
 }
 
 // parse_function_rest parses a function from its type parameters on, after its name.
-@(private)
 parse_function_rest :: proc(
 	p: ^Parser,
 	start: i32,
@@ -331,7 +333,6 @@ parse_function_rest :: proc(
 }
 
 // parse_interface parses `interface Name<T> { members }`.
-@(private)
 parse_interface :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	advance(p) // interface
 	name := parse_type_name(p)
@@ -341,7 +342,7 @@ parse_interface :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast
 	}
 	if at(p, .Extends) {
 		m := mark(p)
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "interface `extends` clauses")
+		report_unsupported(p, .Interface_Extends_Clauses, advance(p).span)
 		for {
 			parse_type(p)
 			if !accept(p, .Comma) {
@@ -361,7 +362,6 @@ parse_interface :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast
 }
 
 // parse_type_alias parses `type Name<T> = type;`.
-@(private)
 parse_type_alias :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	advance(p) // type
 	name := parse_type_name(p)
@@ -385,7 +385,6 @@ parse_type_alias :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> as
 
 // parse_import parses `import { a, b as c } from "./m"`, `import * as m from "./m"` and
 // `import "./m"`, each optionally `import type`. A default import is outside the subset.
-@(private)
 parse_import :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -442,7 +441,7 @@ parse_import :: proc(p: ^Parser) -> ast.Node_ID {
 		return add_node(p, start, import_namespace)
 	case .Identifier:
 		if peek(p, 1).kind == .Equal {
-			report_subset(p, .Unsupported_Syntax, token.span, "`import =` aliases")
+			report_unsupported(p, .Import_Equals_Aliases, token.span)
 		} else {
 			report_subset(p, .Default_Export, token.span)
 		}
@@ -457,7 +456,6 @@ parse_import :: proc(p: ^Parser) -> ast.Node_ID {
 // parse_export parses `export { a, b as c }` with or without `from "./m"`, `export type { }` and
 // `export` before a declaration. `export default`, `export *`, `export =` and `export import` are
 // outside the subset.
-@(private)
 parse_export :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -472,16 +470,16 @@ parse_export :: proc(p: ^Parser) -> ast.Node_ID {
 		parse_default_export_value(p)
 		return discard(p, m, start)
 	case .Star:
-		report_subset(p, .Unsupported_Syntax, token.span, "`export *` declarations")
+		report_unsupported(p, .Export_Star_Declarations, token.span)
 		skip_statement(p)
 		return discard(p, m, start)
 	case .Equal:
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "`export =` assignments")
+		report_unsupported(p, .Export_Assignments, advance(p).span)
 		parse_expression(p)
 		end_statement(p)
 		return discard(p, m, start)
 	case .Import:
-		report_subset(p, .Unsupported_Syntax, token.span, "`export import` aliases")
+		report_unsupported(p, .Export_Import_Aliases, token.span)
 		skip_statement(p)
 		return discard(p, m, start)
 	case .Identifier:
@@ -494,7 +492,6 @@ parse_export :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_export_list parses the `{ a, b as c }` of an export and the `from "./m"` after it.
-@(private)
 parse_export_list :: proc(p: ^Parser, m: Mark, start: i32, type_only: bool) -> ast.Node_ID {
 	specifiers := parse_specifiers(p)
 	path := ast.NO_NODE
@@ -517,7 +514,6 @@ parse_export_list :: proc(p: ^Parser, m: Mark, start: i32, type_only: bool) -> a
 
 // parse_default_export_value parses what follows `export default`, so that the errors inside it
 // are found too.
-@(private)
 parse_default_export_value :: proc(p: ^Parser) {
 	start := token_start(p)
 	if at_word(p, "async") && peek(p, 1).kind == .Function {
@@ -542,7 +538,6 @@ parse_default_export_value :: proc(p: ^Parser) {
 }
 
 // starts_declaration reports whether a declaration starts at the current token.
-@(private)
 starts_declaration :: proc(p: ^Parser) -> bool {
 	#partial switch peek(p).kind {
 	case .Let, .Const, .Var, .Function, .Class, .Enum, .Interface:
@@ -555,7 +550,6 @@ starts_declaration :: proc(p: ^Parser) -> bool {
 
 // parse_specifiers parses `{ a, b as c, type d }` of an import or an export. A specifier outside
 // the subset is reported and left out.
-@(private)
 parse_specifiers :: proc(p: ^Parser) -> []ast.Node_ID {
 	first := len(p.scratch)
 	expect(p, .Open_Brace)
@@ -572,7 +566,6 @@ parse_specifiers :: proc(p: ^Parser) -> []ast.Node_ID {
 	return finish_list(p, first)
 }
 
-@(private)
 parse_specifier :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	type_only := false
@@ -584,7 +577,7 @@ parse_specifier :: proc(p: ^Parser) -> ast.Node_ID {
 
 	token := peek(p)
 	if token.kind == .String {
-		report_subset(p, .Unsupported_Syntax, token.span, "string import and export names")
+		report_unsupported(p, .String_Specifiers, token.span)
 		advance(p)
 		if accept_word(p, "as") {
 			advance(p)
@@ -600,12 +593,7 @@ parse_specifier :: proc(p: ^Parser) -> ast.Node_ID {
 	if accept_word(p, "as") {
 		alias_token := peek(p)
 		if alias_token.kind == .String {
-			report_subset(
-				p,
-				.Unsupported_Syntax,
-				alias_token.span,
-				"string import and export names",
-			)
+			report_unsupported(p, .String_Specifiers, alias_token.span)
 			advance(p)
 			return ast.NO_NODE
 		}
@@ -627,7 +615,6 @@ parse_specifier :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_module_path parses the `"./m"` of an import or a re-export; ok is false when it is
 // missing. An import attributes clause after it is outside the subset.
-@(private)
 parse_module_path :: proc(p: ^Parser) -> (path: ast.Node_ID, ok: bool) {
 	if !at(p, .String) {
 		error_expected(p, "a module path string")
@@ -636,7 +623,7 @@ parse_module_path :: proc(p: ^Parser) -> (path: ast.Node_ID, ok: bool) {
 	token := advance(p)
 	path = add_node(p, token.span.start, ast.String_Literal{value = token.value.(string)})
 	if at(p, .With) {
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "import attributes")
+		report_unsupported(p, .Import_Attributes, advance(p).span)
 		if at(p, .Open_Brace) {
 			skip_balanced(p)
 		}
@@ -646,18 +633,19 @@ parse_module_path :: proc(p: ^Parser) -> (path: ast.Node_ID, ok: bool) {
 
 // Constructs outside the subset.
 
-// parse_decorator reports a decorator `@expr` and reads it. It makes no node: the declaration
-// after it then parses on its own.
-@(private)
-parse_decorator :: proc(p: ^Parser) {
-	m := mark(p)
-	report_subset(p, .Decorator, advance(p).span)
-	parse_postfix(p)
-	drop(p, m)
+// parse_decorators reports every decorator `@expr` in a row and reads it. They make no node: the
+// declaration after them then parses on its own. A loop, not recursion, so that a long run of them
+// is not deep nesting.
+parse_decorators :: proc(p: ^Parser) {
+	for at(p, .At) {
+		m := mark(p)
+		report_subset(p, .Decorator, advance(p).span)
+		parse_postfix(p)
+		drop(p, m)
+	}
 }
 
 // parse_class reports a class and skips it to the end of its body, which is not parsed.
-@(private)
 parse_class :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 	m := mark(p)
 	report_subset(p, .Class, peek(p).span)
@@ -666,7 +654,6 @@ parse_class :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 }
 
 // parse_enum reports an enum and skips it to the end of its body.
-@(private)
 parse_enum :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 	m := mark(p)
 	report_subset(p, .Enum, peek(p).span)
@@ -674,19 +661,34 @@ parse_enum :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 	return discard(p, m, start)
 }
 
-// skip_to_body_end skips a declaration up to and including its `{ body }`.
-@(private)
+// skip_to_body_end skips a declaration up to and including its `{ body }`. A `{` inside type
+// arguments is an object type, not the body: `class A extends B<{ x: number }> {}`. The skip stops
+// early at a keyword on a new line that starts a statement, so that a missing body or an unclosed
+// `<` does not swallow the statements after the declaration.
 skip_to_body_end :: proc(p: ^Parser) {
+	first := p.current
+	type_argument_depth := 0
 	for {
-		#partial switch peek(p).kind {
+		token := peek(p)
+		#partial switch token.kind {
 		case .Open_Brace:
 			skip_balanced(p)
-			return
+			if type_argument_depth == 0 {
+				return
+			}
+			continue
 		case .EOF, .Semicolon, .Close_Brace:
 			return
 		case .Open_Paren, .Open_Bracket:
 			skip_balanced(p)
 			continue
+		case .Less:
+			type_argument_depth += 1
+		case .Greater:
+			type_argument_depth = max(type_argument_depth - 1, 0)
+		}
+		if token.line_break_before && starts_statement(token.kind) && p.current > first {
+			return
 		}
 		advance(p)
 	}
@@ -694,8 +696,12 @@ skip_to_body_end :: proc(p: ^Parser) {
 
 // parse_namespace reports `namespace N { }`, `module N { }` or `declare global { }` and parses its
 // body as module items, so that the errors inside it are found too.
-@(private)
 parse_namespace :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
+	if !enter(p) {
+		return ast.NO_NODE
+	}
+	defer leave(p)
+
 	m := mark(p)
 	report_subset(p, .Namespace, advance(p).span)
 	// The name: `A.B.C`, or a module string.
@@ -716,7 +722,6 @@ parse_namespace :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 // parse_statement parses a statement. A declaration is not a statement: as the body of an `if` or
 // a loop it needs a block, so there it is reported, then parsed anyway. The result is NO_NODE when
 // no statement starts at the current token; nothing is read then.
-@(private)
 parse_statement :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return ast.NO_NODE
@@ -756,7 +761,7 @@ parse_statement :: proc(p: ^Parser) -> ast.Node_ID {
 		end_statement(p)
 		return discard(p, m, start)
 	case .Debugger:
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "`debugger` statements")
+		report_unsupported(p, .Debugger_Statements, advance(p).span)
 		end_statement(p)
 		return add_node(p, start, ast.Bad{})
 	case .Let, .Const, .Function, .Class, .Enum, .Interface:
@@ -774,7 +779,7 @@ parse_statement :: proc(p: ^Parser) -> ast.Node_ID {
 			return parse_block_item(p)
 		}
 		if peek(p, 1).kind == .Colon {
-			report_subset(p, .Unsupported_Syntax, token.span, "labels")
+			report_unsupported(p, .Labels, token.span)
 			advance(p)
 			advance(p)
 			return parse_body(p)
@@ -784,7 +789,6 @@ parse_statement :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_body parses the body of an `if` or a loop: a missing one is a zero-width Bad node.
-@(private)
 parse_body :: proc(p: ^Parser) -> ast.Node_ID {
 	body := parse_statement(p)
 	if body == ast.NO_NODE {
@@ -794,7 +798,6 @@ parse_body :: proc(p: ^Parser) -> ast.Node_ID {
 	return body
 }
 
-@(private)
 parse_expression_statement :: proc(p: ^Parser) -> ast.Node_ID {
 	if !can_start_expression(peek(p).kind) {
 		return ast.NO_NODE
@@ -805,7 +808,6 @@ parse_expression_statement :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, ast.Expr_Stmt{expr = expr})
 }
 
-@(private)
 parse_block :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -821,7 +823,6 @@ parse_block :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, ast.Block{statements = statements})
 }
 
-@(private)
 parse_if :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // if
@@ -840,7 +841,6 @@ parse_if :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_condition parses the `(expression)` of an `if`, a `while` or a `switch`.
-@(private)
 parse_condition :: proc(p: ^Parser) -> ast.Node_ID {
 	expect(p, .Open_Paren)
 	condition := parse_expression(p)
@@ -848,7 +848,6 @@ parse_condition :: proc(p: ^Parser) -> ast.Node_ID {
 	return condition
 }
 
-@(private)
 parse_switch :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // switch
@@ -869,7 +868,6 @@ parse_switch :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_case parses `case value:` or `default:` and the statements after it.
-@(private)
 parse_case :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	value := ast.NO_NODE
@@ -888,15 +886,15 @@ parse_case :: proc(p: ^Parser) -> ast.Node_ID {
 // parse_for parses `for (init; condition; update) body` and `for (const x of xs) body`. The
 // header's semicolons are never inserted. `for...in`, `for await` and `for...of` over an existing
 // variable are outside the subset.
-@(private)
 parse_for :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
 	keyword := advance(p) // for
-	is_outside_subset := false
+	// The loop has been reported and becomes one Bad node.
+	is_bad := false
 	if at(p, .Await) {
 		report_subset(p, .Async, advance(p).span)
-		is_outside_subset = true
+		is_bad = true
 	}
 	expect(p, .Open_Paren)
 
@@ -915,38 +913,31 @@ parse_for :: proc(p: ^Parser) -> ast.Node_ID {
 		declarator := parse_declarator(p)
 		is_for_in := at(p, .In)
 		if is_for_in || at_word(p, "of") {
+			// A `var` makes the whole loop Bad: `declaration` is no slot for a Bad node.
+			is_bad = is_bad || is_var
 			if is_for_in {
 				report_subset(p, .For_In, keyword.span)
+				is_bad = true
 			}
 			// `for (const x = 1 of xs)`: read as a `for` header, the `;` is missing.
-			has_init := p.nodes[declarator].variant.(ast.Declarator).init != ast.NO_NODE
-			if has_init {
+			if p.nodes[declarator].variant.(ast.Declarator).init != ast.NO_NODE {
 				error_expected(p, "`;`")
+				is_bad = true
 			}
 			declaration := ast.Var_Decl {
 				kind        = kind,
 				declarators = one_element(p, declarator),
 			}
 			loop := parse_for_of_rest(p, start, add_node(p, token.span.start, declaration))
-			// `declaration` is no slot for a Bad node, so a `var` makes the whole loop Bad.
-			if is_outside_subset || is_var || is_for_in || has_init {
+			if is_bad {
 				return discard(p, m, start)
 			}
 			return loop
 		}
 
-		first := len(p.scratch)
-		for {
-			check_initialized(p, kind, {}, declarator)
-			append(&p.scratch, declarator)
-			if !accept(p, .Comma) {
-				break
-			}
-			declarator = parse_declarator(p)
-		}
 		declaration := ast.Var_Decl {
 			kind        = kind,
-			declarators = finish_list(p, first),
+			declarators = parse_declarator_list(p, declarator, kind, {}),
 		}
 		init = add_node(p, token.span.start, declaration)
 		if is_var {
@@ -958,12 +949,7 @@ parse_for :: proc(p: ^Parser) -> ast.Node_ID {
 			if next.kind == .In {
 				report_subset(p, .For_In, keyword.span)
 			} else {
-				report_subset(
-					p,
-					.Unsupported_Syntax,
-					keyword.span,
-					"`for...of` loops over an existing variable",
-				)
+				report_unsupported(p, .For_Of_Without_Declaration, keyword.span)
 			}
 			advance(p)
 			parse_for_of_rest(p, start, ast.NO_NODE)
@@ -972,6 +958,15 @@ parse_for :: proc(p: ^Parser) -> ast.Node_ID {
 		init = parse_expression(p)
 	}
 
+	loop := parse_for_rest(p, start, init)
+	if is_bad {
+		return discard(p, m, start)
+	}
+	return loop
+}
+
+// parse_for_rest parses the rest of `for (init; condition; update) body` from the `;` after init.
+parse_for_rest :: proc(p: ^Parser, start: i32, init: ast.Node_ID) -> ast.Node_ID {
 	expect(p, .Semicolon)
 	condition := ast.NO_NODE
 	if !at(p, .Semicolon) {
@@ -984,20 +979,17 @@ parse_for :: proc(p: ^Parser) -> ast.Node_ID {
 	}
 	expect(p, .Close_Paren)
 	body := parse_body(p)
-	loop := add_node(
-		p,
-		start,
-		ast.For{init = init, condition = condition, update = update, body = body},
-	)
-	if is_outside_subset {
-		return discard(p, m, start)
+	loop := ast.For {
+		init      = init,
+		condition = condition,
+		update    = update,
+		body      = body,
 	}
-	return loop
+	return add_node(p, start, loop)
 }
 
 // parse_for_of_rest parses the rest of `for (declaration of iterable) body` from `of`, or from
 // `in` of a `for...in` that the caller has reported.
-@(private)
 parse_for_of_rest :: proc(p: ^Parser, start: i32, declaration: ast.Node_ID) -> ast.Node_ID {
 	advance(p) // of or in
 	iterable := parse_assignment(p)
@@ -1011,7 +1003,6 @@ parse_for_of_rest :: proc(p: ^Parser, start: i32, declaration: ast.Node_ID) -> a
 	return add_node(p, start, loop)
 }
 
-@(private)
 parse_while :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // while
@@ -1022,7 +1013,6 @@ parse_while :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_do_while parses `do body while (condition)`. The `;` after it is optional even on the
 // same line, as ECMAScript inserts one there.
-@(private)
 parse_do_while :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // do
@@ -1036,13 +1026,12 @@ parse_do_while :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_jump parses `break` or `continue`. A label after it is outside the subset.
-@(private)
 parse_jump :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	keyword := advance(p)
 	label := peek(p)
 	if label.kind == .Identifier && !label.line_break_before {
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "labels")
+		report_unsupported(p, .Labels, advance(p).span)
 	}
 	end_statement(p)
 	if keyword.kind == .Break {
@@ -1052,7 +1041,6 @@ parse_jump :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_return parses `return value`. A line break after `return` ends the statement.
-@(private)
 parse_return :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	advance(p) // return
@@ -1069,7 +1057,6 @@ parse_return :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, ast.Return{value = value})
 }
 
-@(private)
 parse_with :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -1080,7 +1067,6 @@ parse_with :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_try reports `try` and parses its blocks, so that the errors inside them are found too.
-@(private)
 parse_try :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)

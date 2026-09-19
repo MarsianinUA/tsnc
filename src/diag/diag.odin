@@ -15,7 +15,8 @@ Format rules (requirements 5):
   its code is removed.
 - Texts and hints are in English, start with a lowercase letter, have no trailing period and put
   code in backticks. {0} and {1} in them stand for the diagnostic's arguments.
-- New codes are added only here, in codes.odin.
+- New codes are added only here, in codes.odin, and so are the texts of the constructs that share
+  Unsupported_Syntax (Construct).
 */
 package diag
 

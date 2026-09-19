@@ -1,9 +1,10 @@
+#+private
 package parse
 
 import "../ast"
+import "../diag"
 
 // parse_type parses a type. A conditional type `A extends B ? C : D` is outside the subset.
-@(private)
 parse_type :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -17,7 +18,7 @@ parse_type :: proc(p: ^Parser) -> ast.Node_ID {
 	if token.kind != .Extends || token.line_break_before {
 		return type
 	}
-	report_subset(p, .Unsupported_Syntax, advance(p).span, "conditional types")
+	report_unsupported(p, .Conditional_Types, advance(p).span)
 	parse_union_type(p)
 	expect(p, .Question)
 	parse_type(p)
@@ -28,7 +29,6 @@ parse_type :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_union_type parses the types around `|` as one flat Union_Type, with an optional leading
 // `|`. A union in parentheses stays one member.
-@(private)
 parse_union_type :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	accept(p, .Bar)
@@ -46,7 +46,6 @@ parse_union_type :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_intersection_type parses a member of a union. An intersection `A & B` is outside the
 // subset.
-@(private)
 parse_intersection_type :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -54,7 +53,7 @@ parse_intersection_type :: proc(p: ^Parser) -> ast.Node_ID {
 	if !at(p, .Amp) {
 		return type
 	}
-	report_subset(p, .Unsupported_Syntax, peek(p).span, "intersection types")
+	report_unsupported(p, .Intersection_Types, peek(p).span)
 	for accept(p, .Amp) {
 		parse_array_type(p)
 	}
@@ -64,7 +63,6 @@ parse_intersection_type :: proc(p: ^Parser) -> ast.Node_ID {
 // parse_array_type parses `T[]`, `T[][]`. The `[` must be on the line of the type: on the next
 // line it starts the next member of an object type. An indexed access `T[K]` is outside the
 // subset.
-@(private)
 parse_array_type :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -76,14 +74,13 @@ parse_array_type :: proc(p: ^Parser) -> ast.Node_ID {
 			type = add_node(p, start, ast.Array_Type{element = type})
 			continue
 		}
-		report_subset(p, .Unsupported_Syntax, peek(p).span, "indexed access types")
+		report_unsupported(p, .Indexed_Access_Types, peek(p).span)
 		skip_balanced(p)
 		type = discard(p, m, start)
 	}
 	return type
 }
 
-@(private)
 parse_primary_type :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -130,19 +127,19 @@ parse_primary_type :: proc(p: ^Parser) -> ast.Node_ID {
 	case .Open_Brace:
 		return parse_object_type(p)
 	case .Open_Bracket:
-		return skip_type(p, "tuple types")
+		return skip_type(p, .Tuple_Types)
 	case .No_Substitution_Template, .Template_Head:
-		return skip_type(p, "template literal types")
+		return skip_type(p, .Template_Literal_Types)
 	case .Typeof:
 		m := mark(p)
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "`typeof` types")
+		report_unsupported(p, .Typeof_Types, advance(p).span)
 		parse_primary_type(p)
 		return discard(p, m, start)
 	case .This:
-		return skip_type(p, "`this` types")
+		return skip_type(p, .This_Types)
 	case .New:
 		m := mark(p)
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "constructor types")
+		report_unsupported(p, .Constructor_Types, advance(p).span)
 		parse_function_type(p)
 		return discard(p, m, start)
 	}
@@ -152,10 +149,9 @@ parse_primary_type :: proc(p: ^Parser) -> ast.Node_ID {
 
 // skip_type reports a type outside the subset that starts at the current token and skips it:
 // the token, or the whole bracket or template it opens.
-@(private)
-skip_type :: proc(p: ^Parser, what: string) -> ast.Node_ID {
+skip_type :: proc(p: ^Parser, construct: diag.Construct) -> ast.Node_ID {
 	start := token_start(p)
-	report_subset(p, .Unsupported_Syntax, peek(p).span, what)
+	report_unsupported(p, construct, peek(p).span)
 	#partial switch peek(p).kind {
 	case .Open_Bracket, .Template_Head:
 		skip_balanced(p)
@@ -167,7 +163,6 @@ skip_type :: proc(p: ^Parser, what: string) -> ast.Node_ID {
 
 // parse_named_type parses a type that starts with a name: a keyword type such as `number`, or a
 // reference `T`, `m.T`, `T<A, B>`.
-@(private)
 parse_named_type :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	token := advance(p)
@@ -199,32 +194,35 @@ parse_named_type :: proc(p: ^Parser) -> ast.Node_ID {
 	}
 
 	// Type operators outside the subset, which apply to the type after them.
-	operator: string
+	operator: diag.Construct
+	is_operator := true
 	switch name {
 	case "keyof":
-		operator = "`keyof` types"
+		operator = .Keyof_Types
 	case "readonly":
-		operator = "`readonly` array types"
+		operator = .Readonly_Array_Types
 	case "unique":
-		operator = "`unique symbol` types"
+		operator = .Unique_Symbol_Types
 	case "infer":
-		operator = "`infer` types"
+		operator = .Infer_Types
+	case:
+		is_operator = false
 	}
-	if operator != "" && is_type_operand(peek(p)) {
-		report_subset(p, .Unsupported_Syntax, token.span, operator)
+	if is_operator && is_type_operand(peek(p)) {
+		report_unsupported(p, operator, token.span)
 		parse_array_type(p)
 		return discard(p, m, start)
 	}
 	switch name {
 	case "object", "symbol", "bigint":
-		report_subset(p, .Unsupported_Syntax, token.span, "`object`, `symbol` and `bigint` types")
+		report_unsupported(p, .Object_Symbol_Bigint_Types, token.span)
 		return add_node(p, start, ast.Bad{})
 	case "asserts":
 		// `asserts x` or `asserts x is T` in a return type.
 		subject := peek(p)
 		is_subject := subject.kind == .Identifier || subject.kind == .This
 		if is_subject && !subject.line_break_before {
-			report_subset(p, .Unsupported_Syntax, token.span, "type predicates")
+			report_unsupported(p, .Type_Predicates, token.span)
 			advance(p)
 			if accept_word(p, "is") {
 				parse_type(p)
@@ -239,8 +237,7 @@ parse_named_type :: proc(p: ^Parser) -> ast.Node_ID {
 		qualifier = type_name
 		type_name = parse_type_name(p)
 		if at(p, .Dot) {
-			what := "qualified names deeper than `m.T`"
-			report_subset(p, .Unsupported_Syntax, peek(p).span, what)
+			report_unsupported(p, .Deep_Qualified_Names, peek(p).span)
 			for accept(p, .Dot) {
 				parse_member_name(p)
 			}
@@ -255,7 +252,7 @@ parse_named_type :: proc(p: ^Parser) -> ast.Node_ID {
 	// `x is T` in a return type: a type predicate.
 	predicate := peek(p)
 	if is_word(predicate, "is") && !predicate.line_break_before {
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "type predicates")
+		report_unsupported(p, .Type_Predicates, advance(p).span)
 		parse_type(p)
 		return discard(p, m, start)
 	}
@@ -263,7 +260,6 @@ parse_named_type :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // is_type_operand reports whether token can start the type after a type operator such as `keyof`.
-@(private)
 is_type_operand :: proc(token: Token) -> bool {
 	#partial switch token.kind {
 	case .Identifier, .Open_Paren, .Open_Bracket, .Open_Brace, .String, .Number, .Typeof:
@@ -273,7 +269,6 @@ is_type_operand :: proc(token: Token) -> bool {
 }
 
 // parse_type_arguments parses `<A, B>`. Each `>` is its own token, so `>>` closes two lists.
-@(private)
 parse_type_arguments :: proc(p: ^Parser) -> []ast.Node_ID {
 	advance(p) // <
 	first := len(p.scratch)
@@ -291,7 +286,6 @@ parse_type_arguments :: proc(p: ^Parser) -> []ast.Node_ID {
 }
 
 // parse_type_params parses `<T, U>`. Constraints and defaults are outside the subset.
-@(private)
 parse_type_params :: proc(p: ^Parser) -> []ast.Node_ID {
 	advance(p) // <
 	first := len(p.scratch)
@@ -303,14 +297,13 @@ parse_type_params :: proc(p: ^Parser) -> []ast.Node_ID {
 		name := parse_type_name(p)
 		if at(p, .Extends) {
 			m := mark(p)
-			what := "type parameter constraints"
-			report_subset(p, .Unsupported_Syntax, advance(p).span, what)
+			report_unsupported(p, .Type_Parameter_Constraints, advance(p).span)
 			parse_type(p)
 			drop(p, m)
 		}
 		if at(p, .Equal) {
 			m := mark(p)
-			report_subset(p, .Unsupported_Syntax, advance(p).span, "type parameter defaults")
+			report_unsupported(p, .Type_Parameter_Defaults, advance(p).span)
 			parse_type(p)
 			drop(p, m)
 		}
@@ -325,14 +318,12 @@ parse_type_params :: proc(p: ^Parser) -> []ast.Node_ID {
 
 // starts_function_type reports whether the `(` at the current token opens the parameters of a
 // function type, `(x: T) => U`, rather than a type in parentheses.
-@(private)
 starts_function_type :: proc(p: ^Parser) -> bool {
 	close := matching_close(p, p.current)
 	return close >= 0 && p.tokens[close + 1].kind == .Arrow
 }
 
 // parse_function_type parses `<U>(params) => type`.
-@(private)
 parse_function_type :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	type_params: []ast.Node_ID
@@ -352,7 +343,6 @@ parse_function_type :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_params parses the `(a: T, b?: U, ...c: V[])` of a function, an arrow or a function type.
 // A rest parameter comes last, with no comma after it.
-@(private)
 parse_params :: proc(p: ^Parser) -> []ast.Node_ID {
 	first := len(p.scratch)
 	if !expect(p, .Open_Paren) {
@@ -375,14 +365,11 @@ parse_params :: proc(p: ^Parser) -> []ast.Node_ID {
 
 // parse_param parses one parameter. A `this` parameter, a decorator and a default value are
 // outside the subset: they are reported and left out.
-@(private)
 parse_param :: proc(p: ^Parser) -> ast.Node_ID {
-	if at(p, .At) {
-		parse_decorator(p)
-	}
+	parse_decorators(p)
 	if at(p, .This) {
 		m := mark(p)
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "`this` parameters")
+		report_unsupported(p, .This_Parameters, advance(p).span)
 		if accept(p, .Colon) {
 			parse_type(p)
 		}
@@ -405,7 +392,7 @@ parse_param :: proc(p: ^Parser) -> ast.Node_ID {
 	}
 	if at(p, .Equal) {
 		m := mark(p)
-		report_subset(p, .Unsupported_Syntax, advance(p).span, "default parameter values")
+		report_unsupported(p, .Default_Parameter_Values, advance(p).span)
 		parse_assignment(p)
 		drop(p, m)
 	}
@@ -414,7 +401,6 @@ parse_param :: proc(p: ^Parser) -> ast.Node_ID {
 
 // parse_object_type parses `{ members }`, a type literal or the body of an interface. Members end
 // with `;`, `,` or a line break. A member outside the subset is reported and left out.
-@(private)
 parse_object_type :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	if !expect(p, .Open_Brace) {
@@ -439,7 +425,6 @@ parse_object_type :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_member parses `readonly name?: type` or a method signature `name<U>(params): type`.
-@(private)
 parse_member :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	flags: ast.Member_Flags
@@ -452,19 +437,16 @@ parse_member :: proc(p: ^Parser) -> ast.Node_ID {
 	next := peek(p, 1)
 	#partial switch token.kind {
 	case .Open_Bracket:
-		return skip_unsupported_member(p, .Unsupported_Syntax, token.span, "index signatures")
+		return skip_unsupported_member(p, .Index_Signatures, token.span)
 	case .Open_Paren, .Less:
-		return skip_unsupported_member(p, .Unsupported_Syntax, token.span, "call signatures")
+		return skip_unsupported_member(p, .Call_Signatures, token.span)
 	case .New:
-		what := "construct signatures"
-		return skip_unsupported_member(p, .Unsupported_Syntax, token.span, what)
+		return skip_unsupported_member(p, .Construct_Signatures, token.span)
 	case .Number:
-		what := "number property keys"
-		return skip_unsupported_member(p, .Unsupported_Syntax, token.span, what)
+		return skip_unsupported_member(p, .Number_Property_Keys, token.span)
 	}
 	if (is_word(token, "get") || is_word(token, "set")) && starts_member_name(next) {
-		what := "getters and setters"
-		return skip_unsupported_member(p, .Unsupported_Syntax, token.span, what)
+		return skip_unsupported_member(p, .Getters_And_Setters, token.span)
 	}
 	if !is_name_token(token) && token.kind != .String {
 		error_expected(p, "a property name")
@@ -494,7 +476,6 @@ parse_member :: proc(p: ^Parser) -> ast.Node_ID {
 }
 
 // parse_method_type parses the `<U>(params): type` of a method signature into a Function_Type.
-@(private)
 parse_method_type :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	type_params: []ast.Node_ID
@@ -519,7 +500,6 @@ parse_method_type :: proc(p: ^Parser) -> ast.Node_ID {
 
 // end_member consumes the `;` or `,` after a member of an object type, or accepts a line break or
 // the closing `}` instead.
-@(private)
 end_member :: proc(p: ^Parser) {
 	if accept(p, .Semicolon) || accept(p, .Comma) {
 		return

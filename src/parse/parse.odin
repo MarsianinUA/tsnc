@@ -272,6 +272,8 @@ is_word :: proc(token: Token, word: string) -> bool {
 // is_name_token reports whether token can be a property or member name: a name or a reserved word.
 @(private)
 is_name_token :: proc(token: Token) -> bool {
+	// The reserved words end Token_Kind, from .Await to .Yield.
+	#assert(max(Token_Kind) == .Yield)
 	return token.kind == .Identifier || token.kind >= .Await
 }
 
@@ -522,6 +524,12 @@ report_subset :: proc(p: ^Parser, code: diag.Code, span: source.Span, arg := "")
 	append(&p.diagnostics, diag.Diagnostic{code = code, span = span, args = {0 = arg}})
 }
 
+// report_unsupported reports a construct outside the subset that has no code of its own.
+@(private)
+report_unsupported :: proc(p: ^Parser, construct: diag.Construct, span: source.Span) {
+	report_subset(p, .Unsupported_Syntax, span, diag.construct_text(construct))
+}
+
 // line_break_between reports whether a line break lies between the offsets a and b, in either
 // order: whether a token that starts after the first and at or before the second follows one.
 @(private)
@@ -632,11 +640,10 @@ skip_statement :: proc(p: ^Parser) {
 @(private)
 skip_unsupported_member :: proc(
 	p: ^Parser,
-	code: diag.Code,
+	construct: diag.Construct,
 	span: source.Span,
-	arg: string,
 ) -> ast.Node_ID {
-	report_subset(p, code, span, arg)
+	report_unsupported(p, construct, span)
 	skip_member(p)
 	return ast.NO_NODE
 }

@@ -216,6 +216,23 @@ a_skipped_object_member_ends_at_its_comma :: proc(t: ^testing.T) {
 	)
 }
 
+// A construct that is skipped as a whole ends where it ends, and one mistake gets one error.
+@(test)
+a_skipped_declaration_ends_at_its_body :: proc(t: ^testing.T) {
+	// The missing `{` is the error, not an overload signature.
+	expect_parse(t, "function f() return 1", {{.Expected_Token, 1, 14}}, "bad")
+	// A `{` in type arguments is an object type, not the class body.
+	expect_parse(
+		t,
+		"class A extends B<{ x: number }> { m() {} }\nlet y = 2",
+		{{.Class, 1, 1}},
+		lines("bad", "(let (y = 2))"),
+	)
+	// An unclosed `<` or a missing body does not swallow the next statement.
+	expect_parse(t, "class A<T {\n}\nlet y = 2", {{.Class, 1, 1}}, lines("bad", "(let (y = 2))"))
+	expect_parse(t, "enum E\nlet y = 2", {{.Enum, 1, 1}}, lines("bad", "(let (y = 2))"))
+}
+
 @(test)
 an_interface_without_a_body_still_has_one :: proc(t: ^testing.T) {
 	expect_parse(
@@ -277,4 +294,37 @@ deep_nesting_is_an_error_not_a_crash :: proc(t: ^testing.T) {
 	}
 	// Ordinary nesting stays well within the limit.
 	expect_errors(t, concat(repeat("(", 50), "x", repeat(")", 50)), {})
+}
+
+// Long runs of constructs outside the subset recurse through declarations and arrow heads, not
+// through brackets. They too end in their errors, not in a stack overflow.
+@(test)
+long_runs_outside_the_subset_do_not_crash :: proc(t: ^testing.T) {
+	N :: 20000
+	repeat :: proc(s: string) -> string {
+		return strings.repeat(s, N, context.temp_allocator)
+	}
+
+	// Decorators are read in a loop: each one is reported, none counts as nesting.
+	decorators := make([]Error, N, context.temp_allocator)
+	for &e, i in decorators {
+		e = {.Decorator, i32(i + 1), 1}
+	}
+	expect_parse(t, concat(repeat("@a\n"), "let x = 1"), decorators, "(let (x = 1))")
+
+	// Nested namespaces: each level is reported up to the limit, then the nesting is, on the line
+	// of the first level past it.
+	text := repeat("export namespace A {\n")
+	parsed := parse_checked(t, text)
+	levels := len(parsed.errors) - 1
+	testing.expectf(t, levels > 0, "namespaces: %d errors", len(parsed.errors))
+	namespaces := make([]Error, max(levels, 0) + 1, context.temp_allocator)
+	for &e, i in namespaces {
+		e = {.Namespace, i32(i + 1), 8}
+	}
+	namespaces[len(namespaces) - 1].code = .Nesting_Too_Deep
+	expect_errors_of(t, text, parsed, namespaces)
+
+	// `async async ...` is no arrow at any depth: one expression `async`, then a missing `;`.
+	expect_errors(t, concat(repeat("async "), "x => 1"), {{.Expected_Token, 1, 7}})
 }
