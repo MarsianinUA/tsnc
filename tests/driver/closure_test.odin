@@ -27,11 +27,58 @@ a_cycle_is_read_once_and_terminates :: proc(t: ^testing.T) {
 	defer driver.destroy(&c.report)
 
 	// a imports b and b imports a. The walk ends because a file already numbered is never read
-	// again; whether the cycle itself is allowed is a question for program in T3.1.
-	expect_clean(t, c)
+	// again, and each of the two files is still one module.
+	testing.expect_value(t, c.err.kind, driver.Error_Kind.None)
 	testing.expect_value(
 		t,
 		slice.equal(file_names(c), []string{"lib.d.ts", "main.ts", "a.ts", "b.ts"}),
+		true,
+	)
+}
+
+@(test)
+a_cycle_of_modules_that_run_code_is_reported :: proc(t: ^testing.T) {
+	c := check_project("cycle", "main.ts")
+	defer driver.destroy(&c.report)
+
+	// Each of a and b initializes a constant from the other's export, so whichever loads first
+	// reads a value that is not there yet. The message stands on the import that closes the ring,
+	// in a.ts, and names both modules once.
+	testing.expectf(
+		t,
+		slice.equal(c.errors, []Error{{"a.ts", .Cycle_With_Side_Effects, 1, 19}}),
+		"errors %v",
+		c.errors,
+	)
+	testing.expect_value(t, len(c.report.program.cycles), 1)
+	testing.expect_value(t, slice.equal(cycle_names(c, 0), []string{"a.ts", "b.ts"}), true)
+	testing.expect_value(t, c.report.program.cycles[0].has_effects, true)
+}
+
+@(test)
+a_cycle_of_types_and_functions_passes :: proc(t: ^testing.T) {
+	c := check_project("types-cycle", "main.ts")
+	defer driver.destroy(&c.report)
+
+	// a and b describe each other's shapes and declare functions, and neither runs anything as it
+	// loads, so the ring is allowed (requirements 7). main, which does run code, is not in it.
+	expect_clean(t, c)
+	testing.expect_value(t, len(c.report.program.cycles), 1)
+	testing.expect_value(t, slice.equal(cycle_names(c, 0), []string{"a.ts", "b.ts"}), true)
+	testing.expect_value(t, c.report.program.cycles[0].has_effects, false)
+}
+
+@(test)
+the_shared_module_of_a_diamond_initializes_first :: proc(t: ^testing.T) {
+	c := check_project("diamond", "main.ts")
+	defer driver.destroy(&c.report)
+
+	// The order lower will emit the init functions in: the lib, then c, which a and b both import,
+	// then the two of them, then the entry file.
+	expect_clean(t, c)
+	testing.expect_value(
+		t,
+		slice.equal(init_names(c), []string{"lib.d.ts", "c.ts", "a.ts", "b.ts", "main.ts"}),
 		true,
 	)
 }
@@ -67,7 +114,7 @@ a_missing_module_is_reported_at_every_import :: proc(t: ^testing.T) {
 		"errors %v",
 		c.errors,
 	)
-	testing.expect_value(t, len(c.report.files), 2) // the lib and main.ts, nothing else
+	testing.expect_value(t, len(c.report.program.files), 2) // the lib and main.ts, nothing else
 }
 
 @(test)

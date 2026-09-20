@@ -36,9 +36,9 @@ the_lib_is_module_zero :: proc(t: ^testing.T) {
 
 	// The lib goes in before anything the entry file could import, and it parses and binds like
 	// any other file, so a mistake in it would show up here as a diagnostic against lib.d.ts.
-	testing.expect_value(t, c.report.files[0].path, driver.LIB_PATH)
-	testing.expect_value(t, string(c.report.files[0].text), driver.LIB_TEXT)
-	testing.expect(t, len(c.report.trees[0].nodes) > 1)
+	testing.expect_value(t, c.report.program.files[0].path, driver.LIB_PATH)
+	testing.expect_value(t, string(c.report.program.files[0].text), driver.LIB_TEXT)
+	testing.expect(t, len(c.report.program.trees[0].nodes) > 1)
 	expect_clean(t, c)
 }
 
@@ -53,9 +53,12 @@ a_clean_program_reports_nothing :: proc(t: ^testing.T) {
 		slice.equal(file_names(c), []string{"lib.d.ts", "main.ts", "util.ts"}),
 		true,
 	)
-	// Every file gets a row in each table, so T3.1 can index them all by File_ID.
-	testing.expect_value(t, len(c.report.trees), len(c.report.files))
-	testing.expect_value(t, len(c.report.bound), len(c.report.files))
+	// Every file gets a row in each table of the program, all indexed by File_ID.
+	program := c.report.program
+	testing.expect_value(t, len(program.trees), len(program.files))
+	testing.expect_value(t, len(program.bound), len(program.files))
+	testing.expect_value(t, len(program.imports), len(program.files))
+	testing.expect_value(t, len(program.init_order), len(program.files))
 }
 
 @(test)

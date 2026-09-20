@@ -35,7 +35,7 @@ print_diagnostics :: proc(report: driver.Check_Report) {
 	w := bufio.writer_to_writer(&stderr)
 	for d in report.diagnostics {
 		// When stderr itself fails there is nobody left to tell: the exit code still says it.
-		_ = diag.render(w, report.files, d)
+		_ = diag.render(w, report.program.files, d)
 	}
 	_ = bufio.writer_flush(&stderr)
 }
