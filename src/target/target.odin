@@ -50,11 +50,12 @@ Linker :: enum u8 {
 }
 
 Spec :: struct {
-	triple:         cstring, // LLVM target triple, the one Odin gives the runtime object
-	linker:         Linker,
-	link_flags:     []string, // one command line argument per element, unquoted
-	runtime_object: string, // file name; link looks for it next to tsnc
-	pointer_size:   int, // bytes
+	triple:            cstring, // LLVM target triple, the one Odin gives the runtime object
+	linker:            Linker,
+	link_flags:        []string, // one command line argument per element, unquoted
+	runtime_object:    string, // file name; link looks for it next to tsnc
+	executable_suffix: string, // what the OS calls an executable: ".exe" on Windows, nothing else
+	pointer_size:      int, // bytes
 }
 
 // SPECS is @(rodata) rather than a constant: Odin indexes a constant array only by a constant.
@@ -76,22 +77,25 @@ SPECS := #partial [Target]Spec {
 			"bcrypt.lib",
 		},
 		runtime_object = "tsnc_rt-windows_amd64.obj",
+		executable_suffix = ".exe",
 		pointer_size = 8,
 	},
 	.linux_amd64 = {
-		triple         = "x86_64-pc-linux-gnu",
-		linker         = .Cc,
+		triple            = "x86_64-pc-linux-gnu",
+		linker            = .Cc,
 		// -no-pie: distributions build PIE executables by default, and Odin and LLVM emit
 		// position-dependent code by default.
-		link_flags     = {"-no-pie", "-Wl,-z,now", "-Wl,-z,relro", "-lm", "-lc"},
-		runtime_object = "tsnc_rt-linux_amd64.obj",
-		pointer_size   = 8,
+		link_flags        = {"-no-pie", "-Wl,-z,now", "-Wl,-z,relro", "-lm", "-lc"},
+		runtime_object    = "tsnc_rt-linux_amd64.obj",
+		executable_suffix = "",
+		pointer_size      = 8,
 	},
 	.darwin_arm64 = {
 		triple = "arm64-apple-macosx11.0.0",
 		linker = .Cc,
 		link_flags = {"-target", "arm64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_arm64.obj",
+		executable_suffix = "",
 		pointer_size = 8,
 	},
 	.darwin_amd64 = {
@@ -99,6 +103,7 @@ SPECS := #partial [Target]Spec {
 		linker = .Cc,
 		link_flags = {"-target", "x86_64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_amd64.obj",
+		executable_suffix = "",
 		pointer_size = 8,
 	},
 }

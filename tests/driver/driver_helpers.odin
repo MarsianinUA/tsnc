@@ -7,6 +7,7 @@ import "core:testing"
 import "../../src/diag"
 import "../../src/driver"
 import "../../src/source"
+import "../../src/target"
 
 // PROJECTS is where the fixture programs live, found from this file's own location. The older test
 // packages spell their paths relative to the repository root, which ties them to the directory the
@@ -29,6 +30,19 @@ Checked :: struct {
 	errors: []Error, // in print order, the order main prints them in
 }
 
+// Built is what a build answered. Its report holds a Check_Report, so the same errors_of serves
+// both kinds of test.
+Built :: struct {
+	report: driver.Build_Report,
+	err:    driver.Driver_Error,
+	errors: []Error, // in print order, the order main prints them in
+}
+
+// RUNTIME_BUILD puts the runtime object where link looks for it: next to the running executable,
+// which for these tests is the one `odin test` wrote. A test that links names this command when it
+// fails, so a fresh clone gets the fix rather than a missing file.
+RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
+
 // check_project runs `tsnc check` over one fixture program, the way main does. The caller owns the
 // result and must call driver.destroy on its report.
 //
@@ -41,6 +55,50 @@ check_project :: proc(project, entry: string) -> Checked {
 	}
 	report, err := driver.check_only(options)
 	return {report = report, err = err, errors = errors_of(report)}
+}
+
+// out_path names a file a test writes, beside the test executable itself: `odin test tests/driver
+// -out:dist/driver-tests.exe` puts that executable in dist/, which is also where link looks for the
+// runtime object when the caller names none, so one directory serves both. Every test passes a name
+// of its own, because the test runner runs them on a thread pool.
+out_path :: proc(name: string) -> string {
+	directory, _ := os.get_executable_directory(context.temp_allocator)
+	path, _ := os.join_path({directory, name}, context.temp_allocator)
+	return path
+}
+
+// build_options is what main would have parsed out of `tsnc build <fixture> -out:<name>`. A test
+// that wants another artifact or another target sets the field afterwards.
+build_options :: proc(project, entry, output: string) -> driver.Options {
+	return {
+		command = .build,
+		input = fmt.tprintf("%s%s/%s", PROJECTS, project, entry),
+		output = out_path(output),
+		target = target.HOST,
+	}
+}
+
+// build_project runs one build the way main does. The caller owns the result and must call
+// driver.destroy on the report inside it.
+build_project :: proc(options: driver.Options) -> Built {
+	report, err := driver.build(options)
+	return {report = report, err = err, errors = errors_of(report.check)}
+}
+
+// expect_built checks a build that must have written its artifact and said nothing.
+expect_built :: proc(t: ^testing.T, b: Built, loc := #caller_location) -> bool {
+	no_error := testing.expectf(
+		t,
+		b.err.kind == .None,
+		"driver error %v: %s\nbuild the runtime object first: %s",
+		b.err.kind,
+		b.err.detail,
+		RUNTIME_BUILD,
+		loc = loc,
+	)
+	no_diagnostics := testing.expectf(t, len(b.errors) == 0, "errors %v", b.errors, loc = loc)
+	wrote := testing.expectf(t, b.report.output != "", "nothing was written", loc = loc)
+	return no_error && no_diagnostics && wrote
 }
 
 // expect_clean checks a program that must produce no diagnostic at all.

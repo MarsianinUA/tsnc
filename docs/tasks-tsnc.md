@@ -242,7 +242,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T4.3.
 Done: a test builds an object for the IR from T4.3; the module passes the LLVM verifier.
 
-### [ ] T4.5 `driver`: full pipeline and commands
+### [x] T4.5 `driver`: full pipeline and commands
 
 What: `lower`, `codegen`, `link` in a chain; `tsnc build`, `tsnc run` (runs the program with inherited stdio and passes on its exit code), `-out:`, `-o:none`, `-emit-llvm`, `-emit-ir`, `-target:`; write the artifact to a temporary file and rename it; an arena per phase.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `driver`, `main`; [Simplicity and robustness](architecture-plan-tsnc.md#simplicity-and-robustness), the item on atomicity; requirements §9.

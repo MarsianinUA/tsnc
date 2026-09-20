@@ -7,9 +7,10 @@ diagnostics.
 check_only is the `tsnc check` stage: it builds the import closure from the entry file, parses and
 binds every file in it, hands the result to program for the module graph, types it with one
 partition of every source file, and returns that frozen program together with every diagnostic,
-already in print order. driver never prints and never sets the exit code; main does both. build and
-run join in T4.5, and the policy between them is has_errors: nothing reaches lower while the
-program still has a mistake in it.
+already in print order. build carries on from there through lower, codegen and link, and run starts
+what build wrote; both live in build.odin. The policy between the stages is has_errors: nothing
+reaches lower while the program still has a mistake in it. driver never prints and never sets the
+exit code; main does both.
 
 The checker runs whatever the phases under it found. A construct outside the subset becomes a Bad
 node in parse, and check gives a Bad node the error type without a word, so a file that already
@@ -45,6 +46,15 @@ import "../program"
 import "../source"
 import "../target"
 
+// LLVM's backend registration and command line options are process-global, so they are set once,
+// before anything can reach codegen. An @(init) procedure runs before main, and in a test binary
+// before the test pool starts, which is how tests/link and tests/codegen already do it. From T6.1
+// it is also what keeps the setting ahead of the thread pool.
+@(init)
+init_llvm :: proc "contextless" () {
+	codegen.init_global_options()
+}
+
 // LIB_TEXT is the built-in lib.d.ts, module zero of every program. It goes through the same parse
 // and bind as a user file.
 LIB_TEXT :: #load("../lib/lib.d.ts", string)
@@ -74,11 +84,31 @@ Options :: struct {
 	jobs:         int `args:"name=j" usage:"worker threads (default: number of cores)"`,
 }
 
+// Artifact is what a build produces. The command line spells it as two flags, because
+// requirements 9 fixes -emit-llvm and -emit-ir; inside driver it is one enum, the way the
+// architecture plan asks for an artifact kind, so that every stage switches on one value.
+Artifact :: enum u8 {
+	Executable, // codegen writes an object file, link makes the program out of it
+	LLVM_IR, // -emit-llvm: textual LLVM IR from codegen, after the passes of -o:
+	IR_Dump, // -emit-ir: the tsnc IR as lower left it, which -o: says nothing about
+}
+
 Error_Kind :: enum u8 {
 	None,
 	Entry_Unreadable, // detail: the path, then why it could not be read
 	Entry_Too_Large, // detail: the path
 	Out_Of_Memory, // detail: empty
+	Two_Artifacts, // detail: empty
+	Nothing_To_Run, // detail: empty
+	Cross_Link, // detail: empty
+	Output_Unnamable, // detail: the entry file, whose name cannot become the output's
+	Output_Directory_Missing, // detail: the directory
+	Broken_IR, // detail: every violation, rendered; a compiler bug
+	Codegen_Failed, // detail: the path, then what codegen answered
+	Runtime_Object_Missing, // detail: the path link looked at
+	Link_Failed, // detail: a sentence about what the linker, or link itself, could not do
+	Output_Unwritable, // detail: the path, then why
+	Program_Unrunnable, // detail: the path, then why
 }
 
 // Driver_Error is a failure that stops the build before it starts. A failure with a place in the
@@ -101,12 +131,22 @@ Check_Report :: struct {
 	memory:      ^Build_Memory, // owns the arenas the program lives in
 }
 
+// Build_Report is what a build answers: everything check learned, plus what was written and where.
+// It holds a Check_Report rather than replacing it, so that destroy keeps owning every arena in one
+// place and main renders the diagnostics of all three commands the same way.
+Build_Report :: struct {
+	check:    Check_Report,
+	artifact: Artifact,
+	output:   string, // the path written; empty when the build stopped before it wrote anything
+}
+
 // Build_Memory holds every arena of one build. Only driver touches it; a caller passes it back to
 // destroy. It is heap-allocated because an arena must not move: virtual.arena_allocator captures
 // the arena by pointer, so a copied or reallocated arena leaves its allocator pointing at the old
 // address.
 Build_Memory :: struct {
 	arena:     virtual.Arena, // the file table, the paths, the file texts, the merged diagnostics
+	lowering:  virtual.Arena, // the IR and lower's diagnostics; empty until build reaches lower
 	tasks:     [dynamic]^File_Task, // one per File_ID, each owning its own arena
 	checks:    [dynamic]^Check_Task, // one per partition, each owning its own arena
 	allocator: runtime.Allocator, // where the struct above came from, for destroy
@@ -187,7 +227,7 @@ check_only :: proc(
 }
 
 // has_errors reports whether the program has a mistake in it. Every diagnostic tsnc makes is an
-// error, so one is enough. This is the "go to lower only without errors" policy: T4.5 asks it
+// error, so one is enough. This is the "go to lower only without errors" policy: build asks it
 // between check and lower, and main turns the same answer into the exit code.
 has_errors :: proc(report: Check_Report) -> bool {
 	return len(report.diagnostics) > 0
@@ -210,6 +250,9 @@ destroy :: proc(report: ^Check_Report) {
 		free(task, memory.allocator)
 	}
 	delete(memory.tasks)
+	// Unconditional: a build that never reached lower left this arena zeroed, and arena_destroy on
+	// an arena with no block is a no-op.
+	virtual.arena_destroy(&memory.lowering)
 	virtual.arena_destroy(&memory.arena)
 	free(memory, memory.allocator)
 	report^ = {}

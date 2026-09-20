@@ -19,8 +19,9 @@ HELLO :: "Hello, world!"
 // smoke builds a hello world for the host out of IR it writes by hand, links it with the runtime
 // object in dist/, runs it and compares stdout, stderr and the exit code. It answers whether
 // codegen, link and the runtime agree, and says nothing about the front end, which the diff mode
-// (T4.7) covers instead. Until `tsnc build` exists (T4.5), smoke calls codegen and link directly,
-// the way driver will.
+// (T4.7) covers instead. It calls codegen and link directly rather than `tsnc build`, which exists
+// since T4.5, and keeps doing so on purpose: when smoke fails, the fault is in the back end or in
+// the toolchain of this machine, with neither the front end nor driver in the picture.
 smoke :: proc() -> (passed: bool) {
 	codegen.init_global_options()
 
