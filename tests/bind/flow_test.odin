@@ -150,15 +150,17 @@ a_loop_that_nothing_reaches_stays_unreachable :: proc(t: ^testing.T) {
 		lines(
 			"function f(c: boolean, n: number): number {", //
 			"\treturn 1;",
-			"\twhile (c) { n = 2; n; }",
-			"\tfor (;;) { n; }",
+			"\twhile (c) { n = 2; n; continue; }",
+			"\tfor (;;) { n; break; }",
 			"}",
 		),
 	)
 	// Dead code has no flow at all, inside a loop as anywhere else: check must always find a
-	// Flow_Start by walking back, and never a cycle of back edges alone.
+	// Flow_Start by walking back, and never a cycle of back edges alone. check_bound holds the
+	// other half: such a loop leaves no node behind. Its jumps still have a loop to go to.
+	testing.expect(t, use_node(b, "n", 2) != ast.NO_NODE)
+	testing.expect(t, use_flow(b, "n", 1) == bind.UNREACHABLE)
 	testing.expect(t, use_flow(b, "n", 2) == bind.UNREACHABLE)
-	testing.expect(t, use_flow(b, "n", 3) == bind.UNREACHABLE)
 }
 
 @(test)
@@ -253,6 +255,36 @@ a_case_falls_through_into_the_next_one :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_case_value_is_read_at_the_head_of_the_switch :: proc(t: ^testing.T) {
+	b := expect_bound(
+		t,
+		lines(
+			"function f(k: number, x: number, y: number, z: number) {", //
+			"\tswitch (k) {",
+			"\t\tcase 1: x = 1;",
+			"\t\tcase y:",
+			"\t\tcase z: x;",
+			"\t}",
+			"}",
+			"function g(w: number) {",
+			"\tswitch (w) { case w: }",
+			"}",
+		),
+	)
+	// A case is picked before any case runs, so its value sees neither the write that falls through
+	// from the case above it nor the narrowing of its own clause, which would be a circle.
+	expect_flow(t, b, use_flow(b, "y", 0), "start")
+	expect_flow(t, b, use_flow(b, "z", 0), "start")
+	expect_flow(t, b, use_flow(b, "w", 1), "start")
+	expect_flow(
+		t,
+		b,
+		use_flow(b, "x", 1),
+		`(join (case 1..3 start) (= "x = 1" (case 0..1 start)))`,
+	)
+}
+
+@(test)
 logical_operators_test_their_sides_in_turn :: proc(t: ^testing.T) {
 	b := expect_bound(
 		t,
@@ -303,6 +335,25 @@ a_break_inside_a_switch_leaves_the_switch_and_not_the_loop :: proc(t: ^testing.T
 }
 
 @(test)
+a_jump_with_nowhere_to_go_is_reported :: proc(t: ^testing.T) {
+	expect_errors(t, "break;", {{.Break_Outside_Loop, 1, 1}})
+	expect_errors(t, "continue;", {{.Continue_Outside_Loop, 1, 1}})
+	// A `switch` takes `break` alone, and a loop around it takes the `continue`.
+	expect_errors(t, "switch (1) { case 1: continue; }", {{.Continue_Outside_Loop, 1, 22}})
+	expect_bound(t, "while (true) { switch (1) { case 1: continue; } }")
+	// A loop does not reach into a function written inside it.
+	expect_errors(
+		t,
+		"while (true) { const f = () => { break; }; }",
+		{{.Break_Outside_Loop, 1, 34}},
+	)
+
+	// The flow goes on past the jump, so one mistake does not turn the rest into dead code.
+	b := expect_errors(t, "function f(x: number) { break; x; }", {{.Break_Outside_Loop, 1, 25}})
+	expect_flow(t, b, use_flow(b, "x", 0), "start")
+}
+
+@(test)
 a_logical_assignment_writes_only_on_one_path :: proc(t: ^testing.T) {
 	b := expect_bound(
 		t,
@@ -335,6 +386,50 @@ the_right_side_of_a_coalesce_knows_the_left_one_was_nullish :: proc(t: ^testing.
 		),
 	)
 	expect_flow(t, b, use_flow(b, "fallback", 0), `(nullish "x" start)`)
+}
+
+@(test)
+a_coalesce_in_a_condition_still_tests_the_value_it_keeps :: proc(t: ^testing.T) {
+	b := expect_bound(
+		t,
+		lines(
+			"function f(a: number | undefined, b: number) {", //
+			"\tif (a ?? b) { a; } else { a; }",
+			"}",
+		),
+	)
+	// `0 ?? b` is 0, which takes the else branch: a value that is there is not yet a truthy one.
+	expect_flow(
+		t,
+		b,
+		use_flow(b, "a", 1),
+		`(join (if "a" (defined "a" start)) (if "b" (nullish "a" start)))`,
+	)
+	expect_flow(
+		t,
+		b,
+		use_flow(b, "a", 2),
+		`(join (else "a" (defined "a" start)) (else "b" (nullish "a" start)))`,
+	)
+}
+
+@(test)
+a_coalesce_under_another_operator_is_tested_even_in_a_value :: proc(t: ^testing.T) {
+	b := expect_bound(
+		t,
+		lines(
+			"function f(a: number | undefined, b: number, c: number) {", //
+			"\tconst y = (a ?? b) && c;",
+			"}",
+		),
+	)
+	expect_flow(t, b, use_flow(b, "b", 0), `(nullish "a" start)`)
+	expect_flow(
+		t,
+		b,
+		use_flow(b, "c", 0),
+		`(join (if "a" (defined "a" start)) (if "b" (nullish "a" start)))`,
+	)
 }
 
 @(test)

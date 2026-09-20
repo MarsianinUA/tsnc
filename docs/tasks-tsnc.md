@@ -1,6 +1,6 @@
 # Task board: tsnc
 
-Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 18, 2026.
+Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 20, 2026.
 
 Purpose. The operator gives the agent a task number. The agent reads the shared handoff kit and the task kit, makes a detailed plan and writes the code. Tasks do not change the architecture. If a task runs into a key block from the section [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the work stops and the question goes back to the operator.
 
@@ -297,7 +297,7 @@ Done: tests for all tags, including `NaN !== NaN` and `-0 === 0`.
 
 ### [ ] T5.5 `arr`: arrays
 
-What: array cell with a buffer in the heap (unboxed elements by element kind); amortized growth; `push`, `pop`, `slice`, `indexOf`, `includes`, `join`; sorting through `slice.stable_sort_by` over a temporary copy with a closure comparator per the `abi` convention (`undefined` goes last); exports.
+What: array cell with a buffer in the heap (unboxed elements by element kind); amortized growth; `push`, `pop`, `slice`, `indexOf`, `includes`, `join`; sorting through `slice.stable_sort_by` over a temporary copy with a closure comparator per the `abi` convention (`undefined` goes last); exports. `sort` is not in `src/lib/lib.d.ts` yet, nor in requirements §2.2, which lets the method list grow: declare it in the lib file here, so that T5.8 can sort with a comparator.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `arr`; [Interaction map](architecture-plan-tsnc.md#interaction-map), row "`rt` (array sort) to generated code"; requirements §3.6, §4.5 (row "Array sorting").
 After: T5.4.
 Done: tests, including a call to a stub comparator through the calling convention.
@@ -343,7 +343,7 @@ Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 6.
 
 ### [ ] T6.1 `driver`: thread pool for parsing
 
-What: `core:thread.Pool`; a task per file with its own arena (`pool_add_task` with the task allocator); the import closure loop in waves (all known files in parallel, then the new ones); `File_ID` in breadth-first order regardless of the order in which tasks finish; `-j:N`, defaulting to the number of cores; `codegen.init_global_options` before the pool.
+What: `core:thread.Pool`; a task per file with its own arena (`pool_add_task` with the task allocator); the import closure loop in waves (all known files in parallel, then the new ones); `File_ID` in breadth-first order regardless of the order in which tasks finish; `-j:N`, defaulting to the number of cores; `codegen.init_global_options` before the pool. Two leftovers of T2.8 belong here. A task arena commits 1 MiB for every file, the default of `core:mem/virtual`, which is 1 GiB for a thousand files: size it by the file instead. And an import whose spelling differs from the file name on disk only by case resolves on Windows and macOS but not on Linux: report it, as tsc does under `forceConsistentCasingInFileNames`, so that a program which passes on one OS passes on all of them.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `driver`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rules 4 and 5; [Interaction map](architecture-plan-tsnc.md#interaction-map), the "Determinism" paragraph; requirements §8.
 After: T5.10.
 Done: a test: the same project at `-j:1` and `-j:8` gives the same `File_ID` values and the same diagnostic order.

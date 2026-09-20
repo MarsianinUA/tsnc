@@ -272,19 +272,19 @@ collect_exports :: proc(b: ^Binder, statements: []ast.Node_ID) {
 			}
 			for declarator_id in v.declarators {
 				declarator := b.tree.nodes[declarator_id].variant.(ast.Declarator)
-				add_export(b, &taken, declarator.name, b.node_symbols[declarator_id], false)
+				export_declared(b, &taken, declarator.name, declarator_id)
 			}
 		case ast.Function_Decl:
 			if .Export in v.modifiers {
-				add_export(b, &taken, v.name, b.node_symbols[id], false)
+				export_declared(b, &taken, v.name, id)
 			}
 		case ast.Interface_Decl:
 			if .Export in v.modifiers {
-				add_export(b, &taken, v.name, b.node_symbols[id], false)
+				export_declared(b, &taken, v.name, id)
 			}
 		case ast.Type_Alias_Decl:
 			if .Export in v.modifiers {
-				add_export(b, &taken, v.name, b.node_symbols[id], false)
+				export_declared(b, &taken, v.name, id)
 			}
 		case ast.Export_Named:
 			for specifier_id in v.specifiers {
@@ -296,6 +296,28 @@ collect_exports :: proc(b: ^Binder, statements: []ast.Node_ID) {
 				}
 				export_local(b, &taken, specifier, type_only)
 			}
+		}
+	}
+}
+
+// export_declared exports a name at its own declaration: `export const a`. A declaration that lost
+// its name to an earlier one exports nothing: it is reported already, and a second entry would
+// only report the same mistake again, as a name exported twice.
+@(private)
+export_declared :: proc(
+	b: ^Binder,
+	taken: ^map[Name_Key]struct{},
+	name: ast.Name,
+	declaration: ast.Node_ID,
+) {
+	symbol := b.node_symbols[declaration]
+	if symbol == NO_SYMBOL {
+		return // a name parse could not read
+	}
+	for meaning in meanings(b.symbols[symbol].kind) {
+		if module_symbol(b, name.text, meaning) == symbol {
+			add_export(b, taken, name, symbol, false)
+			return
 		}
 	}
 }
@@ -469,4 +491,10 @@ all_inert :: proc(b: ^Binder, ids: []ast.Node_ID) -> bool {
 @(private)
 report :: proc(b: ^Binder, code: diag.Code, name: ast.Name) {
 	append(&b.diagnostics, diag.Diagnostic{code = code, span = name.span, args = {0 = name.text}})
+}
+
+// report_statement records a diagnostic about a whole statement, at its start.
+@(private)
+report_statement :: proc(b: ^Binder, code: diag.Code, statement: ast.Node_ID) {
+	append(&b.diagnostics, diag.Diagnostic{code = code, span = b.tree.nodes[statement].span})
 }

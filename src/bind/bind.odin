@@ -31,7 +31,8 @@ by the conditions and assignments on the way. The graph of a function stands on 
 at Flow_Start, and only an arrow keeps the flow where it was created, so that narrowing carries
 into it.
 
-Where tsnc differs from tsc: a condition that narrows nothing still gets a node; the flow of an
+Where tsnc differs from tsc: a condition that narrows nothing still gets a node; the left side of
+`??` is asked whether it is null or undefined, where tsc asks whether it is truthy; the flow of an
 immediately called arrow is not inlined; the growth of an array of unknown element type is not
 tracked, so check asks for an annotation; Assigned covers the whole file instead of a point in it.
 
@@ -216,7 +217,7 @@ Flow_Condition :: struct {
 }
 
 Condition_Kind :: enum u8 {
-	Truthy, // `if`, `while`, `&&`, `||`, `?:`, `!`: the value is truthy
+	Truthy, // `if`, `while`, `&&`, `||`, `?:`, `!`, the value a tested `??` keeps: it is truthy
 	Not_Nullish, // the left side of `??` and `??=`: the value is neither null nor undefined
 }
 
@@ -374,8 +375,8 @@ Binder :: struct {
 	current:          Flow_ID, // the flow at the point being bound
 	break_target:     Label_ID, // where `break` goes, NO_LABEL outside a loop and a switch
 	continue_target:  Label_ID,
-	// Whether an assignment or a call has been bound since the flag was cleared. A conditional
-	// expression whose sides changed nothing keeps the flow it started from.
+	// Whether an assignment has been bound since the flag was cleared. A conditional expression
+	// whose sides changed nothing keeps the flow it started from.
 	has_flow_effects: bool,
 	has_side_effects: bool,
 }
@@ -413,7 +414,7 @@ freeze :: proc(b: ^Binder) -> Bound_File {
 	}
 	for label in b.labels {
 		if label.flow == UNREACHABLE {
-			continue // a branch label that led nowhere, or that collapsed into its one path
+			continue // a label that led nowhere, or a branch that collapsed into its one path
 		}
 		antecedents := slice.clone(label.antecedents[:], b.allocator)
 		#partial switch &node in b.flow[label.flow] {

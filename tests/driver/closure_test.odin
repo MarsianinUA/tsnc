@@ -1,6 +1,7 @@
 package driver_tests
 
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 import "../../src/driver"
@@ -88,8 +89,30 @@ a_missing_entry_file_is_a_driver_error :: proc(t: ^testing.T) {
 	c := check_project("clean", "not-here.ts")
 	defer driver.destroy(&c.report)
 
-	// The entry file has no import to point at, so it cannot be a diagnostic.
+	// The entry file has no import to point at, so it cannot be a diagnostic. The reason is in
+	// words, not in the name the OS has for it.
 	testing.expect_value(t, c.err.kind, driver.Error_Kind.Entry_Unreadable)
-	testing.expect(t, len(c.err.detail) > 0)
+	testing.expectf(
+		t,
+		strings.has_suffix(c.err.detail, "not-here.ts: file does not exist"),
+		"detail %q",
+		c.err.detail,
+	)
 	testing.expect_value(t, len(c.errors), 0)
+}
+
+@(test)
+an_entry_that_is_a_directory_says_so :: proc(t: ^testing.T) {
+	c := check_project("clean", "")
+	defer driver.destroy(&c.report)
+
+	// Every OS refuses to read a directory and each names the refusal differently, so driver
+	// answers for all of them.
+	testing.expect_value(t, c.err.kind, driver.Error_Kind.Entry_Unreadable)
+	testing.expectf(
+		t,
+		strings.has_suffix(c.err.detail, ": it is a directory"),
+		"detail %q",
+		c.err.detail,
+	)
 }

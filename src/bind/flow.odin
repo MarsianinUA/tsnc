@@ -3,6 +3,7 @@ package bind
 import "core:slice"
 
 import "../ast"
+import "../diag"
 
 // Label_ID indexes the binder's labels, the joins of the flow graph while it is being built.
 @(private)
@@ -12,8 +13,9 @@ Label_ID :: distinct int
 @(private)
 NO_LABEL :: Label_ID(-1)
 
-// Label collects the paths that reach one point. A loop label has its node from the start, since
-// the body points back at it; a branch label gets one only when two paths or more arrive.
+// Label collects the paths that reach one point. A loop label gets its node when the loop is
+// entered, since the body points back at it; a branch label gets one only when two paths or more
+// arrive.
 @(private)
 Label :: struct {
 	flow:        Flow_ID,
@@ -33,30 +35,22 @@ new_branch_label :: proc(b: ^Binder) -> Label_ID {
 	return Label_ID(len(b.labels) - 1)
 }
 
+// enter_loop starts a loop where the flow stands and returns the label its back edges join. The
+// head is a node from the start, with the path that enters it first. A loop nothing reaches gets a
+// label but no node, and stays unreachable: its head would otherwise be a cycle of back edges
+// alone, with no Flow_Start for check to walk back to. tsc enters such a loop anyway and leaves
+// the checker to notice.
 @(private)
-new_loop_label :: proc(b: ^Binder) -> Label_ID {
-	flow := add_flow(b, Flow_Loop{})
-	append(
-		&b.labels,
-		Label{flow = flow, antecedents = make([dynamic]Flow_ID, context.temp_allocator)},
-	)
-	return Label_ID(len(b.labels) - 1)
-}
-
-// label_flow is the node of a loop label: the flow of the code at the head of the loop.
-@(private)
-label_flow :: proc(b: ^Binder, label: Label_ID) -> Flow_ID {
-	return b.labels[label].flow
-}
-
-// enter_loop records the path into a loop and puts the flow at its head. A loop nothing reaches
-// stays unreachable: its head would otherwise be a cycle of back edges alone, with no Flow_Start
-// for check to walk back to. tsc enters such a loop anyway and leaves the checker to notice.
-@(private)
-enter_loop :: proc(b: ^Binder, label: Label_ID) {
-	entry := b.current
-	add_antecedent(b, label, entry)
-	b.current = label_flow(b, label) if entry != UNREACHABLE else UNREACHABLE
+enter_loop :: proc(b: ^Binder) -> Label_ID {
+	label := new_branch_label(b)
+	if b.current == UNREACHABLE {
+		return label
+	}
+	head := add_flow(b, Flow_Loop{})
+	add_antecedent(b, label, b.current)
+	b.labels[label].flow = head
+	b.current = head
+	return label
 }
 
 // add_antecedent records that flow reaches label. A path that cannot be taken adds nothing.
@@ -89,11 +83,14 @@ finish_label :: proc(b: ^Binder, label: Label_ID) -> Flow_ID {
 	return b.labels[label].flow
 }
 
-// bind_jump sends a `break` or a `continue` to its target and ends the flow of its branch.
+// bind_jump sends a `break` or a `continue` to its target and ends the flow of its branch. One
+// with nowhere to go is reported with the code outside, and the flow goes on past it. A function
+// starts with no targets, so a jump never leaves the function it is written in.
 @(private)
-bind_jump :: proc(b: ^Binder, target: Label_ID) {
+bind_jump :: proc(b: ^Binder, id: ast.Node_ID, target: Label_ID, outside: diag.Code) {
 	if target == NO_LABEL {
-		return // outside a loop and a switch; check reports the statement
+		report_statement(b, outside, id)
+		return
 	}
 	add_antecedent(b, target, b.current)
 	b.current = UNREACHABLE
@@ -121,7 +118,6 @@ bind_call_statement :: proc(b: ^Binder, expression: ast.Node_ID) {
 		return
 	}
 	b.current = add_flow(b, Flow_Call{call = expression, antecedent = b.current})
-	b.has_flow_effects = true
 }
 
 // switch_clause_flow is the path from the head of a `switch` to the cases [start, end). An empty
@@ -149,25 +145,17 @@ switch_clause_flow :: proc(
 
 // Conditions.
 
-// bind_condition binds an expression that is tested, and records where each answer leads. `!` only
-// swaps the two answers, and `&&`, `||` and `??` pass them on to their sides, so the condition
-// node lands on what is really tested. kind says what the test means: `??` asks whether its left
-// side is null or undefined, everything else asks whether the value is truthy.
+// bind_condition binds an expression that is tested for being truthy, and records where each
+// answer leads. `!` only swaps the two answers, and `&&` and `||` pass them on to their sides, so
+// the condition node lands on what is really tested. `??` passes them on to its right side alone:
+// its left side is a value, which bind_coalesce_left tests.
 @(private)
-bind_condition :: proc(
-	b: ^Binder,
-	id: ast.Node_ID,
-	true_label, false_label: Label_ID,
-	kind := Condition_Kind.Truthy,
-) {
+bind_condition :: proc(b: ^Binder, id: ast.Node_ID, true_label, false_label: Label_ID) {
 	if id != ast.NO_NODE {
 		#partial switch v in b.tree.nodes[id].variant {
 		case ast.Unary:
 			if v.op == .Not {
-				// The kind carries on: `!a ?? b` asks whether `a` is null or undefined, which it
-				// answers for a value that `!` has already turned into a boolean, so the path it
-				// describes is one the program never takes.
-				bind_condition(b, v.operand, false_label, true_label, kind)
+				bind_condition(b, v.operand, false_label, true_label)
 				return
 			}
 		case ast.Binary:
@@ -183,8 +171,8 @@ bind_condition :: proc(
 		}
 		bind_node(b, id)
 	}
-	add_antecedent(b, true_label, condition_flow(b, id, kind, true))
-	add_antecedent(b, false_label, condition_flow(b, id, kind, false))
+	add_antecedent(b, true_label, condition_flow(b, id, .Truthy, true))
+	add_antecedent(b, false_label, condition_flow(b, id, .Truthy, false))
 }
 
 // condition_flow is the path a condition takes when the answer is assume_true. A condition that is
@@ -298,9 +286,9 @@ bind_logical :: proc(b: ^Binder, id: ast.Node_ID, true_label, false_label: Label
 	}
 }
 
-// bind_logical_left binds the left side as a condition and leaves the flow where the right side is
-// evaluated: after a false answer for `&&`, after a true one for `||`, after a value that is
-// neither null nor undefined for `??`.
+// bind_logical_left binds the left side and leaves the flow where the right side is evaluated:
+// after a true answer for `&&`, after a false one for `||`, after a value that is null or
+// undefined for `??`.
 @(private)
 bind_logical_left :: proc(
 	b: ^Binder,
@@ -309,15 +297,36 @@ bind_logical_left :: proc(
 	true_label, false_label: Label_ID,
 ) {
 	right_label := new_branch_label(b)
-	// The kind reaches the condition node only when the left side is tested as it stands: under a
-	// `&&` or a `||` bind_condition passes the answers on to their sides and drops it.
-	kind := Condition_Kind.Not_Nullish if op == .Coalesce else Condition_Kind.Truthy
-	if op == .And {
-		bind_condition(b, left, right_label, false_label, kind)
-	} else {
-		bind_condition(b, left, true_label, right_label, kind)
+	switch op {
+	case .And:
+		bind_condition(b, left, right_label, false_label)
+	case .Or:
+		bind_condition(b, left, true_label, right_label)
+	case .Coalesce:
+		bind_coalesce_left(b, left, true_label, false_label, right_label)
 	}
 	b.current = finish_label(b, right_label)
+}
+
+// bind_coalesce_left binds the left side of `??`, which is tested as a value, whatever it is made
+// of: null or undefined leads to the right side, anything else is the result. When the two answers
+// of the whole `??` part ways, a result that is there still has to be truthy: `0 ?? b` is 0, and
+// `if (0 ?? b)` takes the else branch without reading `b`.
+@(private)
+bind_coalesce_left :: proc(
+	b: ^Binder,
+	left: ast.Node_ID,
+	true_label, false_label, right_label: Label_ID,
+) {
+	bind_node(b, left)
+	add_antecedent(b, right_label, condition_flow(b, left, .Not_Nullish, false))
+	b.current = condition_flow(b, left, .Not_Nullish, true)
+	if true_label == false_label {
+		add_antecedent(b, true_label, b.current) // both answers lead to the same place
+		return
+	}
+	add_antecedent(b, true_label, condition_flow(b, left, .Truthy, true))
+	add_antecedent(b, false_label, condition_flow(b, left, .Truthy, false))
 }
 
 // References.
