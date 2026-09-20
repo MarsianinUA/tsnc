@@ -1,5 +1,5 @@
-// Numbers and loops, the done criterion of T4.5, reported without printing a number: the runtime
-// answers a number with a panic until T4.6 writes rt/num.
+// Numbers and loops, the done criterion of T4.5, reported through a boolean and an exit code. The
+// digits of a printed number are compared with Node in the differential corpus of T4.7.
 
 function sum(n: number): number {
   let total = 0;

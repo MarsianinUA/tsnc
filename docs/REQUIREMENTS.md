@@ -115,6 +115,7 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 ### 3.9 Console output
 - `console.log` takes any number of arguments, separates them with a space, and ends with a newline.
 - Numbers per 3.1, strings as is, `undefined` / `null` / `boolean` as words. Objects and arrays print in Node format for simple cases: `[ 1, 2, 3 ]`, `{ a: 1, b: 'x' }`.
+- One exception to 3.1, and it follows Node: a negative zero printed on its own keeps its sign. Node formats an argument of `console.log` through `util.inspect` rather than through `String`, so `console.log(-0)` writes `-0` while `` console.log(`${-0}`) `` writes `0`.
 - Output is UTF-8 regardless of the Windows console code page.
 
 ## 4. Compiler architecture

@@ -32,6 +32,7 @@ arguments borrow the source text. Scratch data goes to context.temp_allocator.
 
 import "base:runtime"
 import "core:strconv"
+import decimal "core:strconv/decimal"
 import "core:strings"
 import "core:unicode"
 import "core:unicode/utf8"
@@ -268,8 +269,18 @@ scan_number :: proc(t: ^Tokenizer) {
 			valid = valid && exponent_ok && count > 0
 		}
 
-		// parse_f64 skips the `_` separators and returns +Inf past the f64 range.
-		value, _ = strconv.parse_f64(t.text[start:t.offset])
+		// The exact conversion, and not strconv.parse_f64, whose fast path tests the mantissa it
+		// captured before scaling it where Go tests the scaled value
+		// (core/strconv/strconv.odin:1160-1174). About one literal in ten with an exponent in the
+		// twenties comes back a unit in the last place wrong there, and 3.14159265e41 would compile
+		// into a program that prints 3.1415926499999998e+41. This is the path strconv falls back to
+		// itself. It skips the `_` separators too, and reports the overflow past the f64 range that
+		// we want as the infinity it overflowed to.
+		d: decimal.Decimal
+		decimal.set(&d, t.text[start:t.offset])
+		shape := strconv.Float_Info{52, 11, -1023}
+		bits, _ := strconv.decimal_to_float_bits(&d, &shape)
+		value = transmute(f64)bits
 	}
 
 	if end := name_end(t.text, t.offset); end > t.offset {
