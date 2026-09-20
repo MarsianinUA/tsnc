@@ -82,6 +82,15 @@ a_body_that_can_run_off_its_end_also_gives_undefined :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_bare_return_beside_one_with_a_value_gives_undefined :: proc(t: ^testing.T) {
+	// `return;` hands the caller `undefined`, and it is only where every `return` is bare that the
+	// body has no value at all and the result is `void`.
+	c := expect_checked(t, `function maybe(flag: boolean) { if (flag) { return; } return 1; }`)
+
+	testing.expect_value(t, declared_text(c, "maybe"), "(flag: boolean) => number | undefined")
+}
+
+@(test)
 an_arrow_is_a_value_with_a_signature :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -131,5 +140,52 @@ mutually_recursive_functions_need_an_annotation :: proc(t: ^testing.T) {
 			`function second() { return first(); }`,
 		),
 		[]Error{{.Recursive_Return_Type, 1, 10}},
+	)
+}
+
+// A name inside its own initializer.
+
+@(test)
+an_arrow_with_a_return_type_may_call_itself :: proc(t: ^testing.T) {
+	// The signature is known without the body, so it lands on the declaration before the body goes
+	// in, exactly as an annotated `function` declaration's does.
+	c := expect_checked(
+		t,
+		lines(
+			`const tick = (n: number): void => { if (n > 0) { tick(n - 1); } };`, //
+			`const tock: (n: number) => void = n => { if (n > 0) { tock(n - 1); } };`,
+		),
+	)
+
+	testing.expect_value(t, declared_text(c, "tick"), "(n: number) => void")
+	testing.expect_value(t, declared_text(c, "tock"), "(n: number) => void")
+}
+
+@(test)
+a_recursive_arrow_without_a_return_type_needs_an_annotation :: proc(t: ^testing.T) {
+	expect_errors(
+		t,
+		`const fact = (n: number) => n <= 1 ? 1 : n * fact(n - 1);`,
+		[]Error{{.Recursive_Return_Type, 1, 7}},
+	)
+}
+
+@(test)
+a_variable_whose_initializer_names_itself_is_reported :: proc(t: ^testing.T) {
+	// The words are about the initializer and not about a return type: a variable has neither.
+	expect_errors(t, `let step: number = step + 1;`, []Error{{.Circular_Initializer, 1, 5}})
+}
+
+@(test)
+a_variable_read_from_a_function_that_types_it_is_reported :: proc(t: ^testing.T) {
+	// Node throws on this at run time, and the type of `total` would have to be known before the
+	// body that reads it is typed. An annotation on `total` settles it.
+	expect_errors(
+		t,
+		lines(
+			`let total = size();`, //
+			`function size(): number { return total; }`,
+		),
+		[]Error{{.Circular_Initializer, 1, 5}},
 	)
 }

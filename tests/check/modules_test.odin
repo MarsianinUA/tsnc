@@ -368,6 +368,23 @@ an_imported_binding_cannot_be_assigned_to :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_binding_reached_through_a_namespace_cannot_be_assigned_to :: proc(t: ^testing.T) {
+	// `m.count` names the same binding an imported `count` does, so the two answer alike.
+	expect_program_errors(
+		t,
+		[]string {
+			lines(
+				`import * as m from "./m2.ts";`, //
+				`m.count = 2;`,
+				`m.count++;`,
+			),
+			`export let count = 1;`,
+		},
+		[]File_Error{{MAIN, .Assign_To_Const, 2, 3}, {MAIN, .Assign_To_Const, 3, 3}},
+	)
+}
+
+@(test)
 a_cycle_of_types_and_functions_is_allowed :: proc(t: ^testing.T) {
 	// Requirements 7 allows a ring as long as no module in it runs anything as it loads. program
 	// draws the ring and stays quiet, and check has to resolve both ways round without looping.

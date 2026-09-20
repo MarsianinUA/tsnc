@@ -487,14 +487,19 @@ find_field :: proc(fields: []Field, name: string) -> (field: Field, found: bool)
 }
 
 // expected_object is the object type a literal is going into. A union is the one context that leaves
-// a choice, and the literal makes it by field names: the member it could be under the exact-type
-// rule. Several fitting members are the same shape under different names, so the first in canonical
-// order settles it and the answer stays the same in every partition.
+// a choice, and the literal makes it in two passes: the first asks for a member whose field names it
+// could have **and** whose tags its own literal values fit, which is how a discriminated union is
+// picked apart, and the second falls back to the names alone, so a tag that fits nothing is still
+// measured against a member and gets one message.
+//
+// Several fitting members are the same shape under one set of tags, so the first in canonical order
+// settles it and the answer stays the same in every partition.
 @(private)
 expected_object :: proc(
 	c: ^Checker,
 	expected: Type_ID,
 	names: []string,
+	tags: []Type_ID,
 ) -> (
 	Type_ID,
 	Object,
@@ -506,12 +511,34 @@ expected_object :: proc(
 	case Union:
 		for member in v.members {
 			object, is_object := c.table.types[member].(Object)
+			if is_object && object_takes(object, names) && object_tagged(c, object, names, tags) {
+				return member, object, true
+			}
+		}
+		for member in v.members {
+			object, is_object := c.table.types[member].(Object)
 			if is_object && object_takes(object, names) {
 				return member, object, true
 			}
 		}
 	}
 	return ERROR, {}, false
+}
+
+// object_tagged reports whether every property the literal wrote out as a value fits the field of
+// this member. A property written as anything else says nothing and is skipped.
+@(private)
+object_tagged :: proc(c: ^Checker, object: Object, names: []string, tags: []Type_ID) -> bool {
+	for tag, i in tags {
+		if tag == ERROR {
+			continue
+		}
+		field, found := find_field(object.fields, names[i])
+		if !found || !fits(c, tag, field_read_type(c, field)) {
+			return false
+		}
+	}
+	return true
 }
 
 // object_takes reports whether a literal with those field names could be an object of this type:

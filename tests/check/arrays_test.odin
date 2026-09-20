@@ -160,3 +160,29 @@ writing_an_element_is_allowed :: proc(t: ^testing.T) {
 		),
 	)
 }
+
+@(test)
+an_array_literal_reads_a_context_behind_undefined :: proc(t: ^testing.T) {
+	// An optional parameter and a variable written `T | undefined` are unions, and the one member
+	// with the shape of an array is the context the literal is going into.
+	c := expect_checked(
+		t,
+		lines(
+			`function size(xs?: number[]): number { return xs === undefined ? 0 : xs.length; }`, //
+			`const answer = size([]);`,
+			`let ys: number[] | undefined = [];`,
+			`let zs: (number | string)[] | null = [1];`,
+		),
+	)
+
+	// A union is ordered by structure, so the declared type reads back in canonical order.
+	testing.expect_value(t, declared_text(c, "ys"), "undefined | number[]")
+	testing.expect_value(t, declared_text(c, "zs"), "null | (number | string)[]")
+}
+
+@(test)
+two_array_members_leave_an_empty_literal_without_a_context :: proc(t: ^testing.T) {
+	// Nothing here can choose between them, so the literal is as unguessable as it was with no
+	// context at all.
+	expect_errors(t, `let xs: number[] | string[] = [];`, []Error{{.Empty_Array_Literal, 1, 31}})
+}

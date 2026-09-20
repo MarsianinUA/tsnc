@@ -203,7 +203,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T3.3, T3.4.
 Done: negative tests for each semantic rule; a multi-file example with a re-export passes.
 
-### [ ] T3.6 `driver`: full `tsnc check`, v1 negative test corpus
+### [x] T3.6 `driver`: full `tsnc check`, v1 negative test corpus
 
 What: `check` with one partition after `program`; collecting `Check_Result`; the policy "reach `lower` only with no errors"; extend the `tests/negative` corpus to one program for each subset rule and type rule.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `driver`; [Milestones](architecture-plan-tsnc.md#milestones), row 3; requirements §2.3, §10.
@@ -230,7 +230,7 @@ Done: the verifier catches a block without a terminator and a use before definit
 
 ### [ ] T4.3 `lower`: scalar slice
 
-What: `lower(^Program, []Check_Result, allocator)`: numbers, booleans, `null`, `undefined`, string literals as pool constants; functions without captures, and calls; control flow (`if`, `switch`, loops, `break`, `continue`, ternary, `&&`, `||`, `??` through `phi`), `return`; top-level module code as init functions in `Program` order, `tsnc_main`; a "lib name → strategy" table for `console.log` and `console.error`, `process.exit`, `Math` (intrinsics and libm; `round`, `max`, `min` go to the runtime); mapping a TS type to an IR type, without objects.
+What: `lower(^Program, []Check_Result, allocator)`: numbers, booleans, `null`, `undefined`, string literals as pool constants; functions without captures, and calls; control flow (`if`, `switch`, loops, `break`, `continue`, ternary, `&&`, `||`, `??` through `phi`), `return`; top-level module code as init functions in `Program` order, `tsnc_main`; a "lib name → strategy" table for `console.log` and `console.error`, `process.exit`, `Math` (intrinsics and libm; `round`, `max`, `min` go to the runtime); mapping a TS type to an IR type, without objects. Two leftovers of the milestone 3 review belong here. `Program.init_order` lists a module that is reachable only through `import type`, which Node never loads, so its init function must not run. And every binding slot has to be zero-filled before its scope runs: a `let` with no initializer is written before it is read, but the GC scans it before that, and a hoisted function can read a binding before its declaration ran, which is Node's `ReferenceError` and which check does not catch.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rule 7; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Built-in types"; requirements §3.1, §3.5, §4.5 (`Math`), §7.
 After: T4.2, T3.6.
 Done: the IR dump for programs with loops and `switch` passes the verifier; a test checks that the strategy table covers all names from the lib file.
@@ -350,7 +350,7 @@ Done: a test: the same project at `-j:1` and `-j:8` gives the same `File_ID` val
 
 ### [ ] T6.2 `driver`: N checkers over partitions
 
-What: split into contiguous `File_ID` ranges balanced by size; a task per partition with arenas; `lower` reads each file's facts from its checker's table; diagnostic sorting; determinism test: byte-identical `-emit-ir`, `-emit-llvm` and executable at `-j:1` and `-j:8`.
+What: split into contiguous `File_ID` ranges balanced by size; a task per partition with arenas; `lower` reads each file's facts from its checker's table; diagnostic sorting; determinism test: byte-identical `-emit-ir`, `-emit-llvm` and executable at `-j:1` and `-j:8`. One leftover of the milestone 3 review belongs here: `context.temp_allocator` is never reset in `check` or in `driver`, and every checker thread needs one of its own.
 Where: [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Parallel checkers"; [Contracts → Check_Result and Typed_File](architecture-plan-tsnc.md#check_result-and-typed_file-package-check), invariants; requirements §8, §11.
 After: T6.1.
 Done: the determinism test runs in CI; the v1 acceptance criterion is fully met.
