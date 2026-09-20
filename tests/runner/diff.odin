@@ -63,12 +63,17 @@ Level :: struct {
 @(rodata)
 LEVELS := [?]Level{{flag = "-o:none", suffix = "none"}, {flag = "-o:speed", suffix = "speed"}}
 
+// A death by signal and an exit read the same on POSIX: os.Process_State puts the signal's number
+// where the code goes and clears success for both, and on Windows a crash is an NTSTATUS for a
+// code. So the code is all there is to compare, and a corpus program keeps its own code above
+// every signal number, where a crash can never pass for the right answer.
+SIGNAL_MAX :: 64
+
 // Output is everything one run left behind.
 Output :: struct {
-	stdout:  string,
-	stderr:  string,
-	code:    int,
-	crashed: bool,
+	stdout: string,
+	stderr: string,
+	code:   int,
 }
 
 // diff runs every program in the corpus. It reports every mismatch instead of stopping at the
@@ -170,6 +175,15 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 
 	path := fmt.tprintf("%s/%s", DIFF_CORPUS, name)
 	want := execute(path, "node", {NODE, path}) or_return
+	if want.code >= 1 && want.code <= SIGNAL_MAX {
+		fmt.eprintfln(
+			"diff: %s: exit code %d is also a signal's number; a corpus program exits with 0 or %d..125",
+			path,
+			want.code,
+			SIGNAL_MAX + 1,
+		)
+		return false
+	}
 
 	stem := strings.trim_suffix(name, ".ts")
 	suffix := target.SPECS[target.HOST].executable_suffix
@@ -212,17 +226,9 @@ compare_level :: proc(compiler, path, program: string, level: Level, want: Outpu
 	if !same_stream(path, level, "stderr", got.stderr, want.stderr) {
 		ok = false
 	}
-	if got.crashed {
+	if got.code != want.code {
 		fmt.eprintfln(
-			"diff: %s: %s: the program crashed: exception or signal %d",
-			path,
-			level.flag,
-			got.code,
-		)
-		ok = false
-	} else if got.code != want.code {
-		fmt.eprintfln(
-			"diff: %s: %s: exit code: got %d, want %d",
+			"diff: %s: %s: exit code or signal: got %d, want %d",
 			path,
 			level.flag,
 			got.code,
@@ -242,13 +248,7 @@ execute :: proc(path, what: string, command: []string) -> (output: Output, ok: b
 		fmt.eprintfln("diff: %s: run %s: %v", path, what, err)
 		return {}, false
 	}
-	return Output {
-			stdout  = string(stdout),
-			stderr  = string(stderr),
-			code    = state.exit_code,
-			// success is always true on Windows, where a crash reads as an odd exit code instead.
-			crashed = !state.success,
-		}, true
+	return Output{stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, true
 }
 
 // same_stream compares one stream byte for byte and names the first line where the two part. A
