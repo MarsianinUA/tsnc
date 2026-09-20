@@ -5,9 +5,9 @@ everything they need arrives as a value plus an allocator, and they hand back da
 diagnostics.
 
 check_only is the `tsnc check` stage: it builds the import closure from the entry file, parses and
-binds every file in it, and returns one row per File_ID together with every diagnostic, already in
-print order. driver never prints and never sets the exit code; main does both. build and run join
-in T4.5, and T3.1 turns files, trees and bound into a program.Program.
+binds every file in it, hands the result to program for the module graph, and returns that frozen
+program together with every diagnostic, already in print order. driver never prints and never sets
+the exit code; main does both. build and run join in T4.5.
 
 File_ID order. The lib file is 0, the entry file is 1, and an imported file takes the next number
 as the walk first reaches it. Files are processed in increasing File_ID and each file's requests in
@@ -33,6 +33,7 @@ import "../ast"
 import "../bind"
 import "../codegen"
 import "../diag"
+import "../program"
 import "../source"
 import "../target"
 
@@ -79,14 +80,14 @@ Driver_Error :: struct {
 	detail: string, // owned by the report's memory; empty for None
 }
 
-// Check_Report is the frozen result of check_only, one row per File_ID with the lib at zero. The
-// rows outlive nothing: destroy invalidates all of them at once.
+// Check_Report is the frozen result of check_only. It outlives nothing: destroy invalidates the
+// whole program at once.
 Check_Report :: struct {
-	files:       []source.File, // indexed by File_ID
-	trees:       []ast.File_AST, // indexed by File_ID
-	bound:       []bind.Bound_File, // indexed by File_ID
+	// Files, trees, names and the module graph, all indexed by File_ID with the lib at zero. It is
+	// empty when err says the build never started.
+	program:     program.Program,
 	diagnostics: []diag.Diagnostic, // every phase's and driver's own, in print order
-	memory:      ^Build_Memory, // owns the arenas the rows live in
+	memory:      ^Build_Memory, // owns the arenas the program lives in
 }
 
 // Build_Memory holds every arena of one build. Only driver touches it; a caller passes it back to
@@ -124,12 +125,13 @@ check_only :: proc(
 	}
 	c.files = make([dynamic]source.File, c.arena)
 	c.absolute = make([dynamic]string, c.arena)
+	c.edges = make([dynamic][dynamic]program.Import_Edge, c.arena)
 	c.diagnostics = make([dynamic]diag.Diagnostic, c.arena)
 	c.by_key = make(map[string]source.File_ID, c.arena)
 	c.failed = make(map[string]Failure, c.arena)
 
 	// Module zero, before anything the entry file might import.
-	add_file(&c, LIB_PATH, "", LIB_TEXT)
+	_ = add_file(&c, LIB_PATH, "", LIB_TEXT)
 
 	// The memory goes back with the report even though there is nothing to report: err.detail
 	// lives in that arena, so freeing it here would hand the caller a dangling string.
@@ -149,21 +151,22 @@ check_only :: proc(
 	count := len(c.files)
 	trees := make([]ast.File_AST, count, c.arena)
 	bound := make([]bind.Bound_File, count, c.arena)
+	imports := make([][]program.Import_Edge, count, c.arena)
 	for task, i in c.memory.tasks {
 		trees[i] = task.tree
 		bound[i] = task.bound
+		imports[i] = c.edges[i][:]
 	}
+
+	// The module graph is the last thing the walk produces, so its diagnostics join the rest
+	// before the sort that puts them all in print order.
+	built, cycle_errors := program.build(c.files[:], trees, bound, imports, c.arena)
+	append(&c.diagnostics, ..cycle_errors)
 
 	diagnostics := c.diagnostics[:]
 	diag.sort(diagnostics)
 
-	return {
-		files = c.files[:],
-		trees = trees,
-		bound = bound,
-		diagnostics = diagnostics,
-		memory = memory,
-	}, {}
+	return {program = built, diagnostics = diagnostics, memory = memory}, {}
 }
 
 // destroy releases every arena of the build. Nothing the report points at is valid afterwards,

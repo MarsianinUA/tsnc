@@ -22,6 +22,7 @@ import "core:strings"
 
 import "../ast"
 import "../diag"
+import "../program"
 import "../source"
 
 // BOM is a UTF-8 byte order mark. Editors on Windows still write one, and every phase after this
@@ -35,12 +36,25 @@ Failure :: struct {
 	detail: string,
 }
 
+// Request is one module request of one file, read out of the tree before anything is looked for on
+// disk.
+Request :: struct {
+	file:      source.File_ID, // the module the request is written in
+	node:      ast.Node_ID, // the Import_Named, Import_Namespace or Export_Named
+	specifier: string, // the text between the quotes, as the user wrote it
+	span:      source.Span, // the specifier, where a diagnostic about this request stands
+	type_only: bool, // `import type`: the module is never loaded for it
+}
+
 // Closure is the state of one import walk. It lives only inside check_only.
 Closure :: struct {
 	memory:      ^Build_Memory,
 	arena:       runtime.Allocator, // memory.arena, where everything below is allocated
 	files:       [dynamic]source.File, // indexed by File_ID; path is the display path
 	absolute:    [dynamic]string, // identity path per File_ID; empty for the embedded lib
+	// The requests of each file that named a module of the program, by File_ID, in source order.
+	// They are the edges program draws the module graph from.
+	edges:       [dynamic][dynamic]program.Import_Edge,
 	by_key:      map[string]source.File_ID, // folded identity path to the file that owns it
 	failed:      map[string]Failure, // identity paths that could not be read
 	diagnostics: [dynamic]diag.Diagnostic, // driver's own, merged with the phases' in check_only
@@ -48,10 +62,11 @@ Closure :: struct {
 
 // add_file gives text the next File_ID and queues its parse and bind task. absolute is empty for
 // the embedded lib, which no path resolves to.
-add_file :: proc(c: ^Closure, display, absolute, text: string) {
+add_file :: proc(c: ^Closure, display, absolute, text: string) -> source.File_ID {
 	id := source.File_ID(len(c.files))
 	append(&c.files, source.make_file(display, text, c.arena))
 	append(&c.absolute, absolute)
+	append(&c.edges, make([dynamic]program.Import_Edge, c.arena))
 
 	// new, not append of a value: the task's arena allocator captures the task by pointer, and a
 	// dynamic array of tasks would move them as it grows.
@@ -63,6 +78,7 @@ add_file :: proc(c: ^Closure, display, absolute, text: string) {
 	if absolute != "" {
 		c.by_key[key_of(absolute, c.arena)] = id
 	}
+	return id
 }
 
 // add_entry reads the file the command line named and makes it File_ID 1. It is the one read whose
@@ -85,45 +101,45 @@ add_entry :: proc(c: ^Closure, input: string) -> Driver_Error {
 		return {kind = .Entry_Unreadable, detail = detail}
 	}
 
-	add_file(c, display_of(input, c.arena), absolute, strip_bom(string(data)))
+	_ = add_file(c, display_of(input, c.arena), absolute, strip_bom(string(data)))
 	return {}
 }
 
 // follow_requests resolves every import and re-export of one file, in source order.
 follow_requests :: proc(c: ^Closure, id: source.File_ID) {
-	importer := c.absolute[id]
-	if importer == "" {
+	if c.absolute[id] == "" {
 		return // the embedded lib: it imports nothing and has no directory to resolve against
 	}
-	display := c.files[id].path
 	tree := &c.memory.tasks[id].tree
-	for request in tree.imports {
-		specifier, span, ok := request_path(tree, request)
+	for node in tree.imports {
+		request, ok := read_request(tree, id, node)
 		if !ok {
 			continue // parse recovered over the specifier and has already reported it
 		}
-		resolve_request(c, specifier, span, importer, display)
+		resolve_request(c, request)
 	}
 }
 
-// request_path is the module specifier of one request and the span to report against. ok is false
-// when parse left no string literal there.
-request_path :: proc(
+// read_request reads one request out of the tree: the module it names, where that name is written
+// and whether it asks for types alone. ok is false when parse left no string literal there.
+read_request :: proc(
 	tree: ^ast.File_AST,
-	request: ast.Node_ID,
+	file: source.File_ID,
+	node: ast.Node_ID,
 ) -> (
-	specifier: string,
-	span: source.Span,
+	request: Request,
 	ok: bool,
 ) {
 	path: ast.Node_ID
-	#partial switch variant in tree.nodes[request].variant {
+	// Only the request's own `import type` counts. `import { type A, b }` still loads the module,
+	// so its specifiers are bind's business and not the graph's.
+	#partial switch variant in tree.nodes[node].variant {
 	case ast.Import_Named:
-		path = variant.path
+		path, request.type_only = variant.path, variant.type_only
 	case ast.Import_Namespace:
-		path = variant.path
+		path, request.type_only = variant.path, variant.type_only
 	case ast.Export_Named:
-		path = variant.path
+		path, request.type_only = variant.path, variant.type_only
 	case:
 		return
 	}
@@ -134,20 +150,21 @@ request_path :: proc(
 	if !is_literal {
 		return
 	}
-	return literal.value, tree.nodes[path].span, true
+
+	request.file = file
+	request.node = node
+	request.specifier = literal.value
+	request.span = tree.nodes[path].span
+	return request, true
 }
 
 // resolve_request turns one specifier into a file, or into the diagnostic that says why it is not
 // one. Every request is reported on its own: two imports of the same missing module are two
 // mistakes in two places, and a reader fixing them wants to see both.
-resolve_request :: proc(
-	c: ^Closure,
-	specifier: string,
-	span: source.Span,
-	importer, display: string,
-) {
+resolve_request :: proc(c: ^Closure, request: Request) {
+	specifier := request.specifier
 	if !is_relative(specifier) {
-		report(c, .Bare_Specifier, span, specifier)
+		report(c, .Bare_Specifier, request.span, specifier)
 		return
 	}
 
@@ -156,13 +173,17 @@ resolve_request :: proc(
 		name = strings.concatenate({name, ".ts"}, c.arena)
 	}
 
+	importer := c.absolute[request.file]
 	absolute := resolve_against(importer, name, c.arena)
 	key := key_of(absolute, c.arena)
-	if _, seen := c.by_key[key]; seen {
-		return // a diamond, a cycle or the same module twice: one File_ID, read once
+	if id, seen := c.by_key[key]; seen {
+		// A diamond, a cycle or the same module twice: one File_ID, read once, but an edge of its
+		// own, since the graph is drawn from requests and not from files.
+		record_edge(c, request, id)
+		return
 	}
 	if failure, did_fail := c.failed[key]; did_fail {
-		report(c, failure.code, span, specifier, failure.detail)
+		report(c, failure.code, request.span, specifier, failure.detail)
 		return
 	}
 
@@ -177,7 +198,7 @@ resolve_request :: proc(
 			failure.detail = strings.clone(failure_text(absolute, read_err), c.arena)
 		}
 		c.failed[key] = failure
-		report(c, failure.code, span, specifier, failure.detail)
+		report(c, failure.code, request.span, specifier, failure.detail)
 		return
 	}
 	if len(data) > source.MAX_FILE_SIZE {
@@ -186,11 +207,28 @@ resolve_request :: proc(
 			detail = "the file is larger than a compile unit can address",
 		}
 		c.failed[key] = failure
-		report(c, failure.code, span, specifier, failure.detail)
+		report(c, failure.code, request.span, specifier, failure.detail)
 		return
 	}
 
-	add_file(c, resolve_against(display, name, c.arena), absolute, strip_bom(string(data)))
+	display := resolve_against(c.files[request.file].path, name, c.arena)
+	id := add_file(c, display, absolute, strip_bom(string(data)))
+	record_edge(c, request, id)
+}
+
+// record_edge remembers which module a request named. A request that resolved to nothing records
+// no edge: a file that is not in the program is not a node of its graph, and driver has already
+// reported why it is missing.
+record_edge :: proc(c: ^Closure, request: Request, module: source.File_ID) {
+	append(
+		&c.edges[request.file],
+		program.Import_Edge {
+			request = request.node,
+			span = request.span,
+			module = module,
+			type_only = request.type_only,
+		},
+	)
 }
 
 // report records one of driver's own diagnostics. Arguments past diag.MAX_ARGS cannot appear in a

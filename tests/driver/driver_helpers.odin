@@ -58,9 +58,28 @@ expect_clean :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 
 // file_names lists the files of the program in File_ID order, by name.
 file_names :: proc(c: Checked) -> []string {
-	names := make([]string, len(c.report.files), context.temp_allocator)
-	for file, i in c.report.files {
+	names := make([]string, len(c.report.program.files), context.temp_allocator)
+	for file, i in c.report.program.files {
 		names[i] = os.base(file.path)
+	}
+	return names
+}
+
+// init_names lists the modules in the order their top-level code runs, by name.
+init_names :: proc(c: Checked) -> []string {
+	return names_of(c, c.report.program.init_order)
+}
+
+// cycle_names lists the modules of one ring the program found, by name.
+cycle_names :: proc(c: Checked, cycle: int) -> []string {
+	return names_of(c, c.report.program.cycles[cycle].modules)
+}
+
+@(private = "file")
+names_of :: proc(c: Checked, modules: []source.File_ID) -> []string {
+	names := make([]string, len(modules), context.temp_allocator)
+	for module, i in modules {
+		names[i] = os.base(c.report.program.files[module].path)
 	}
 	return names
 }
@@ -69,7 +88,7 @@ file_names :: proc(c: Checked) -> []string {
 errors_of :: proc(report: driver.Check_Report) -> []Error {
 	errors := make([]Error, len(report.diagnostics), context.temp_allocator)
 	for d, i in report.diagnostics {
-		file := report.files[d.span.file]
+		file := report.program.files[d.span.file]
 		position := source.position(file, d.span.start)
 		errors[i] = {os.base(file.path), d.code, position.line, position.column}
 	}

@@ -2,7 +2,7 @@
 
 TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
-Status: milestone 2. `tsnc check` works: it reads an entry file, follows its relative imports, parses and binds every file it reaches and reports the syntax, subset and name errors of the whole program in one pass. `tsnc build` and `tsnc run` still answer "not implemented" with exit code 1, since type checking and code generation from real source start in milestones 3 and 4. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The negative test (`tests/runner negative`) runs `tsnc check` over `tests/negative/`, where every program must fail with the diagnostics its header names. CI runs the build, the unit tests, the smoke test and the negative corpus on Windows, Linux and macOS (arm64 and x64).
+Status: milestone 3. `tsnc check` works: it reads an entry file, follows its relative imports, parses and binds every file it reaches, builds the module graph and reports the syntax, subset, name and module errors of the whole program in one pass. Type checking starts next. `tsnc build` and `tsnc run` still answer "not implemented" with exit code 1, since type checking and code generation from real source start in milestones 3 and 4. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The negative test (`tests/runner negative`) runs `tsnc check` over `tests/negative/`, where every program must fail with the diagnostics its header names. CI runs the build, the unit tests, the smoke test and the negative corpus on Windows, Linux and macOS (arm64 and x64).
 
 ## Docs
 
@@ -92,6 +92,7 @@ src/diag/     compile errors: code registry with hints, sorting, rendering
 src/ast/      syntax tree: nodes indexed by Node_ID, import list, traversal
 src/parse/    source text to tokens, then to a syntax tree
 src/bind/     symbols, scopes, import and export tables, the flow graph
+src/program/  the frozen program: every file, its tree, its names, the module graph
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, negative corpus

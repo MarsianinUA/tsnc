@@ -168,7 +168,7 @@ Done: `odin run tests/runner -- negative` is green in CI.
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 3.
 
-### [ ] T3.1 `program`: frozen program and module graph
+### [x] T3.1 `program`: frozen program and module graph
 
 What: `Program` (file table, AST and `Bound_File` by `File_ID`, import edges, the lib `File_ID`); graph construction: topological order through `core:container/topological_sort`, strongly connected components, the diagnostic "cycle between modules with side effects"; `driver` builds `Program` after parsing.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `program`; [Contracts → Program](architecture-plan-tsnc.md#program-package-program); [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Program data umbrella"; requirements §7.

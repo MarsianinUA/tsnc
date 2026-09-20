@@ -44,14 +44,15 @@ Code :: enum u16 {
 	Regular_Expression,
 	Unsupported_Syntax, // {0} is construct_text of a Construct: "labels", "intersection types"
 
-	// T4xxx: names, modules and imports. bind (T2.7) reports these, and driver (T2.8) the three
-	// that need a file system to decide.
+	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
+	// need a file system to decide, and program (T3.1) the one that needs the whole module graph.
 	Redeclared_Name, // {0} is the name
 	Duplicate_Export, // {0} is the exported name
 	Undeclared_Export, // {0} is the exported name
 	Module_Not_Found, // {0} is the specifier as written
 	Bare_Specifier, // {0} is the specifier as written
 	Module_Unreadable, // {0} is the specifier, {1} why the file could not be read
+	Cycle_With_Side_Effects, // {0} lists the modules of the cycle; program (T3.1) reports it
 }
 
 @(private)
@@ -269,6 +270,11 @@ REGISTRY := [Code]Row {
 		number = 4006,
 		text = "cannot read module `{0}`: {1}",
 		hint = "check that the path names a file and not a directory, and that the file can be read",
+	},
+	.Cycle_With_Side_Effects = {
+		number = 4007,
+		text = "import cycle between modules with top-level side effects: {0}",
+		hint = "move what these modules share into a third one, or take the top-level code out of them: a cycle is allowed as long as no module in it runs anything when it loads",
 	},
 }
 
