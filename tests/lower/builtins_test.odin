@@ -173,6 +173,33 @@ console_log_writes_one_call_per_piece :: proc(t: ^testing.T) {
 	testing.expectf(t, runtime_calls(init, .Console_Boolean) == 1, "%s", result.text)
 }
 
+// Node evaluates the whole list before it writes anything, so the call an argument makes comes
+// ahead of every write of its statement, the first argument's included.
+@(test)
+console_log_evaluates_every_argument_before_it_writes :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		function two(): number {
+			return 2;
+		}
+		console.log(1, two());
+	`,
+	)
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+	called := false
+	for instruction in init.values {
+		#partial switch _ in instruction.variant {
+		case ir.Call:
+			called = true
+		case ir.Call_Runtime:
+			testing.expectf(t, called, "%s", result.text)
+		}
+	}
+	testing.expectf(t, called, "%s", result.text)
+}
+
 @(test)
 console_log_of_nothing_is_a_line_end :: proc(t: ^testing.T) {
 	result := lower_text(t, `console.log();`)
@@ -236,23 +263,36 @@ typeof_folds_to_the_word_for_a_static_type :: proc(t: ^testing.T) {
 		"const a = typeof 1;\nconst b = typeof true;\nconst c = typeof \"x\";\nconsole.log(a, b, c);\n",
 	)
 	testing.expect(t, result.output.globals[0].type == ir.STR)
-	words := make([dynamic]string, context.temp_allocator)
-	for units in result.output.strings {
-		text := make([]byte, len(units), context.temp_allocator)
-		for unit, i in units {
-			text[i] = byte(unit)
-		}
-		append(&words, string(text))
-	}
+	words := pool_words(result.output)
 	for want in ([]string{"number", "boolean", "string"}) {
-		testing.expectf(
-			t,
-			slice.contains(words[:], want),
-			"the pool has no %q: %v",
-			want,
-			words[:],
-		)
+		testing.expectf(t, slice.contains(words, want), "the pool has no %q: %v", want, words)
 	}
+}
+
+@(test)
+a_template_with_no_substitution_is_a_string_literal :: proc(t: ^testing.T) {
+	// lower_text answers only for a program lower said nothing about, so reaching the pool at all
+	// means the template compiled. parse cooks a template into its parts, so one that substitutes
+	// nothing is a finished string: it interns as the same text the quoted spelling does, once.
+	result := lower_text(
+		t,
+		"const greeting = `hi`;\nconst same = \"hi\";\nconsole.log(greeting, same);\n",
+	)
+	words := pool_words(result.output)
+	appearances := 0
+	for word in words {
+		if word == "hi" {
+			appearances += 1
+		}
+	}
+	testing.expectf(
+		t,
+		appearances == 1,
+		"%q is in the pool %d times: %v",
+		"hi",
+		appearances,
+		words,
+	)
 }
 
 // What this build refuses. Each construct is named once, where it stands.
@@ -268,7 +308,7 @@ arrays_are_reported :: proc(t: ^testing.T) {
 }
 
 @(test)
-template_strings_and_joining_are_reported :: proc(t: ^testing.T) {
+template_substitution_and_joining_are_reported :: proc(t: ^testing.T) {
 	expect_later(
 		t,
 		"const a = `x${1}`;\nconst b = \"a\" + \"b\";\n",

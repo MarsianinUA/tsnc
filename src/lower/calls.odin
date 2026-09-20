@@ -17,7 +17,8 @@ here; or a function value, which needs the closures of milestone 5.
 console.log is the one name whose expansion is worth stating. The compiler knows every argument
 statically, so a statement becomes one runtime call per argument with the separators and the line
 end written as string constants. Nothing formats a list at run time, and the runtime needs one
-export per kind of value rather than one that understands them all.
+export per kind of value rather than one that understands them all. Every argument is evaluated
+before the first write, as Node does it.
 */
 
 // lower_call is a call expression.
@@ -201,32 +202,37 @@ lower_console :: proc(
 	err: bool,
 	span: source.Span,
 ) -> ir.Value_ID {
+	// Node evaluates the whole list before it writes anything, so an argument that prints or exits
+	// does so ahead of the line and never in the middle of it.
+	values := make([]ir.Value_ID, len(node.args), context.temp_allocator)
+	for id, i in node.args {
+		values[i] = lower_expression(s, id)
+	}
+
 	// An argument this build cannot print does not stop the rest: one pass names every construct a
 	// program would have to change, which is what requirements 2.3 asks of the compiler.
 	for id, i in node.args {
 		if i > 0 {
 			write_text(s, err, " ", span)
 		}
-		write_argument(s, err, id)
+		write_argument(s, err, id, values[i])
 	}
 	write_text(s, err, "\n", span)
 	return ir.NO_VALUE
 }
 
 // write_argument writes one argument of a console statement, choosing the export by the type the
-// value already has.
+// value already has. The caller evaluated the argument, so nothing here runs the program's code.
 @(private)
-write_argument :: proc(s: ^Func_State, err: bool, id: ast.Node_ID) {
+write_argument :: proc(s: ^Func_State, err: bool, id: ast.Node_ID, value: ir.Value_ID) {
 	span := s.tree.nodes[id].span
 	type := s.typed.node_types[id]
 	if type == check.UNDEFINED || type == check.NULL {
 		// Both are a word, and both are the same word at every call site.
-		lower_expression(s, id)
 		write_text(s, err, "undefined" if type == check.UNDEFINED else "null", span)
 		return
 	}
 
-	value := lower_expression(s, id)
 	if value == ir.NO_VALUE {
 		return
 	}

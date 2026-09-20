@@ -164,7 +164,7 @@ What the compiler emits instead of the runtime: `Math` (LLVM intrinsics and libm
 | Package | Purpose | Entry point | Depends on |
 | --- | --- | --- | --- |
 | `tests/runner` (package `main`) | Differential and negative tests | Differential run: `tsc --noEmit --strict` gate, `node` reference, build with `tsnc build`, byte-for-byte comparison of stdout, stderr and exit code, repeat in GC stress mode. Negative run: expected code, line and column from the header comment of the `.ts` file | `core:os` |
-| `tests/diff/*.ts`, `tests/negative/*.ts`, `tests/package.json` | Corpus | One program per construct from section 2.2 | TypeScript as a dev dependency |
+| `tests/diff/src/*.ts`, `tests/negative/*.ts`, `tests/diff/package.json` | Corpus | One program per construct from section 2.2 | TypeScript as a dev dependency |
 | `bench/` | Benchmarks against Node and Go, results recorded per version | `bench/runner` | `core:os` |
 | Unit tests | `tests/<package>/*_test.odin`, one test package per source package (`parse`, `bind`, `check`, `ir` verifier, `num`, `gc`, and others), mirroring `src/`; it imports the tested package by relative path and sees only its public declarations | `odin test tests/<package>` | the tested package |
 | CI | GitHub Actions on four images (requirements, 9): smoke, unit tests, differential tests, the same tests in GC stress mode, the runtime with `-sanitize:address` | | |

@@ -75,11 +75,10 @@ smoke :: proc() -> (passed: bool) {
 		fmt.eprintfln("smoke: stderr: got %q, want nothing", string(stderr))
 		passed = false
 	}
-	if !state.success {
-		fmt.eprintfln("smoke: %s crashed: exception or signal %d", program, state.exit_code)
-		passed = false
-	} else if state.exit_code != 0 {
-		fmt.eprintfln("smoke: exit code: got %d, want 0", state.exit_code)
+	// A death by signal reads as the signal's number on POSIX and as an NTSTATUS on Windows, and
+	// os.Process_State tells neither from an exit with that code.
+	if state.exit_code != 0 {
+		fmt.eprintfln("smoke: exit code or signal: got %d, want 0", state.exit_code)
 		passed = false
 	}
 	if passed {
