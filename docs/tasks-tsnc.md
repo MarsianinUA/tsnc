@@ -175,7 +175,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.8.
 Done: tests: chain, diamond, a types-only cycle (allowed), a cycle with effects (error at the import position).
 
-### [ ] T3.2 `check`, core: types, table, primitives and functions
+### [x] T3.2 `check`, core: types, table, primitives and functions
 
 What: TS types as a `union` with interning in the checker's table (`Type_ID`); primitives, literal types, `any`, the error type; typing of declarations and expressions (arithmetic, comparisons, logical, bitwise, `typeof`, ternary, template strings); functions and arrows: parameters, return type inferred from the body, functions as values, calls with argument checking; `Typed_File` with tables by `Node_ID`; entry point `check(^Program, partition, allocator)`.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `check`; [Contracts → Check_Result and Typed_File](architecture-plan-tsnc.md#check_result-and-typed_file-package-check); [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Parallel checkers"; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rule 7; requirements §5, §3.1, §3.7.
