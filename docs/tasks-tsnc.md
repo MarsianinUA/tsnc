@@ -214,14 +214,14 @@ Done: `tsnc check` finds all corpus errors in one pass; `runner negative` is gre
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 4.
 
-### [ ] T4.1 `ir`: data and builder
+### [x] T4.1 `ir`: data and builder
 
 What: IR types (`Void`, `F64`, `Bool`, `Tagged`, `Ref(Layout)`, `Str`, `Closure`); layouts interned by canonical key (`Layout_ID`); instructions as a closed `union` (arithmetic, comparisons, branches, `phi`, `alloc`, fields, `store_ref`, elements with `bounds_check`, `tag_test`, `box` and `unbox`, `call`, `call_closure`, `call_runtime`, `intrinsic`, `fail`, string constant); `Func` with blocks in flat arrays and `distinct` indices; `Program_IR`; builder; a span on every instruction.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `ir`; [Contracts → Program_IR](architecture-plan-tsnc.md#program_ir-package-ir); [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Shape of our own IR"; requirements §4.1 item 4, §6.
 After: T1.3.
 Done: `odin check src/ir`; a test builds a function with the builder.
 
-### [ ] T4.2 `ir`: printer and verifier
+### [x] T4.2 `ir`: printer and verifier
 
 What: a text dump for `-emit-ir` (stable, line-based); verifier: definition before use, a terminator in every block, consistent operand types, `store_ref` only into reference slots.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `ir`; [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the item on the dump format; requirements §9 (`-emit-ir`).

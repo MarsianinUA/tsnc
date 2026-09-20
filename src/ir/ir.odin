@@ -1,7 +1,8 @@
 /*
 Our own intermediate representation: the program with every TypeScript rule already resolved. lower
-builds a Program_IR, opt rewrites it in v2, codegen walks it with one exhaustive switch and the
--emit-ir dump prints it. Nothing here knows TypeScript. What the source leaves implicit becomes an
+builds a Program_IR, opt rewrites it in v2, codegen walks it with one exhaustive switch, the
+-emit-ir dump prints it and verify answers whether it keeps to the rules below. Nothing here knows
+TypeScript. What the source leaves implicit becomes an
 instruction of its own: a tag check, a bounds check, a reference store, a runtime call.
 
 Shape: static single assignment. A Func keeps its blocks and its instructions in two flat arrays and
