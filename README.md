@@ -2,7 +2,7 @@
 
 TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
-Status: milestone 2. `tsnc check` works: it reads an entry file, follows its relative imports, parses and binds every file it reaches and reports the syntax, subset and name errors of the whole program in one pass. `tsnc build` and `tsnc run` still answer "not implemented" with exit code 1, since type checking and code generation from real source start in milestones 3 and 4. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. CI runs the build, the unit tests and the smoke test on Windows, Linux and macOS (arm64 and x64).
+Status: milestone 2. `tsnc check` works: it reads an entry file, follows its relative imports, parses and binds every file it reaches and reports the syntax, subset and name errors of the whole program in one pass. `tsnc build` and `tsnc run` still answer "not implemented" with exit code 1, since type checking and code generation from real source start in milestones 3 and 4. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The negative test (`tests/runner negative`) runs `tsnc check` over `tests/negative/`, where every program must fail with the diagnostics its header names. CI runs the build, the unit tests, the smoke test and the negative corpus on Windows, Linux and macOS (arm64 and x64).
 
 ## Docs
 
@@ -71,7 +71,7 @@ tsnc build src/main.ts -target:linux_amd64 -j:8     # target and thread count
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, runs `odin test` on every package under `tests/` and then the smoke test, with the commands above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, runs `odin test` on every package under `tests/`, then the smoke test and the negative corpus, with the commands above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.
@@ -94,7 +94,7 @@ src/parse/    source text to tokens, then to a syntax tree
 src/bind/     symbols, scopes, import and export tables, the flow graph
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
-tests/        unit tests (one folder per src package), test runner, test corpora
+tests/        unit tests (one folder per src package), test runner, negative corpus
 bench/        benchmarks
 docs/         requirements, architecture plan, task board
 dist/         build output, not in git

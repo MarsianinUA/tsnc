@@ -157,7 +157,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T2.5, T2.6, T2.7.
 Done: `tsnc check` on a multi-file example lists all syntax errors in a deterministic order; a missing import file produces a diagnostic at the import position.
 
-### [ ] T2.9 `tests/runner negative`
+### [x] T2.9 `tests/runner negative`
 
 What: the `negative` mode: for each `tests/negative/*.ts`, expectations from header comments (`// expect: T0123 3:5`), run `tsnc check`, compare codes and positions, list the mismatches; first corpus: the syntactic "never" rules; add to CI.
 Where: [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools); requirements §10 "Negative tests".

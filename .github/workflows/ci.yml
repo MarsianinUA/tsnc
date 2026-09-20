@@ -1,5 +1,5 @@
-# Build, unit tests and the smoke test on every v1 platform (requirements 9 and 10).
-# T2.9 (negative), T4.7 (diff) and T5.10 (GC stress, ASan) add their runs to this job.
+# Build, unit tests, the smoke test and the negative corpus on every v1 platform (requirements 9
+# and 10). T4.7 (diff) and T5.10 (GC stress, ASan) add their runs to this job.
 name: CI
 
 on:
@@ -93,3 +93,8 @@ jobs:
 
       - name: Smoke
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
+
+      # Runs dist/tsnc.exe from the Compiler step over tests/negative/, so it needs no build of
+      # its own.
+      - name: Negative
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative

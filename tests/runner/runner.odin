@@ -3,8 +3,9 @@ The test runner: one program with a mode per kind of run, started from the repos
 
 	odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
 
-smoke (T1.8) checks the infrastructure: codegen, link and the runtime object. negative (T2.9) and
-diff (T4.7) join later. A mode prints what failed to stderr, and the runner exits with code 1.
+smoke (T1.8) checks the infrastructure: codegen, link and the runtime object. negative (T2.9) runs
+the corpus in tests/negative/, where every program must fail to compile the way its header says.
+diff (T4.7) joins later. A mode prints what failed to stderr, and the runner exits with code 1.
 */
 package main
 
@@ -15,10 +16,11 @@ import "core:os"
 // Mode values are lowercase because core:flags matches them against the command line by exact name.
 Mode :: enum {
 	smoke,
+	negative,
 }
 
 Options :: struct {
-	mode: Mode `args:"pos=0,required" usage:"smoke"`,
+	mode: Mode `args:"pos=0,required" usage:"smoke or negative"`,
 }
 
 main :: proc() {
@@ -33,6 +35,8 @@ main :: proc() {
 	switch options.mode {
 	case .smoke:
 		passed = smoke()
+	case .negative:
+		passed = negative()
 	}
 	if !passed {
 		os.exit(1)
