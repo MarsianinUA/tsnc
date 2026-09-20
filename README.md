@@ -2,7 +2,7 @@
 
 TypeScript Native Compiler. It compiles a statically typed subset of TypeScript straight to machine code, like Go or Clang. No JavaScript is generated. Written in Odin, with an LLVM 20 backend. It links with LLD on Windows and with the system C compiler on Linux and macOS.
 
-Status: milestone 3 is done. `tsnc check` works in full: it reads an entry file, follows its relative imports, parses and binds every file it reaches, builds the module graph, types the whole program, and reports the syntax, subset, type, name and module errors in one pass. `tsnc build` and `tsnc run` still answer "not implemented" with exit code 1: code generation from real source starts in milestone 4, and nothing reaches it while the program still has an error in it. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The negative test (`tests/runner negative`) runs `tsnc check` over `tests/negative/`, which holds one program for every rule of the subset and every rule of the types, each failing with the diagnostics its header names. CI runs the build, the unit tests, the smoke test and the negative corpus on Windows, Linux and macOS (arm64 and x64).
+Status: milestone 4 is under way, and the pipeline reaches an executable. `tsnc check` works in full: it reads an entry file, follows its relative imports, parses and binds every file it reaches, builds the module graph, types the whole program, and reports the syntax, subset, type, name and module errors in one pass. `tsnc build` and `tsnc run` carry on from there through our own IR, LLVM and the linker, for the part of the subset that is lowered so far: numbers, strings, booleans, functions, control flow and the `Math`, `console` and `process` calls. Objects, arrays, closures and unions are milestone 5, and a program that uses one is a compile error with a place in it, never a wrong program. Printing a number waits for the runtime work of T4.6, so today's programs report through strings, booleans and the exit code. An artifact is written beside its destination and renamed into place, so a build that fails leaves the program that was there alone. The smoke test (`tests/runner smoke`) builds a hello world through LLVM and the linker, runs it and checks its output. The negative test (`tests/runner negative`) runs `tsnc check` over `tests/negative/`, which holds one program for every rule of the subset and every rule of the types, each failing with the diagnostics its header names. CI runs the build, the unit tests, the smoke test and the negative corpus on Windows, Linux and macOS (arm64 and x64).
 
 ## Docs
 
@@ -25,7 +25,7 @@ odin run src -out:dist/tsnc-debug.exe -debug -vet -strict-style -- build main.ts
 odin check src/<package> -no-entry-point -vet -strict-style
 
 # package tests: unit tests of src/<package> live in tests/<package>/
-# (the link tests link against the runtime object, so build it first)
+# (the link and driver tests link a real program, so build the runtime object first)
 odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style
 
 # runtime subpackage tests: src/runtime/<package> is tested in tests/runtime/<package>/
@@ -45,7 +45,7 @@ odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke | negativ
 
 The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
-- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe`, the test runner or the `llvm`, `codegen`, `link` and `driver` package tests. `driver` is on that list because it owns `Options`, which names an optimization level, so the package links `codegen` even though `tsnc check` never generates code. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
+- Windows: `LLVM-C.dll` ships with Odin next to `odin.exe`. That directory must be on `PATH` when you run `tsnc.exe`, the test runner or the `llvm`, `codegen`, `link` and `driver` package tests. `driver` is on that list because it generates code: `tsnc build` goes through `codegen`, and `tsnc check` links the same binary. The import library is in the repository: `src/llvm/windows/LLVM-C.lib`.
 - Linux: `sudo apt install llvm-20-dev` (Ubuntu 24.04 and later have it; elsewhere apt.llvm.org). The bindings link `libLLVM-20.so`, which the package puts on the default library path.
 - macOS: `brew install llvm@20`. Homebrew keeps it off the default library path, so `src/llvm` gives the linker its directory: `/opt/homebrew/opt/llvm@20/lib` on Apple silicon, `/usr/local/opt/llvm@20/lib` on Intel. For LLVM 20 installed elsewhere, add `-extra-linker-flags:-L<dir>` to `odin build`, `odin test` and `odin run`.
 
@@ -57,6 +57,8 @@ On Windows tsnc runs `bin/lld-link.exe` from the Odin that built it and needs wh
 
 The runtime object `tsnc_rt-<target>.obj` must lie next to `tsnc.exe`. The runtime object command under [Commands](#commands) puts it there.
 
+v1 builds a program for the machine it runs on. `-target:` for another platform still writes `-emit-llvm` and `-emit-ir`, but linking one needs that platform's libraries, which is v2 work.
+
 The compiler CLI follows Odin (see [requirements, section 9](docs/REQUIREMENTS.md#9-platforms-cli-artifacts)):
 
 ```sh
@@ -65,9 +67,11 @@ tsnc build src/main.ts -out:dist/app.exe -o:none    # no optimizations, for debu
 tsnc run src/main.ts                                # build and run
 tsnc check src/main.ts                              # check only, no code generation
 tsnc build src/main.ts -emit-llvm -out:dist/app.ll  # textual LLVM IR
-tsnc build src/main.ts -emit-ir -out:dist/app.ir    # tsnc IR dump
+tsnc build src/main.ts -emit-ir -out:dist/app.ir    # custom IR dump for debugging
 tsnc build src/main.ts -target:linux_amd64 -j:8     # target and thread count
 ```
+
+Without `-out:` the artifact is named after the entry file, in the current directory: `tsnc build src/main.ts` writes `main.exe` on Windows and `main` elsewhere, `-emit-llvm` writes `main.ll` and `-emit-ir` writes `main.ir`. `tsnc run` builds the file `tsnc build` would and leaves it there; its exit code is the program's own.
 
 ## CI
 
