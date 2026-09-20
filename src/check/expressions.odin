@@ -10,10 +10,15 @@ import "../source"
 // ast: a statement or a piece of type syntax reaching it has no value and answers with the error
 // type, which is what `for (i = 0; ...)` needs, since a `for` header holds either.
 //
+// expected is the type the expression is going into, which requirements 5 calls contextual typing:
+// it gives an arrow parameter its type, keeps a literal field from widening, and tells an empty
+// array literal what it holds. Only the shapes that can use it read it, and the error type means
+// there is no context, which is also what a context that failed should say.
+//
 // Every rule that reports gives its node the error type. The error type is assignable in both
 // directions, so one mistake stays one message however far the value travels.
 @(private)
-check_expression :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
+check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Type_ID {
 	if id == ast.NO_NODE {
 		return ERROR
 	}
@@ -44,13 +49,13 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 		return set_type(c, id, check_assign(c, v))
 	case ast.Conditional:
 		check_expression(c, v.condition)
-		then_value := check_expression(c, v.then_value)
-		else_value := check_expression(c, v.else_value)
+		then_value := check_expression(c, v.then_value, expected)
+		else_value := check_expression(c, v.else_value, expected)
 		return set_type(c, id, union_of(c, then_value, else_value))
 	case ast.Call:
 		return set_type(c, id, check_call(c, id, v))
 	case ast.Arrow:
-		return set_type(c, id, check_arrow(c, v))
+		return set_type(c, id, check_arrow(c, v, expected))
 	case ast.Non_Null:
 		// `x!` says the value is there. T3.4 decides when that is allowed and lower turns it into
 		// the check of requirements 3.8; the type it leaves behind is already this.
@@ -60,25 +65,14 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 		check_expression(c, v.expr)
 		return set_type(c, id, resolve_type(c, v.type))
 
-	// Objects and arrays are T3.3. Their parts are still typed, so a mistake inside one is found,
-	// but the node itself has no type yet and says nothing about it.
 	case ast.Array_Literal:
-		for element in v.elements {
-			check_expression(c, element)
-		}
-		return set_type(c, id, ERROR)
+		return set_type(c, id, check_array_literal(c, id, v, expected))
 	case ast.Object_Literal:
-		for property in v.properties {
-			check_expression(c, c.at.tree.nodes[property].variant.(ast.Property).value)
-		}
-		return set_type(c, id, ERROR)
+		return set_type(c, id, check_object_literal(c, id, v, expected))
 	case ast.Member:
-		check_expression(c, v.object)
-		return set_type(c, id, ERROR)
+		return set_type(c, id, check_member(c, v))
 	case ast.Index:
-		check_expression(c, v.object)
-		check_expression(c, v.index)
-		return set_type(c, id, ERROR)
+		return set_type(c, id, check_index(c, v))
 
 	// Not expressions: a statement, a piece of type syntax, or a part of a declaration. parse has
 	// already reported a Bad node, so it says nothing here either.
@@ -321,13 +315,150 @@ typeof_type :: proc(c: ^Checker) -> Type_ID {
 @(private, rodata)
 TYPEOF_ANSWERS := [?]string{"boolean", "function", "number", "object", "string", "undefined"}
 
+// Objects and arrays.
+
+// check_object_literal is the type of `{ a: 1, b: "x" }`. A literal written where an object type is
+// expected is checked against that type and takes it as its own: a field the type does not declare
+// is a mistake, a field the literal leaves out is one unless the type wrote it `x?: T`, and T5.7
+// puts `undefined` in the slot of the one left out. TypeScript calls a literal read this way fresh,
+// and it is what keeps the exact-type rule of requirements 3.3 from rejecting
+// `const p: Opts = { x: 1 }` while two named types still need the same set of fields.
+//
+// With no context the literal makes its own type and widens every field, because a field can take
+// another value of its kind later.
+@(private)
+check_object_literal :: proc(
+	c: ^Checker,
+	id: ast.Node_ID,
+	node: ast.Object_Literal,
+	expected: Type_ID,
+) -> Type_ID {
+	names := make([dynamic]string, 0, len(node.properties), context.temp_allocator)
+	for property_id in node.properties {
+		append(&names, c.at.tree.nodes[property_id].variant.(ast.Property).name.text)
+	}
+	target_id, target, has_target := expected_object(c, expected, names[:])
+
+	fields := make([dynamic]Field, 0, len(node.properties), context.temp_allocator)
+	for property_id in node.properties {
+		property := c.at.tree.nodes[property_id].variant.(ast.Property)
+		declared, known := ERROR, false
+		if has_target {
+			field, found := find_field(target.fields, property.name.text)
+			declared, known = field.type, found
+			if !found {
+				span := property.name.span
+				report(c, .Field_Not_Found, span, property.name.text, text_of(c, target_id))
+			}
+		}
+
+		value := check_expression(c, property.value, declared)
+		set_type(c, property_id, value)
+
+		as_declared := known && fits(c, value, declared)
+		if known && !as_declared {
+			report_assign_failure(c, span_of(c, property.value), value, declared)
+		}
+		kept := declared if as_declared else widen(&c.table, value)
+		add_field(c, &fields, {name = property.name.text, type = kept}, property.name)
+	}
+
+	if !has_target {
+		sort_fields(fields[:])
+		return plain_object_type(&c.table, fields[:])
+	}
+
+	for field in target.fields {
+		if field.optional {
+			continue
+		}
+		if _, found := find_field(fields[:], field.name); !found {
+			report(c, .Missing_Field, span_of(c, id), field.name, text_of(c, target_id))
+		}
+	}
+	return target_id
+}
+
+// check_array_literal is the type of `[1, 2, 3]`. Requirements 5 takes an array's element type from
+// its literal, so with no context it is the canonical union of the widened element types. An empty
+// literal has nothing to take it from and says so rather than guessing, since guessing would push
+// the mistake into the first `push`.
+@(private)
+check_array_literal :: proc(
+	c: ^Checker,
+	id: ast.Node_ID,
+	node: ast.Array_Literal,
+	expected: Type_ID,
+) -> Type_ID {
+	if target, is_array := c.table.types[expected].(Array); is_array {
+		for element in node.elements {
+			value := check_expression(c, element, target.element)
+			if !fits(c, value, target.element) {
+				report_assign_failure(c, span_of(c, element), value, target.element)
+			}
+		}
+		return expected
+	}
+
+	elements := make([dynamic]Type_ID, 0, len(node.elements), context.temp_allocator)
+	for element in node.elements {
+		append(&elements, widen(&c.table, check_expression(c, element)))
+	}
+	if len(elements) == 0 {
+		report(c, .Empty_Array_Literal, span_of(c, id))
+		return ERROR
+	}
+	return array_type(&c.table, union_type(&c.table, elements[:]))
+}
+
+// check_member is the type of `x.name`. The fields come from the apparent type: an object's own, and
+// for a string, a number or an array the members the lib file declares for it.
+@(private)
+check_member :: proc(c: ^Checker, node: ast.Member) -> Type_ID {
+	object := check_expression(c, node.object)
+	if object == ERROR || object == ANY {
+		return object
+	}
+
+	field, found := field_of(c, object, node.name.text)
+	if !found {
+		report(c, .Field_Not_Found, node.name.span, node.name.text, text_of(c, object))
+		return ERROR
+	}
+	return field.type
+}
+
+// check_index is the type of `x[i]`. The lib file has no index signatures, so the checker knows by
+// itself that an array gives its element and a string gives a string. Reading out of range is a
+// runtime check of requirements 3.8 and not a `T | undefined`, so the type is the element itself.
+@(private)
+check_index :: proc(c: ^Checker, node: ast.Index) -> Type_ID {
+	object := check_expression(c, node.object)
+	index := check_expression(c, node.index)
+	if !based_on(c, index, NUMBER) {
+		report_types(c, .Type_Mismatch, span_of(c, node.index), index, NUMBER)
+	}
+	if object == ERROR || object == ANY {
+		return object
+	}
+
+	if array, is_array := c.table.types[object].(Array); is_array {
+		return array.element
+	}
+	if based_on(c, object, STRING) {
+		return STRING
+	}
+	report(c, .Not_Indexable, span_of(c, node.object), text_of(c, object))
+	return ERROR
+}
+
 // Assignment.
 
 @(private)
 check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	target := check_expression(c, node.target)
 	writable := check_mutable(c, node.target)
-	value := check_expression(c, node.value)
+	value := check_expression(c, node.value, target if node.op == .Assign else ERROR)
 
 	result := value
 	if node.op != .Assign {
@@ -336,7 +467,7 @@ check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	// A binding that cannot take another value has been reported already. Measuring the value
 	// against the one type that binding will ever have would only say the same thing twice.
 	if writable && !fits(c, result, target) {
-		report_types(c, .Type_Mismatch, span_of(c, node.value), result, target)
+		report_assign_failure(c, span_of(c, node.value), result, target)
 	}
 	return result
 }
@@ -375,64 +506,83 @@ compound_result :: proc(c: ^Checker, node: ast.Assign, target, value: Type_ID) -
 	return ERROR
 }
 
-// check_mutable reports a write to a binding that cannot take another value, and answers whether
-// the write may go ahead. parse has already rejected a target that is no place to write to at all.
+// check_mutable reports a write to a place that cannot take another value, and answers whether the
+// write may go ahead. parse has already rejected a target that is no place to write to at all, and
+// check_assign has typed the target, so the type of the object a field belongs to is recorded.
+//
+// An element of an array is always writable: requirements 3.8 makes `arr[i] = x` grow the array at
+// its end and fail past it, which is a runtime check and not a type rule.
 @(private)
 check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
-	identifier, is_ident := c.at.tree.nodes[target].variant.(ast.Ident)
-	if !is_ident {
-		return true // a field or an element, which `readonly` decides in T3.3
-	}
-	ref := resolve_name(c, target, identifier.name, .Value)
-	if ref.symbol == bind.NO_SYMBOL {
-		return true
-	}
-	if c.program.bound[ref.file].symbols[ref.symbol].kind == .Const {
-		report(c, .Assign_To_Const, span_of(c, target), identifier.name)
-		return false
+	#partial switch v in c.at.tree.nodes[target].variant {
+	case ast.Ident:
+		ref := resolve_name(c, target, v.name, .Value)
+		if ref.symbol == bind.NO_SYMBOL {
+			return true
+		}
+		if c.program.bound[ref.file].symbols[ref.symbol].kind == .Const {
+			report(c, .Assign_To_Const, span_of(c, target), v.name)
+			return false
+		}
+	case ast.Member:
+		if c.at.node_types == nil {
+			return true // a file of another partition, whose diagnostics are dropped anyway
+		}
+		field, found := field_of(c, c.at.node_types[v.object], v.name.text)
+		if found && field.readonly {
+			report(c, .Assign_To_Readonly, v.name.span, v.name.text)
+			return false
+		}
 	}
 	return true
 }
 
 // Calls and arrows.
 
+// check_call is the type a call gives back. A member declared more than once offers several
+// signatures, and the call takes the first whose arity fits, which is what src/lib/lib.d.ts says its
+// two `reduce` declarations rely on. check_signature_call then checks the arguments against it.
 @(private)
 check_call :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Call) -> Type_ID {
 	callee := check_expression(c, node.callee)
-	arguments := make([dynamic]Type_ID, 0, len(node.args), context.temp_allocator)
-	for argument in node.args {
-		append(&arguments, check_expression(c, argument))
+	if callee == ERROR || callee == ANY {
+		check_loose_arguments(c, node.args)
+		return callee
 	}
 
-	if callee == ERROR {
-		return ERROR
-	}
-	if callee == ANY {
-		return ANY
-	}
-	function, is_function := c.table.types[callee].(Function)
-	if !is_function {
+	signatures := make([dynamic]Type_ID, 0, 2, context.temp_allocator)
+	append_signatures(c, &signatures, callee)
+	if len(signatures) == 0 {
+		check_loose_arguments(c, node.args)
 		report(c, .Not_Callable, span_of(c, node.callee), text_of(c, callee))
 		return ERROR
 	}
 
-	if !arity_fits(function, len(arguments)) {
-		report(
-			c,
-			.Argument_Count,
-			span_of(c, id),
-			arity_text(c, function),
-			count_text(c, len(arguments)),
-		)
-		return function.result
-	}
-	for argument, i in arguments {
-		parameter := parameter_at(c, function, i)
-		if !fits(c, argument, parameter) {
-			report_types(c, .Type_Mismatch, span_of(c, node.args[i]), argument, parameter)
+	for signature in signatures {
+		if arity_fits(c.table.types[signature].(Function), len(node.args)) {
+			return check_signature_call(c, id, node, signature)
 		}
 	}
+
+	check_loose_arguments(c, node.args)
+	function := c.table.types[signatures[0]].(Function)
+	report(
+		c,
+		.Argument_Count,
+		span_of(c, id),
+		arity_text(c, function),
+		count_text(c, len(node.args)),
+	)
 	return function.result
+}
+
+// check_loose_arguments types the arguments of a call with no signature to measure them against, so
+// that a mistake inside one is still found.
+@(private)
+check_loose_arguments :: proc(c: ^Checker, args: []ast.Node_ID) {
+	for argument in args {
+		check_expression(c, argument)
+	}
 }
 
 @(private)
@@ -444,13 +594,14 @@ arity_fits :: proc(function: Function, count: int) -> bool {
 }
 
 // parameter_at is the type the argument in that position is checked against. An argument that lands
-// on a rest parameter is checked against the element type of `...xs: T[]`, which is an array type
-// and so belongs to T3.3; until then it is the error type and takes anything.
+// on a rest parameter is checked against the element type of `...xs: T[]`, which is what makes
+// `console.log(1, "a")` and `Math.max(1, 2, 3)` work.
 @(private)
 parameter_at :: proc(c: ^Checker, function: Function, index: int) -> Type_ID {
 	last := len(function.params) - 1
 	if function.variadic && index >= last {
-		return ERROR
+		element, is_array := c.table.types[function.params[last].type].(Array)
+		return element.element if is_array else ERROR
 	}
 	if index >= len(function.params) {
 		return ERROR
@@ -465,11 +616,19 @@ parameter_at :: proc(c: ^Checker, function: Function, index: int) -> Type_ID {
 	return union_of(c, declared, UNDEFINED)
 }
 
-// check_arrow types an arrow, which is a value with a signature of its own. T3.3 gives its
-// parameters their types from the call it is written in; until then each one needs an annotation.
+// check_arrow types an arrow, which is a value with a signature of its own. Requirements 5 gives a
+// parameter with no annotation its type from the signature the arrow is going into, so
+// `arr.map(x => x * 2)` needs no `x: number`.
+//
+// The result is never taken from the context, only the parameters: the body's own answer is what a
+// call reads `U` back out of, and what a context asked for is checked afterwards by fits.
 @(private)
-check_arrow :: proc(c: ^Checker, node: ast.Arrow) -> Type_ID {
-	params, required, variadic := resolve_params(c, node.params)
+check_arrow :: proc(c: ^Checker, node: ast.Arrow, expected := ERROR) -> Type_ID {
+	contextual: []Param
+	if signature, is_function := c.table.types[expected].(Function); is_function {
+		contextual = signature.params
+	}
+	params, required, variadic := resolve_params(c, node.params, contextual)
 
 	if node.return_type != ast.NO_NODE {
 		result := resolve_type(c, node.return_type)
@@ -498,7 +657,7 @@ based_on :: proc(c: ^Checker, id: Type_ID, base: Type_ID) -> bool {
 		return id == base
 	case Literal:
 		return literal_base(v.value) == base
-	case Function:
+	case Function, Object, Array, Type_Var, Overload:
 		return false
 	case Union:
 		for member in v.members {

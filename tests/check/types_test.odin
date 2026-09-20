@@ -97,6 +97,33 @@ two_checkers_spell_one_union_the_same_way :: proc(t: ^testing.T) {
 }
 
 @(test)
+two_checkers_spell_one_union_of_objects_the_same_way :: proc(t: ^testing.T) {
+	// An object type may hold itself, and while its row is reserved its fields are not read yet, so
+	// the canonical order asks for its declaration before anything else. A declaration is a fact of
+	// the Program, so both checkers read it the same way whatever they happened to intern first.
+	sources := [2]string {
+		lines(
+			`interface A { a: number; }`, //
+			`interface B { b: number; }`,
+			`const first: B | A = { a: 1 };`,
+		),
+		lines(
+			`interface A { a: number; }`, //
+			`interface B { b: number; }`,
+			`const second: A | B = { a: 1 };`,
+		),
+	}
+	one := [1]source.File_ID{MAIN}
+	two := [1]source.File_ID{MAIN + 1}
+
+	left := check_sources(t, sources[:], one[:])
+	right := check_sources(t, sources[:], two[:])
+
+	testing.expect_value(t, declared_text(left, "first", MAIN), "A | B")
+	testing.expect_value(t, declared_text(right, "second", MAIN + 1), "A | B")
+}
+
+@(test)
 a_function_type_prints_the_way_typescript_writes_it :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,

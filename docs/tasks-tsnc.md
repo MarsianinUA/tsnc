@@ -182,7 +182,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T3.1.
 Done: tests for type inference and mismatch diagnostics; `==` on different types produces an error with a hint about `===`.
 
-### [ ] T3.3 `check`: objects, arrays, generics of built-in types
+### [x] T3.3 `check`: objects, arrays, generics of built-in types
 
 What: object literals and types, `interface` and `type`, optional and `readonly` fields, the exact-type rule with a hint; arrays: `T[]`, literals, element type inference, indexing, methods from lib through instantiation of `Array<T>`; contextual typing of arrow parameters; inferring `U` in `map<U>` from the function body; string methods through lib.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `check`; requirements §3.3, §3.6, §5 (contextual typing, instantiation), §2.2 (methods).

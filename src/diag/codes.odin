@@ -56,6 +56,15 @@ Code :: enum u16 {
 	Missing_Annotation, // {0} is the name
 	Assign_To_Const, // {0} is the name
 	Recursive_Return_Type, // {0} is the name of the function
+	Field_Not_Found, // {0} is the field name, {1} the type that has no such field
+	Missing_Field, // {0} is the field name, {1} the type that declares it
+	Not_Indexable, // {0} is the type of what `[]` was written after
+	Assign_To_Readonly, // {0} is the field name
+	Duplicate_Field, // {0} is the field name
+	Circular_Type, // {0} is the name of the type alias
+	Empty_Array_Literal,
+	// {0} is the name of the type, {1} how many arguments it takes: "one type argument"
+	Type_Argument_Count,
 
 	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
 	// need a file system to decide, and program (T3.1) the one that needs the whole module graph.
@@ -304,6 +313,46 @@ REGISTRY := [Code]Row {
 		number = 3010,
 		text = "the return type of `{0}` cannot be inferred, because it refers to itself",
 		hint = "write the return type after the parameters, as `function {0}(): number`",
+	},
+	.Field_Not_Found = {
+		number = 3011,
+		text = "`{0}` is not a field of type `{1}`",
+		hint = "check the spelling; an object has exactly the fields its type declares, and none can be added after it is made",
+	},
+	.Missing_Field = {
+		number = 3012,
+		text = "this value has no field `{0}`, which type `{1}` declares",
+		hint = "add `{0}`; an object literal may leave out a field declared `{0}?: T`, and two types need the same set of fields either way",
+	},
+	.Not_Indexable = {
+		number = 3013,
+		text = "type `{0}` cannot be indexed",
+		hint = "`x[i]` reads an element of an array or a code unit of a string; read a field with `x.name`",
+	},
+	.Assign_To_Readonly = {
+		number = 3014,
+		text = "cannot assign to `{0}`, which is `readonly`",
+		hint = "drop `readonly` from the field, or build a new object with the value you want",
+	},
+	.Duplicate_Field = {
+		number = 3015,
+		text = "`{0}` appears twice in the same object",
+		hint = "remove one of the two; a name holds one field, and two declarations of it do not merge",
+	},
+	.Circular_Type = {
+		number = 3016,
+		text = "type `{0}` refers to itself",
+		hint = "write it as an `interface`, which may name itself, instead of a `type` alias",
+	},
+	.Empty_Array_Literal = {
+		number = 3017,
+		text = "the element type of this empty array cannot be inferred",
+		hint = "annotate the variable or the parameter it goes into, as `const xs: number[] = []`",
+	},
+	.Type_Argument_Count = {
+		number = 3018,
+		text = "type `{0}` takes {1}",
+		hint = "write `Array<T>` with exactly one type argument; a type of your own takes none, because generics of your own arrive in v2",
 	},
 	.Redeclared_Name = {
 		number = 4001,
