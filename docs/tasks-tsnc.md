@@ -256,7 +256,7 @@ Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundarie
 After: T1.5.
 Done: `num` tests against a table of values taken from Node (`0.1 + 0.2`, `1e21`, `1e-7`, `-0`, `2 ** 53`); primitive output matches Node byte for byte.
 
-### [ ] T4.7 `tests/runner diff` and the first corpus
+### [x] T4.7 `tests/runner diff` and the first corpus
 
 What: the `diff` mode: gate `tsc --noEmit --strict` (`tests/package.json`, TypeScript as a dev dependency), reference `node test.ts`, `tsnc build`, run, compare stdout, stderr and exit code byte for byte; corpus: arithmetic, comparisons, bitwise, `switch`, loops, functions, template strings, `Math`, `process.exit`; add to CI.
 Where: [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools); requirements §10 "Differential tests", "Gate".

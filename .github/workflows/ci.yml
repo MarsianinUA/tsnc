@@ -1,5 +1,5 @@
-# Build, unit tests, the smoke test and the negative corpus on every v1 platform (requirements 9
-# and 10). T4.7 (diff) and T5.10 (GC stress, ASan) add their runs to this job.
+# Build, unit tests, the smoke test and the negative and differential corpora on every v1 platform
+# (requirements 9 and 10). T5.10 (GC stress, ASan) adds its runs to this job.
 name: CI
 
 on:
@@ -98,3 +98,21 @@ jobs:
       # its own.
       - name: Negative
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative
+
+      # Node is the reference of the differential corpus and hosts its tsc gate (requirements 10).
+      # The version is pinned rather than taken from the image: type stripping, which is what lets
+      # `node test.ts` be a reference, arrived in Node 23.6.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/diff/package-lock.json
+
+      - name: TypeScript
+        run: npm ci
+        working-directory: tests/diff
+
+      # Builds and runs every program in tests/diff/src/, so it needs both the compiler and the runtime
+      # object of the steps above.
+      - name: Diff
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff

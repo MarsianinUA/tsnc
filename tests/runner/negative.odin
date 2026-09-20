@@ -39,13 +39,9 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 
-// COMPILER and CORPUS are relative to the current directory, as smoke's dist/ paths already are:
+// NEGATIVE_CORPUS is relative to the current directory, as the compiler path in runner.odin is:
 // the runner is started from the repository root.
-COMPILER :: "dist/tsnc.exe"
-CORPUS :: "tests/negative"
-
-// COMPILER_BUILD builds the compiler this mode runs.
-COMPILER_BUILD :: "odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style"
+NEGATIVE_CORPUS :: "tests/negative"
 
 // EXPECT_PREFIX opens a header line that names one diagnostic; EXPECT_EXAMPLE shows the whole form
 // in the message about a line that does not parse.
@@ -74,28 +70,16 @@ Expected :: struct {
 // negative runs every program in the corpus. It reports every mismatch instead of stopping at the
 // first, so that one CI log shows all of them.
 negative :: proc() -> (passed: bool) {
-	if !os.is_file(COMPILER) {
-		fmt.eprintfln("negative: %s is missing", COMPILER)
-		fmt.eprintln("run the runner from the repository root, and build the compiler first:")
-		fmt.eprintfln("  %s", COMPILER_BUILD)
-		return false
-	}
-
-	// An absolute path, so that running it does not depend on how the OS resolves a relative one,
-	// as smoke already found. The programs keep their relative paths: the compiler inherits this
-	// directory, and a short path keeps the diagnostics readable in a CI log.
-	compiler, path_err := os.get_absolute_path(COMPILER, context.temp_allocator)
-	if path_err != nil {
-		fmt.eprintfln("negative: absolute path of %s: %v", COMPILER, path_err)
-		return false
-	}
+	// The programs keep their relative paths: the compiler inherits this directory, and a short
+	// path keeps the diagnostics readable in a CI log.
+	compiler := compiler_path("negative") or_return
 
 	// The listing stays in the temp allocator for the whole run. Everything here is allocated
 	// before the first check_program, and that procedure's temp guard releases only what the call
 	// itself allocated, so these names stay valid to the end.
-	entries, dir_err := os.read_all_directory_by_path(CORPUS, context.temp_allocator)
+	entries, dir_err := os.read_all_directory_by_path(NEGATIVE_CORPUS, context.temp_allocator)
 	if dir_err != nil {
-		fmt.eprintfln("negative: read %s: %v", CORPUS, dir_err)
+		fmt.eprintfln("negative: read %s: %v", NEGATIVE_CORPUS, dir_err)
 		fmt.eprintln("run the runner from the repository root")
 		return false
 	}
@@ -112,7 +96,7 @@ negative :: proc() -> (passed: bool) {
 	// of the corpus should print the same log.
 	slice.sort(names[:])
 	if len(names) == 0 {
-		fmt.eprintfln("negative: no .ts program in %s", CORPUS)
+		fmt.eprintfln("negative: no .ts program in %s", NEGATIVE_CORPUS)
 		return false
 	}
 
@@ -137,7 +121,7 @@ negative :: proc() -> (passed: bool) {
 check_program :: proc(compiler, name: string) -> (printed: int, ok: bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
-	path := fmt.tprintf("%s/%s", CORPUS, name)
+	path := fmt.tprintf("%s/%s", NEGATIVE_CORPUS, name)
 	text, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
 		fmt.eprintfln("negative: %s: read: %v", path, read_err)

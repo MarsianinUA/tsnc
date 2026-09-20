@@ -182,6 +182,20 @@ init_names :: proc(output: ir.Program_IR) -> []string {
 	return names
 }
 
+// pool_words reads the string pool as text, by String_ID. The pool holds UTF-16, and a test that
+// looks into it spells its words in ASCII, so one byte per unit says everything.
+pool_words :: proc(output: ir.Program_IR) -> []string {
+	words := make([]string, len(output.strings), context.temp_allocator)
+	for units, id in output.strings {
+		text := make([]byte, len(units), context.temp_allocator)
+		for unit, i in units {
+			text[i] = byte(unit)
+		}
+		words[id] = string(text)
+	}
+	return words
+}
+
 // dump is the -emit-ir text of a whole program.
 dump :: proc(files: []source.File, output: ir.Program_IR) -> string {
 	builder := strings.builder_make(context.temp_allocator)

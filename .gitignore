@@ -1,2 +1,6 @@
 /dist/
 /.claude/
+
+# The gate of the differential corpus. tests/diff/package-lock.json is in git, so `npm ci` installs
+# the same TypeScript everywhere; what it unpacks is not.
+/tests/diff/node_modules/

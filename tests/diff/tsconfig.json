@@ -1,0 +1,42 @@
+// The gate of the differential corpus (requirements 10): every program under src/ must be
+// TypeScript that tsc accepts under --strict, not merely something tsnc happens to compile. The
+// runner passes --noEmit --strict on the command line as well, so the gate reads the way the task
+// board spells it; everything here is the shape of the project those two flags apply to.
+//
+// This file, package.json and package-lock.json sit above the programs rather than somewhere else
+// in tests/, because Node reads "type": "module" from the nearest package.json: it has to be an
+// ancestor of the programs, or an import in one of them would be read as CommonJS and fail to run.
+{
+	"compilerOptions": {
+		// The corpus runs under `node test.ts`, so the language level is the one Node 24 has and
+		// the only library is its own. "types": ["node"] pulls in @types/node for `process`; without
+		// it tsc would look at every @types package it can find.
+		"target": "es2022",
+		"lib": ["es2022"],
+		"types": ["node"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+
+		// package.json says "type": "module", so every corpus file is already a module of its own
+		// and two programs may both declare `total`. moduleDetection makes that independent of the
+		// manifest. allowImportingTsExtensions lets an import be written "./m.ts", which is the
+		// spelling Node needs and tsnc accepts (T2.8).
+		"moduleDetection": "force",
+		"allowImportingTsExtensions": true,
+
+		// erasableSyntaxOnly rejects TypeScript syntax Node cannot strip, which is the whole reason
+		// `node test.ts` can be the reference. verbatimModuleSyntax forces a type-only import to be
+		// spelled `import type`: written plainly, tsc would erase it while Node kept it and ran a
+		// module tsnc never runs, which is exactly what diff/modules.ts is there to pin.
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true,
+
+		"strict": true,
+		"noEmit": true,
+
+		// The gate is about the corpus, not about @types/node.
+		"skipLibCheck": true
+	},
+	// The programs and the modules they import, which is everything under src/.
+	"include": ["src/**/*.ts"]
+}

@@ -50,6 +50,13 @@ lower_expression :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	case ast.Non_Null:
 		return lower_non_null(s, id, v)
 	case ast.Template:
+		// A template with no substitution is a string literal written with backticks: parse cooked
+		// its escapes and left one part behind. Joining the parts of one that does substitute needs
+		// a string built at run time, which is the heap of milestone 5.
+		if len(v.expressions) == 0 {
+			text := ir.intern_string(&s.low.builder, v.parts[0])
+			return ir.emit(&s.fb, ir.STR, ir.Const_String{text = text}, span)
+		}
 		return later(s, span, "template strings")
 	case ast.Array_Literal:
 		return later(s, span, "arrays")

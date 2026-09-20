@@ -236,23 +236,36 @@ typeof_folds_to_the_word_for_a_static_type :: proc(t: ^testing.T) {
 		"const a = typeof 1;\nconst b = typeof true;\nconst c = typeof \"x\";\nconsole.log(a, b, c);\n",
 	)
 	testing.expect(t, result.output.globals[0].type == ir.STR)
-	words := make([dynamic]string, context.temp_allocator)
-	for units in result.output.strings {
-		text := make([]byte, len(units), context.temp_allocator)
-		for unit, i in units {
-			text[i] = byte(unit)
-		}
-		append(&words, string(text))
-	}
+	words := pool_words(result.output)
 	for want in ([]string{"number", "boolean", "string"}) {
-		testing.expectf(
-			t,
-			slice.contains(words[:], want),
-			"the pool has no %q: %v",
-			want,
-			words[:],
-		)
+		testing.expectf(t, slice.contains(words, want), "the pool has no %q: %v", want, words)
 	}
+}
+
+@(test)
+a_template_with_no_substitution_is_a_string_literal :: proc(t: ^testing.T) {
+	// lower_text answers only for a program lower said nothing about, so reaching the pool at all
+	// means the template compiled. parse cooks a template into its parts, so one that substitutes
+	// nothing is a finished string: it interns as the same text the quoted spelling does, once.
+	result := lower_text(
+		t,
+		"const greeting = `hi`;\nconst same = \"hi\";\nconsole.log(greeting, same);\n",
+	)
+	words := pool_words(result.output)
+	appearances := 0
+	for word in words {
+		if word == "hi" {
+			appearances += 1
+		}
+	}
+	testing.expectf(
+		t,
+		appearances == 1,
+		"%q is in the pool %d times: %v",
+		"hi",
+		appearances,
+		words,
+	)
 }
 
 // What this build refuses. Each construct is named once, where it stands.
@@ -268,7 +281,7 @@ arrays_are_reported :: proc(t: ^testing.T) {
 }
 
 @(test)
-template_strings_and_joining_are_reported :: proc(t: ^testing.T) {
+template_substitution_and_joining_are_reported :: proc(t: ^testing.T) {
 	expect_later(
 		t,
 		"const a = `x${1}`;\nconst b = \"a\" + \"b\";\n",
