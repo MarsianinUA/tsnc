@@ -95,20 +95,16 @@ a_name_used_above_its_declaration_is_typed_once :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_construct_a_later_task_owns_gets_the_error_type_in_silence :: proc(t: ^testing.T) {
-	// The element type of a `for...of` is T3.5, with the rest of the control statements. It must not
-	// fill the screen with messages about work that is not done yet, and the error type is
-	// assignable in both directions, so nothing cascades from one.
-	c := expect_checked(t, `for (const n of [1, 2, 3]) { console.log(n); }`)
-
-	testing.expect_value(t, use_text(c, "n"), "?")
-}
-
-@(test)
-a_mistake_inside_a_construct_of_a_later_task_is_still_found :: proc(t: ^testing.T) {
-	// The parts of a construct are typed even where the construct itself is not, so nothing hides
-	// inside one.
+a_mistake_inside_a_rejected_construct_is_still_found :: proc(t: ^testing.T) {
+	// The parts of a construct are typed even where the construct itself is refused, so nothing
+	// hides inside one. The error type is assignable in both directions, so the refusal itself
+	// cascades no further.
 	expect_errors(t, `const numbers = [1, "a" * 2];`, []Error{{.Operand_Not_Number, 1, 21}})
+	expect_errors(
+		t,
+		`const p = { __proto__: "a" * 2 };`,
+		[]Error{{.Prototype_Access, 1, 13}, {.Operand_Not_Number, 1, 24}},
+	)
 }
 
 @(test)

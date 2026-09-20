@@ -35,13 +35,10 @@ lib_types :: proc(c: ^Checker) -> Lib_Types {
 	return c.lib
 }
 
-// type_ref_type is the type a name in a type position stands for: `Point`, `Array<number>`, `T`.
+// type_ref_type is the type a name in a type position stands for: `Point`, `Array<number>`, `T`,
+// `m.Point`.
 @(private)
 type_ref_type :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Type_Ref) -> Type_ID {
-	if node.qualifier.text != "" {
-		return ERROR // `m.Point` needs the tables of another module, which is T3.5
-	}
-
 	// The arguments are written here, so they are read here, before the search moves to the file
 	// that declares the name.
 	args := make([dynamic]Type_ID, 0, len(node.args), context.temp_allocator)
@@ -49,10 +46,34 @@ type_ref_type :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Type_Ref) -> Type_
 		append(&args, resolve_type(c, arg))
 	}
 
+	if node.qualifier.text != "" {
+		return namespace_type(c, id, node, args[:])
+	}
+
 	ref := resolve_name(c, id, node.name.text, .Type)
 	if ref.symbol == bind.NO_SYMBOL {
-		report(c, .Cannot_Find_Name, node.name.span, node.name.text)
+		report_unknown_name(c, node.name.text, node.name.span)
 		return ERROR
+	}
+	kind := c.program.bound[ref.file].symbols[ref.symbol].kind
+	if kind == .Namespace_Import {
+		// `let x: m` names a module where a type belongs. The name after the dot is what stands for
+		// a type, so the message asks for one.
+		report(c, .Namespace_As_Value, node.name.span, node.name.text)
+		return ERROR
+	}
+	if kind == .Import {
+		target, err := resolved_import(c, ref, .Type)
+		if err == .Not_A_Type {
+			// The module has the name as a value only, which is what a name with no type behind it
+			// answers here whether it was imported or declared in this file.
+			report_unknown_name(c, node.name.text, node.name.span)
+			return ERROR
+		}
+		if err != .None {
+			return ERROR // check_import has reported it at the specifier
+		}
+		ref = target
 	}
 	set_symbol(c, id, ref)
 	return named_type(c, ref, args[:], node.name)
@@ -84,7 +105,9 @@ named_type :: proc(c: ^Checker, ref: Symbol_Ref, args: []Type_ID, name: ast.Name
 		}
 		return type_param_type(c, ref, symbol)
 	}
-	// A name imported from another module is T3.5, and stays silent until then.
+	// Every kind that is a type is above. type_ref_type follows an imported name to the declaration
+	// behind it before asking, so an alias never arrives here, and a value in a type position is a
+	// name bind answered for in the other half.
 	return ERROR
 }
 
@@ -188,9 +211,8 @@ type_param_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Ty
 	if ref.file == program.LIB {
 		return type_var_type(&c.table, symbol.name.text, decl)
 	}
-	// Generics of one's own are v2 (requirements 2.2). T3.5 rejects them where it rejects `declare`
-	// outside the lib file; until then a type parameter of a user file is silent, as every construct
-	// a later task owns is.
+	// Generics of one's own are v2 (requirements 2.2), and check_declaration_rules has already
+	// reported the declaration that wrote this parameter, so the use of it says nothing more.
 	return ERROR
 }
 
@@ -286,6 +308,12 @@ object_fields :: proc(c: ^Checker, members: []ast.Node_ID) -> []Field {
 	fields := make([dynamic]Field, 0, len(members), context.temp_allocator)
 	for id in members {
 		member := c.at.tree.nodes[id].variant.(ast.Property_Signature)
+		if !check_member_name(c, member.name) {
+			// The type is still read, so a mistake inside it is found, and the member is left out:
+			// a type with a prototype slot would let every reader of it ask for one.
+			set_type(c, id, resolve_type(c, member.type))
+			continue
+		}
 		type := set_type(c, id, resolve_type(c, member.type))
 		field := Field {
 			name     = member.name.text,

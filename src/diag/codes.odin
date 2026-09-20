@@ -3,7 +3,7 @@ package diag
 // Code names one kind of compile error. Its number, text and hint live in REGISTRY; the package
 // doc has the numbering and wording rules.
 Code :: enum u16 {
-	// T1xxx: syntax. tokenize (T2.4) and parse (T2.5) report these, and bind (T2.7) the two jumps,
+	// T1xxx: syntax. tokenize (T2.4) and parse (T2.5) report these, and bind (T2.7) the three jumps,
 	// which need to know what encloses them.
 	Unexpected_Character,
 	Unterminated_String,
@@ -19,9 +19,11 @@ Code :: enum u16 {
 	Nesting_Too_Deep,
 	Break_Outside_Loop,
 	Continue_Outside_Loop,
+	Return_Outside_Function,
 
-	// T2xxx: constructs outside the subset, which parse reports: the syntactic "never" rules of
-	// requirements 2.2, then the v2 and other non-v1 constructs.
+	// T2xxx: constructs outside the subset. parse reports the syntactic "never" rules of
+	// requirements 2.2 and the v2 and other non-v1 constructs; check (T3.5) reports the five that
+	// need a type, a name or the file the declaration stands in.
 	Var_Declaration,
 	With_Statement,
 	Namespace,
@@ -43,6 +45,11 @@ Code :: enum u16 {
 	For_In,
 	Regular_Expression,
 	Unsupported_Syntax, // {0} is construct_text of a Construct: "labels", "intersection types"
+	Declare_Outside_Lib,
+	Generic_Declaration,
+	Prototype_Access, // {0} is the member name: "__proto__", "prototype"
+	Symbol_Global,
+	Namespace_As_Value, // {0} is the local name of the `import * as`
 
 	// T3xxx: types. check (T3.2 on) reports these, the only phase that knows what a type is.
 	Type_Mismatch, // {0} is the type of the value, {1} the type it has to fit
@@ -69,9 +76,11 @@ Code :: enum u16 {
 	Unrelated_Assertion, // {0} is the type of the value, {1} the type `as` names
 	Needless_Non_Null, // {0} is the type `!` was written after
 	No_Overlap, // {0} and {1} are the two types being compared
+	Not_Iterable, // {0} is the type written after `of`
 
 	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
-	// need a file system to decide, and program (T3.1) the one that needs the whole module graph.
+	// need a file system to decide, program (T3.1) the one that needs the whole module graph, and
+	// check (T3.2 on) the three that need the tables of another module.
 	Redeclared_Name, // {0} is the name
 	Duplicate_Export, // {0} is the exported name
 	Undeclared_Export, // {0} is the exported name
@@ -80,6 +89,8 @@ Code :: enum u16 {
 	Module_Unreadable, // {0} is the specifier, {1} why the file could not be read
 	Cycle_With_Side_Effects, // {0} lists the modules of the cycle; program (T3.1) reports it
 	Cannot_Find_Name, // {0} is the name; check (T3.2) reports it, once it has read the lib module
+	Unknown_Export, // {0} is the name asked for, {1} the specifier as written
+	Type_Used_As_Value, // {0} is the name
 }
 
 @(private)
@@ -162,6 +173,11 @@ REGISTRY := [Code]Row {
 		number = 1014,
 		text = "`continue` is not inside a loop",
 		hint = "remove the `continue`, or use `return` to end this call of a callback; a `switch` takes `break` but not `continue`",
+	},
+	.Return_Outside_Function = {
+		number = 1015,
+		text = "`return` is not inside a function",
+		hint = "remove the `return`, or move the code into a function; the top level of a module runs on its way in and has nothing to return to",
 	},
 	.Var_Declaration = {
 		number = 2001,
@@ -267,6 +283,31 @@ REGISTRY := [Code]Row {
 		number = 2021,
 		text = "{0} are not supported",
 		hint = "rewrite the code without them: tsnc supports the TypeScript subset listed in its requirements, section 2.2",
+	},
+	.Declare_Outside_Lib = {
+		number = 2022,
+		text = "`declare` is not supported here",
+		hint = "give the declaration a value or a body: `declare` describes something built elsewhere, and tsnc compiles the whole program from source; its own built-ins are already declared",
+	},
+	.Generic_Declaration = {
+		number = 2023,
+		text = "generic declarations are not supported",
+		hint = "write one declaration for each type you need, or take a union; `Array<T>` and the other built-in generics stay, and generics of your own arrive in v2",
+	},
+	.Prototype_Access = {
+		number = 2024,
+		text = "`{0}` is not supported",
+		hint = "an object has exactly the fields its type declares and no prototype behind them; describe the shape with an `interface` and write plain functions over it",
+	},
+	.Symbol_Global = {
+		number = 2025,
+		text = "`Symbol` is not supported",
+		hint = "use a string or number literal type as a discriminant, and a `const` string for a value that has to be unique",
+	},
+	.Namespace_As_Value = {
+		number = 2026,
+		text = "`{0}` is a module and needs a name after it",
+		hint = "write `{0}.f(x)` or `{0}.Point`, or import the names you use: `import { f } from \"./m\"`",
 	},
 	.Type_Mismatch = {
 		number = 3001,
@@ -378,6 +419,11 @@ REGISTRY := [Code]Row {
 		text = "types `{0}` and `{1}` have no value in common",
 		hint = "this comparison never holds; check the spelling of a literal, or widen one of the two types so that both values can occur",
 	},
+	.Not_Iterable = {
+		number = 3023,
+		text = "type `{0}` cannot be looped over with `for...of`",
+		hint = "loop over an array or a string; for anything else use a `for` loop with an index, or take the array a field holds",
+	},
 	.Redeclared_Name = {
 		number = 4001,
 		text = "`{0}` is already declared in this scope",
@@ -417,6 +463,16 @@ REGISTRY := [Code]Row {
 		number = 4008,
 		text = "cannot find name `{0}`",
 		hint = "declare it before this point, or import it from the module it lives in; tsnc has no globals beyond the declarations of its built-in lib",
+	},
+	.Unknown_Export = {
+		number = 4009,
+		text = "module `{1}` does not export `{0}`",
+		hint = "write `export` in front of the declaration of `{0}` in that module, or check the spelling; a type and a value of one name are exported separately",
+	},
+	.Type_Used_As_Value = {
+		number = 4010,
+		text = "`{0}` is a type and not a value",
+		hint = "use `{0}` where a type belongs, such as an annotation; a value of that name has to be declared and exported on its own, and `import type` never brings one",
 	},
 }
 

@@ -26,18 +26,26 @@ check_statement :: proc(c: ^Checker, id: ast.Node_ID) {
 
 	#partial switch v in c.at.tree.nodes[id].variant {
 	case ast.Var_Decl:
+		check_declaration_rules(c, id)
 		for declarator in v.declarators {
 			check_declarator(c, declarator)
 		}
 	case ast.Function_Decl:
+		check_declaration_rules(c, id)
 		check_declaration(c, id)
 	case ast.Interface_Decl, ast.Type_Alias_Decl:
+		check_declaration_rules(c, id)
 		// A type declaration is read here as well as where a name uses it, so that a mistake inside
 		// one is found even where nothing names it. Both paths answer from the same cache, so the
 		// members are read once either way.
 		check_type_declaration(c, id)
-	case ast.Import_Named, ast.Import_Namespace, ast.Export_Named:
-	// What a name refers to across modules is T3.5.
+	case ast.Import_Named:
+		check_import(c, id, v)
+	case ast.Export_Named:
+		check_export(c, id, v)
+	case ast.Import_Namespace:
+	// `import * as m` names nothing of the other module by itself, so there is nothing to resolve
+	// until a name follows the dot.
 
 	case ast.Block:
 		check_statements(c, v.statements)
@@ -60,8 +68,8 @@ check_statement :: proc(c: ^Checker, id: ast.Node_ID) {
 		check_expression(c, v.update)
 		check_statement(c, v.body)
 	case ast.For_Of:
-		check_expression(c, v.iterable)
-		for_of_variable(c, v.declaration)
+		iterable := check_expression(c, v.iterable)
+		for_of_variable(c, v.declaration, for_of_element(c, v.iterable, iterable))
 		check_statement(c, v.body)
 	case ast.Switch:
 		subject := check_expression(c, v.value)
@@ -134,12 +142,33 @@ check_type_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	named_type(c, {file = c.at.file, symbol = symbol}, nil, c.at.bound.symbols[symbol].name)
 }
 
-// for_of_variable gives the loop variable of a `for...of` the error type without asking where it
-// came from. Its type is the element type of the iterable, a string or an array, which T3.5 works
-// out with the rest of the control statements. Until then it must not go through the usual path,
-// which would see a `let` with neither an annotation nor an initializer and ask for one.
+// for_of_element is what one turn of a `for...of` gives its variable. Requirements 2.2 loops over an
+// array and over a string, and the lib file declares no iterator, so check knows the two by itself,
+// exactly as check_index knows that `a[i]` is an element and `s[i]` a string.
+//
+// A union is refused rather than taken apart: requirements 3.4 keeps a union as a tagged value, so
+// `number[] | string[]` would need a tag test on every turn of the loop. Narrowing the value first is
+// the shorter way to say the same thing, and the hint asks for it.
 @(private)
-for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID) {
+for_of_element :: proc(c: ^Checker, iterable: ast.Node_ID, type: Type_ID) -> Type_ID {
+	if type == ERROR || type == ANY {
+		return type // a value the rules already gave up on says nothing more here
+	}
+	if array, is_array := c.table.types[type].(Array); is_array {
+		return array.element
+	}
+	if based_on(c, type, STRING) {
+		return STRING
+	}
+	report(c, .Not_Iterable, span_of(c, iterable), text_of(c, type))
+	return ERROR
+}
+
+// for_of_variable gives the loop variable of a `for...of` the element type of the iterable. It must
+// not go through the usual path, which would see a `let` with neither an annotation nor an
+// initializer and ask for one: the `of` is where the type comes from.
+@(private)
+for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID, element: Type_ID) {
 	if declaration == ast.NO_NODE {
 		return
 	}
@@ -149,9 +178,9 @@ for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID) {
 	}
 	for declarator in node.declarators {
 		if symbol := c.at.bound.node_symbols[declarator]; symbol != bind.NO_SYMBOL {
-			c.symbol_types[{file = c.at.file, symbol = symbol}] = ERROR
+			c.symbol_types[{file = c.at.file, symbol = symbol}] = element
 		}
-		set_type(c, declarator, ERROR)
+		set_type(c, declarator, element)
 	}
 }
 
@@ -160,8 +189,8 @@ for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID) {
 // tsc, so a body that returns no value at all is `void`.
 //
 // At the top level of a module there is no function and no declared result, so a stray `return`
-// value is measured against the error type and passes. Whether it may stand there at all is a
-// question about names and modules, which is T3.5.
+// value is measured against the error type and passes. Whether it may stand there at all is bind's
+// question, next to the two jumps it already answers: it reports Return_Outside_Function.
 @(private)
 check_return :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Return) {
 	if node.value == ast.NO_NODE {

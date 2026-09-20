@@ -6,9 +6,8 @@ import "../program"
 
 // Type syntax.
 
-// resolve_type is the type a type slot names. A slot a later task owns — a qualified name, a name
-// imported from another module, a type parameter outside the lib file — answers with the error type
-// and says nothing.
+// resolve_type is the type a type slot names. A slot the rules could not read answers with the error
+// type, which is assignable in both directions, so one message stays one message.
 @(private)
 resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	if id == ast.NO_NODE {
@@ -26,6 +25,7 @@ resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 		}
 		return set_type(c, id, union_type(&c.table, members[:]))
 	case ast.Function_Type:
+		check_signature_type_params(c, v.type_params)
 		type_params := resolve_type_params(c, v.type_params)
 		params, required, variadic := resolve_params(c, v.params)
 		result := resolve_type(c, v.return_type)
@@ -126,8 +126,9 @@ resolve_params :: proc(
 
 // Names.
 
-// resolve_name is the symbol a name refers to. bind answers for a name the file declares; a name it
-// does not is a name of the lib module, which every file sees, or nothing at all.
+// resolve_name is the symbol a name refers to inside this file. bind answers for a name the file
+// declares, an import included; a name it does not is a name of the lib module, which every file
+// sees, or nothing at all. Following an import to the module it came from is modules.odin's job.
 @(private)
 resolve_name :: proc(
 	c: ^Checker,
@@ -194,7 +195,8 @@ declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type
 		return c.at.node_types == nil ? ERROR : c.at.node_types[node]
 	}
 	// An interface, a type alias and a type parameter are types and not values, and named_type is
-	// the path that answers for them. An imported name is T3.5.
+	// the path that answers for them. An alias does not arrive either: imported_name follows it to
+	// the declaration behind it and asks about that.
 	return ERROR
 }
 

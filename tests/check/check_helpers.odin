@@ -35,16 +35,29 @@ Error :: struct {
 	column: i32,
 }
 
+// File_Error is an Error that also says which file it stands in, which a test over several sources
+// has to say. It is a second shape rather than a field on Error, so that the many tests of one source
+// keep reading as `{.Code, line, column}`.
+File_Error :: struct {
+	file:   source.File_ID,
+	code:   diag.Code,
+	line:   i32,
+	column: i32,
+}
+
 Checked :: struct {
 	program:     program.Program,
 	result:      check.Check_Result,
 	diagnostics: []diag.Diagnostic, // check's own, in print order
 	errors:      []Error, // the same, as a test reads them
+	file_errors: []File_Error, // the same again, for a test over several sources
 }
 
 // check_sources parses and binds the lib file as module zero and each source as the next File_ID,
-// builds the program, and checks the files that partition names. Everything lives in the temp
-// allocator, which the test runner frees before each test, so a test frees nothing.
+// builds the program, and checks the files that partition names. A source names another with the
+// path check_sources gave it, `"./m2.ts"` or `"./m2"`, and make_edges resolves both spellings the way
+// driver does. Everything lives in the temp allocator, which the test runner frees before each test,
+// so a test frees nothing.
 check_sources :: proc(
 	t: ^testing.T,
 	sources: []string,
@@ -61,8 +74,13 @@ check_sources :: proc(
 	bound := make([]bind.Bound_File, count, context.temp_allocator)
 	imports := make([][]program.Import_Edge, count, context.temp_allocator)
 
+	paths := make([]string, count, context.temp_allocator)
+	for i in 0 ..< count {
+		paths[i] = "lib.d.ts" if i == 0 else fmt.tprintf("m%d.ts", i)
+	}
+
 	for text, i in texts {
-		path := "lib.d.ts" if i == 0 else fmt.tprintf("m%d.ts", i)
+		path := paths[i]
 		files[i] = source.make_file(path, text, context.temp_allocator)
 
 		tree, parse_diagnostics := parse.parse_file(
@@ -72,6 +90,7 @@ check_sources :: proc(
 		)
 		trees[i] = tree
 		bound[i], _ = bind.bind_file(&trees[i], context.temp_allocator)
+		imports[i] = make_edges(&trees[i], paths)
 
 		// A test says what check does, so anything the layers under it report is a broken test.
 		testing.expectf(
@@ -95,9 +114,111 @@ check_sources :: proc(
 		result      = result,
 		diagnostics = diagnostics,
 		errors      = errors_of(files, diagnostics),
+		file_errors = file_errors_of(files, diagnostics),
 	}
 	check_typed(t, checked, loc)
 	return checked
+}
+
+// every_source is the partition of a whole program: every file but the lib, which is module zero and
+// is read rather than typed, exactly as driver will pass it in T3.6.
+every_source :: proc(count: int) -> []source.File_ID {
+	partition := make([]source.File_ID, count, context.temp_allocator)
+	for i in 0 ..< count {
+		partition[i] = source.File_ID(i + 1)
+	}
+	return partition
+}
+
+// expect_program checks a program of several sources that has to type without a single diagnostic.
+expect_program :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Checked {
+	c := check_sources(t, sources, every_source(len(sources)), loc)
+	testing.expectf(t, len(c.file_errors) == 0, "%v: %v", sources, c.file_errors, loc = loc)
+	return c
+}
+
+// expect_program_errors checks a program of several sources and compares the diagnostics, in print
+// order, one for one.
+expect_program_errors :: proc(
+	t: ^testing.T,
+	sources: []string,
+	expected: []File_Error,
+	loc := #caller_location,
+) -> Checked {
+	c := check_sources(t, sources, every_source(len(sources)), loc)
+	testing.expectf(
+		t,
+		slice.equal(c.file_errors, expected),
+		"%v: errors %v, want %v",
+		sources,
+		c.file_errors,
+		expected,
+		loc = loc,
+	)
+	return c
+}
+
+// make_edges is the module graph of one file: an edge for every import or re-export whose specifier
+// names another source of the test. driver resolves a path on disk, where `"./m"` and `"./m.ts"` both
+// name `m.ts`; here the file names are known, so the same two spellings are matched against them. A
+// specifier that names nothing gets no edge, which is what driver leaves behind after reporting it.
+@(private = "file")
+make_edges :: proc(tree: ^ast.File_AST, paths: []string) -> []program.Import_Edge {
+	edges := make([dynamic]program.Import_Edge, 0, len(tree.imports), context.temp_allocator)
+	for request in tree.imports {
+		path, type_only := request_path(tree, request)
+		if path == ast.NO_NODE {
+			continue
+		}
+		literal, is_literal := tree.nodes[path].variant.(ast.String_Literal)
+		if !is_literal {
+			continue
+		}
+		module, found := module_named(literal.value, paths)
+		if !found {
+			continue
+		}
+		append(
+			&edges,
+			program.Import_Edge {
+				request = request,
+				span = tree.nodes[path].span,
+				module = module,
+				type_only = type_only,
+			},
+		)
+	}
+	return edges[:]
+}
+
+@(private = "file")
+request_path :: proc(
+	tree: ^ast.File_AST,
+	request: ast.Node_ID,
+) -> (
+	path: ast.Node_ID,
+	type_only: bool,
+) {
+	#partial switch v in tree.nodes[request].variant {
+	case ast.Import_Named:
+		return v.path, v.type_only
+	case ast.Import_Namespace:
+		return v.path, v.type_only
+	case ast.Export_Named:
+		return v.path, v.type_only
+	}
+	return ast.NO_NODE, false
+}
+
+@(private = "file")
+module_named :: proc(specifier: string, paths: []string) -> (module: source.File_ID, found: bool) {
+	name := strings.trim_prefix(specifier, "./")
+	for path, i in paths {
+		if path == name || path == strings.concatenate({name, ".ts"}, context.temp_allocator) {
+			return source.File_ID(i), true
+		}
+	}
+	return 0, false
 }
 
 // check_text checks one source, with the lib as module zero and outside the partition, which is
@@ -404,6 +525,16 @@ errors_of :: proc(files: []source.File, diagnostics: []diag.Diagnostic) -> []Err
 	for d, i in diagnostics {
 		position := source.position(files[d.span.file], d.span.start)
 		errors[i] = {d.code, position.line, position.column}
+	}
+	return errors
+}
+
+@(private = "file")
+file_errors_of :: proc(files: []source.File, diagnostics: []diag.Diagnostic) -> []File_Error {
+	errors := make([]File_Error, len(diagnostics), context.temp_allocator)
+	for d, i in diagnostics {
+		position := source.position(files[d.span.file], d.span.start)
+		errors[i] = {d.span.file, d.code, position.line, position.column}
 	}
 	return errors
 }

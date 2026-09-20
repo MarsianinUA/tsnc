@@ -136,15 +136,17 @@ two_interfaces_that_name_each_other_are_compatible_with_their_twins :: proc(t: ^
 }
 
 @(test)
-a_generic_of_ones_own_types_with_its_arguments_in_force :: proc(t: ^testing.T) {
-	// Generics of one's own are v2 (requirements 2.2). T3.5 rejects the declaration, next to
-	// `declare` outside the lib file; until then it types rather than saying something wrong.
-	c := expect_checked(
+a_generic_of_ones_own_is_rejected_at_its_declaration :: proc(t: ^testing.T) {
+	// Generics of one's own are v2 (requirements 2.2), so the declaration is reported once and the
+	// uses say nothing more. The machinery behind the arguments is the lib file's and still works:
+	// the interface types with `number` in force, so the message is the only thing wrong here.
+	c := expect_errors(
 		t,
 		lines(
 			`interface Box<T> { value: T; }`, //
 			`const held: Box<number> = { value: 1 };`,
 		),
+		[]Error{{.Generic_Declaration, 1, 15}},
 	)
 
 	testing.expect_value(t, declared_text(c, "held"), "Box<number>")

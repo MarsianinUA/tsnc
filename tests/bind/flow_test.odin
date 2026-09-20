@@ -354,6 +354,19 @@ a_jump_with_nowhere_to_go_is_reported :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_return_outside_a_function_is_reported :: proc(t: ^testing.T) {
+	// The top level of a module runs on its way in and has nowhere to return to, so tsc rejects
+	// this too (TS1108). A function and an arrow are both somewhere to return to.
+	expect_errors(t, "return;", {{.Return_Outside_Function, 1, 1}})
+	expect_errors(t, "if (true) { return 1; }", {{.Return_Outside_Function, 1, 13}})
+	expect_bound(t, "function f(): number { return 1; }")
+	expect_bound(t, "const f = (): number => { return 1; };")
+	// The value is still bound, so what it reads has a flow and a symbol like any other read.
+	b := expect_errors(t, lines("const x = 1;", "return x;"), {{.Return_Outside_Function, 2, 1}})
+	expect_flow(t, b, use_flow(b, "x", 0), `(= "x = 1" start)`)
+}
+
+@(test)
 a_logical_assignment_writes_only_on_one_path :: proc(t: ^testing.T) {
 	b := expect_bound(
 		t,

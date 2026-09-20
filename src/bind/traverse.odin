@@ -80,6 +80,14 @@ bind_node :: proc(b: ^Binder, id: ast.Node_ID) {
 	case ast.Continue:
 		bind_jump(b, id, b.continue_target, .Continue_Outside_Loop)
 	case ast.Return:
+		// A `return` needs a function around it, as `break` and `continue` need a loop. The top
+		// level of a module runs on its way in and has nowhere to return to, so tsc rejects it too
+		// (TS1108) and the `tsc --strict` gate of T4.7 would otherwise catch what tsnc let through.
+		// The value is still bound, so a mistake inside it is found, and the flow still ends: the
+		// statements after it are unreachable either way.
+		if b.function == MODULE_SCOPE {
+			report_statement(b, .Return_Outside_Function, id)
+		}
 		bind_node(b, v.value)
 		b.current = UNREACHABLE
 
