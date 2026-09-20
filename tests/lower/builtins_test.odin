@@ -173,6 +173,33 @@ console_log_writes_one_call_per_piece :: proc(t: ^testing.T) {
 	testing.expectf(t, runtime_calls(init, .Console_Boolean) == 1, "%s", result.text)
 }
 
+// Node evaluates the whole list before it writes anything, so the call an argument makes comes
+// ahead of every write of its statement, the first argument's included.
+@(test)
+console_log_evaluates_every_argument_before_it_writes :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		function two(): number {
+			return 2;
+		}
+		console.log(1, two());
+	`,
+	)
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+	called := false
+	for instruction in init.values {
+		#partial switch _ in instruction.variant {
+		case ir.Call:
+			called = true
+		case ir.Call_Runtime:
+			testing.expectf(t, called, "%s", result.text)
+		}
+	}
+	testing.expectf(t, called, "%s", result.text)
+}
+
 @(test)
 console_log_of_nothing_is_a_line_end :: proc(t: ^testing.T) {
 	result := lower_text(t, `console.log();`)

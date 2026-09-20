@@ -1,12 +1,16 @@
 // Console output (requirements 3.9): several arguments separated by one space and ended by one
 // newline, each primitive in the words Node uses, and console.error landing on the other stream.
 //
-// No argument here has a side effect of its own. tsnc writes each argument as it evaluates it,
-// while Node evaluates the whole list before it writes anything, and a corpus program should pin
-// the output rather than that difference.
+// The last section pins the order as well: the whole list of arguments is evaluated before anything
+// of the line is written, so an argument that prints does it ahead of the line it belongs to.
 
 function echo(text: string): void {
   console.log(text);
+}
+
+function noisy(value: number): number {
+  console.log("evaluating", value);
+  return value;
 }
 
 const nothing = undefined;
@@ -27,3 +31,12 @@ console.log(-0, 0, 1e21, NaN);
 
 console.error("to stderr");
 console.error("code", 2, false);
+
+// An argument that prints is heard before the line, not in the middle of it.
+console.log("first", noisy(1), noisy(2));
+
+// The same when an argument spans several blocks of the compiled function.
+console.log(noisy(3) > 0 ? "yes" : "no", noisy(4));
+
+// The argument prints to stdout, and the line it belongs to goes to stderr whole.
+console.error("code", noisy(5));
