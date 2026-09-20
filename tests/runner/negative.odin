@@ -19,8 +19,8 @@ malformed `// expect:` line: skipping either would leave a test that proves noth
 
 The mode runs the compiler the build left in dist/ instead of calling driver in process, so that
 the rendered message, the code number, the choice of stderr and the exit code are covered as well
-as the diagnostics themselves. The first corpus is the syntactic "never" rules of requirements 2.2;
-T3.6 adds the semantic and type rules.
+as the diagnostics themselves. The first corpus is the syntactic "never" rules of requirements 2.2
+and the jumps with nowhere to go; T3.6 adds the semantic and type rules.
 */
 package main
 

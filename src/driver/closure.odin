@@ -70,7 +70,7 @@ add_file :: proc(c: ^Closure, display, absolute, text: string) {
 add_entry :: proc(c: ^Closure, input: string) -> Driver_Error {
 	data, read_err := os.read_entire_file(input, c.arena)
 	if read_err != nil {
-		detail := fmt.aprintf("%s: %v", input, read_err, allocator = c.arena)
+		detail := fmt.aprintf("%s: %s", input, failure_text(input, read_err), allocator = c.arena)
 		return {kind = .Entry_Unreadable, detail = detail}
 	}
 	if len(data) > source.MAX_FILE_SIZE {
@@ -81,7 +81,7 @@ add_entry :: proc(c: ^Closure, input: string) -> Driver_Error {
 	// resolves a path that does exist, which is why imports below are joined by hand instead.
 	absolute, absolute_err := os.get_absolute_path(input, c.arena)
 	if absolute_err != nil {
-		detail := fmt.aprintf("%s: %v", input, absolute_err, allocator = c.arena)
+		detail := fmt.aprintf("%s: %s", input, os.error_string(absolute_err), allocator = c.arena)
 		return {kind = .Entry_Unreadable, detail = detail}
 	}
 
@@ -174,7 +174,7 @@ resolve_request :: proc(
 		}
 		if os.exists(absolute) {
 			failure.code = .Module_Unreadable
-			failure.detail = fmt.aprintf("%v", read_err, allocator = c.arena)
+			failure.detail = strings.clone(failure_text(absolute, read_err), c.arena)
 		}
 		c.failed[key] = failure
 		report(c, failure.code, span, specifier, failure.detail)
@@ -209,6 +209,16 @@ report :: proc(c: ^Closure, code: diag.Code, span: source.Span, args: ..string) 
 	append(&c.diagnostics, d)
 }
 
+// failure_text says why a file could not be read, in words a user can act on. A directory gets an
+// answer of its own, because each OS reports it under a different name. The text may sit in a
+// buffer the C library reuses, so a caller that keeps it copies it.
+failure_text :: proc(path: string, err: os.Error) -> string {
+	if os.is_dir(path) {
+		return "it is a directory"
+	}
+	return os.error_string(err)
+}
+
 // is_relative says whether a specifier is one tsnc resolves at all. Everything else, a package
 // name, an absolute path or a URL, is out of scope for good.
 is_relative :: proc(specifier: string) -> bool {
@@ -239,11 +249,11 @@ display_of :: proc(path: string, allocator: runtime.Allocator) -> string {
 	return slashed
 }
 
-// key_of is the identity of a file: one string for every spelling that names it. Windows compares
-// file names without case, so two spellings that differ only in case are one file there.
+// key_of is the identity of a file: one string for every spelling that names it. Windows and macOS
+// compare file names without case, so two spellings that differ only in case are one file there.
 key_of :: proc(absolute: string, allocator: runtime.Allocator) -> string {
 	slashed := display_of(absolute, allocator)
-	when ODIN_OS == .Windows {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
 		return strings.to_lower(slashed, allocator)
 	} else {
 		return slashed

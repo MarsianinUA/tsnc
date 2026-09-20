@@ -3,7 +3,8 @@ package diag
 // Code names one kind of compile error. Its number, text and hint live in REGISTRY; the package
 // doc has the numbering and wording rules.
 Code :: enum u16 {
-	// T1xxx: syntax. tokenize (T2.4) and parse (T2.5) report these.
+	// T1xxx: syntax. tokenize (T2.4) and parse (T2.5) report these, and bind (T2.7) the two jumps,
+	// which need to know what encloses them.
 	Unexpected_Character,
 	Unterminated_String,
 	Unterminated_Template,
@@ -16,6 +17,8 @@ Code :: enum u16 {
 	Unary_Before_Power, // {0} is the operator: "-", "typeof"
 	Invalid_Assignment_Target,
 	Nesting_Too_Deep,
+	Break_Outside_Loop,
+	Continue_Outside_Loop,
 
 	// T2xxx: constructs outside the subset, which parse reports: the syntactic "never" rules of
 	// requirements 2.2, then the v2 and other non-v1 constructs.
@@ -121,6 +124,16 @@ REGISTRY := [Code]Row {
 		number = 1012,
 		text = "the code nests too deeply",
 		hint = "move inner expressions into variables and inner blocks into functions of their own",
+	},
+	.Break_Outside_Loop = {
+		number = 1013,
+		text = "`break` is not inside a loop or a `switch`",
+		hint = "remove the `break`, or use `return` to leave a function; a loop does not reach into a function written inside it",
+	},
+	.Continue_Outside_Loop = {
+		number = 1014,
+		text = "`continue` is not inside a loop",
+		hint = "remove the `continue`, or use `return` to end this call of a callback; a `switch` takes `break` but not `continue`",
 	},
 	.Var_Declaration = {
 		number = 2001,

@@ -300,7 +300,8 @@ node_text :: proc(b: Bound, id: ast.Node_ID) -> string {
 // - every identifier in them is in range;
 // - a scope reaches MODULE_SCOPE through its parents, and lists the symbols that name it, except
 //   the alias of a re-export, which the file cannot name;
-// - a flow node follows an older one, except a loop, which the code inside it comes back to.
+// - a flow node follows an older one; a loop is entered from an older one, and the code inside it
+//   comes back to it.
 check_bound :: proc(t: ^testing.T, b: Bound, loc := #caller_location) {
 	bound := b.bound
 	node_count := len(b.tree.nodes)
@@ -376,20 +377,18 @@ check_bound :: proc(t: ^testing.T, b: Bound, loc := #caller_location) {
 			testing.expectf(t, len(flow.antecedents) > 1, "join %d has one path", i, loc = loc)
 			expect_older(t, id, flow.antecedents, loc)
 		case bind.Flow_Loop:
-			// A loop nothing enters keeps no path at all. One that does has a path from outside
-			// itself, so that check always walks back to a Flow_Start; a body that ends where it
-			// began, as `while (true) { }` does, adds the loop itself beside it.
-			entered := false
-			for antecedent in flow.antecedents {
-				entered ||= antecedent != id
-			}
-			testing.expectf(
+			// The path that enters comes first and from outside the loop, so that check always
+			// walks back to a Flow_Start. The rest come back from the body; one that ends where it
+			// began, as `while (true) { }` does, adds the loop itself.
+			if testing.expectf(
 				t,
-				entered == (len(flow.antecedents) > 0),
-				"loop %d has only itself as a path",
+				len(flow.antecedents) > 0,
+				"loop %d has no entry",
 				i,
 				loc = loc,
-			)
+			) {
+				expect_older(t, id, flow.antecedents[:1], loc)
+			}
 		case bind.Flow_Assignment:
 			expect_older(t, id, {flow.antecedent}, loc)
 		case bind.Flow_Condition:

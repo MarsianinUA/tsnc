@@ -76,9 +76,9 @@ bind_node :: proc(b: ^Binder, id: ast.Node_ID) {
 	case ast.Do_While:
 		bind_do_while(b, v)
 	case ast.Break:
-		bind_jump(b, b.break_target)
+		bind_jump(b, id, b.break_target, .Break_Outside_Loop)
 	case ast.Continue:
-		bind_jump(b, b.continue_target)
+		bind_jump(b, id, b.continue_target, .Continue_Outside_Loop)
 	case ast.Return:
 		bind_node(b, v.value)
 		b.current = UNREACHABLE
@@ -230,7 +230,8 @@ bind_function :: proc(
 		}
 	}
 
-	// What the body wrote stays inside it: a call in a closure is not a write where it is created.
+	// What the body wrote stays inside it: an assignment in a closure is not a write where it is
+	// created.
 	b.current = previous_flow
 	b.has_flow_effects = previous_effects
 	b.break_target, b.continue_target = previous_break, previous_continue
@@ -294,10 +295,9 @@ bind_if :: proc(b: ^Binder, node: ast.If) {
 
 @(private)
 bind_while :: proc(b: ^Binder, node: ast.While) {
-	loop_label := new_loop_label(b)
 	body_label := new_branch_label(b)
 	post_label := new_branch_label(b)
-	enter_loop(b, loop_label)
+	loop_label := enter_loop(b)
 	bind_condition(b, node.condition, body_label, post_label)
 	b.current = finish_label(b, body_label)
 	bind_loop_body(b, node.body, post_label, loop_label)
@@ -307,10 +307,9 @@ bind_while :: proc(b: ^Binder, node: ast.While) {
 
 @(private)
 bind_do_while :: proc(b: ^Binder, node: ast.Do_While) {
-	loop_label := new_loop_label(b)
 	condition_label := new_branch_label(b)
 	post_label := new_branch_label(b)
-	enter_loop(b, loop_label)
+	loop_label := enter_loop(b)
 	bind_loop_body(b, node.body, post_label, condition_label)
 	add_antecedent(b, condition_label, b.current)
 	b.current = finish_label(b, condition_label)
@@ -323,12 +322,11 @@ bind_for :: proc(b: ^Binder, id: ast.Node_ID, node: ast.For) {
 	previous := open_scope(b, .Block, id)
 	declare_statement(b, node.init)
 
-	loop_label := new_loop_label(b)
 	body_label := new_branch_label(b)
 	update_label := new_branch_label(b)
 	post_label := new_branch_label(b)
 	bind_node(b, node.init)
-	enter_loop(b, loop_label)
+	loop_label := enter_loop(b)
 	// A `for` without a condition never leaves by it: only `break` reaches the code after it.
 	bind_condition(b, node.condition, body_label, post_label)
 	b.current = finish_label(b, body_label)
@@ -347,12 +345,11 @@ bind_for_of :: proc(b: ^Binder, id: ast.Node_ID, node: ast.For_Of) {
 	previous := open_scope(b, .Block, id)
 	declare_statement(b, node.declaration)
 
-	loop_label := new_loop_label(b)
 	post_label := new_branch_label(b)
 	// The iterable is read once, before the loop, but inside its scope: `for (const x of x)` reads
 	// the loop variable, which check rejects.
 	bind_node(b, node.iterable)
-	enter_loop(b, loop_label)
+	loop_label := enter_loop(b)
 	add_antecedent(b, post_label, b.current) // an empty iterable runs the body no times
 	bind_node(b, node.declaration)
 	add_assignment(b, id) // the loop variable takes the next element
@@ -394,11 +391,8 @@ bind_switch :: proc(b: ^Binder, id: ast.Node_ID, node: ast.Switch) {
 	for index := 0; index < len(node.cases); index += 1 {
 		clause_start := index
 		for is_empty_case(b, node.cases[index]) && index + 1 < len(node.cases) {
-			if fallthrough_flow == UNREACHABLE {
-				b.current = head
-			}
 			has_default ||= is_default_case(b, node.cases[index])
-			bind_case(b, node.cases[index])
+			bind_case(b, node.cases[index], head)
 			index += 1
 		}
 		has_default ||= is_default_case(b, node.cases[index])
@@ -407,7 +401,7 @@ bind_switch :: proc(b: ^Binder, id: ast.Node_ID, node: ast.Switch) {
 		add_antecedent(b, case_label, switch_clause_flow(b, id, head, clause_start, index + 1))
 		add_antecedent(b, case_label, fallthrough_flow)
 		b.current = finish_label(b, case_label)
-		bind_case(b, node.cases[index])
+		bind_case(b, node.cases[index], head)
 		fallthrough_flow = b.current
 	}
 	add_antecedent(b, post_label, b.current)
@@ -421,10 +415,15 @@ bind_switch :: proc(b: ^Binder, id: ast.Node_ID, node: ast.Switch) {
 	b.current = finish_label(b, post_label)
 }
 
+// bind_case binds one case. Its value is read at the head of the `switch`, while a case is being
+// picked, whatever falls through from the case before it; only its statements follow that path.
 @(private)
-bind_case :: proc(b: ^Binder, id: ast.Node_ID) {
+bind_case :: proc(b: ^Binder, id: ast.Node_ID, head: Flow_ID) {
 	clause := b.tree.nodes[id].variant.(ast.Case)
+	path := b.current
+	b.current = head
 	bind_node(b, clause.value)
+	b.current = path
 	bind_statements(b, clause.statements)
 }
 
