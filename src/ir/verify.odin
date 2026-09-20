@@ -549,13 +549,11 @@ verify_instruction :: proc(c: ^Checker) {
 		}
 		for arg, i in v.args {
 			type, known := operand(c, arg)
-			if known && i < len(export.params) && export.params[i] == .Ptr && !is_reference(type) {
+			if known && i < len(export.params) && !c_type_fits(export.params[i], type) {
 				report(c, .Operand_Type)
 			}
 		}
-		if export.result == .Void {
-			expect_result(c, VOID)
-		} else if !is_reference(instruction.type) {
+		if !c_type_fits(export.result, instruction.type) {
 			report(c, .Result_Type)
 		}
 
@@ -860,10 +858,27 @@ traced :: proc(kind: abi.Slot_Kind) -> bool {
 	return kind == .Ref || kind == .Tagged
 }
 
-// is_reference says whether a value of this type is the one pointer a runtime export takes.
+// is_reference says whether a value of this type is a pointer a runtime export can take.
 @(private)
 is_reference :: proc(type: Type) -> bool {
 	return type.kind == .Str || type.kind == .Ref || type.kind == .Closure
+}
+
+// c_type_fits says whether a value of this IR type suits a parameter or result the runtime declares
+// as this C type. A Ptr takes any reference, because an export names no layout of its own.
+@(private)
+c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
+	switch kind {
+	case .Void:
+		return type == VOID
+	case .Ptr:
+		return is_reference(type)
+	case .Number:
+		return type == F64
+	case .Boolean:
+		return type == BOOL
+	}
+	return false
 }
 
 // comparable says whether Equal and Not_Equal compare two values of this type themselves. A string

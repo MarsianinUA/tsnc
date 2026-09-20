@@ -61,6 +61,7 @@ foreign lib {
 	LLVMInt16TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMInt32TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMInt64TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
+	LLVMDoubleTypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMFunctionType :: proc(ReturnType: LLVMTypeRef, ParamTypes: [^]LLVMTypeRef, ParamCount: u32, IsVarArg: LLVMBool) -> LLVMTypeRef ---
 	LLVMStructTypeInContext :: proc(C: LLVMContextRef, ElementTypes: [^]LLVMTypeRef, ElementCount: u32, Packed: LLVMBool) -> LLVMTypeRef ---
 	LLVMArrayType2 :: proc(ElementType: LLVMTypeRef, ElementCount: u64) -> LLVMTypeRef ---
