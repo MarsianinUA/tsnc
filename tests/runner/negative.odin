@@ -17,10 +17,18 @@ exactly as a missing one does; otherwise parser recovery could start emitting no
 would notice. For the same reason a program with no expectation at all fails, and so does a
 malformed `// expect:` line: skipping either would leave a test that proves nothing.
 
+An expectation has no file in it, because every diagnostic it can name stands in the program
+itself. A program may still import: the modules under tests/negative/modules/ are there to be
+imported and are never run as programs of their own, since the walk over the corpus takes only the
+`.ts` files directly in tests/negative. A diagnostic printed for any other file fails the program
+rather than sliding into the comparison unseen, which is what keeps a rule about two modules
+honest: the message has to land where the header says it does.
+
 The mode runs the compiler the build left in dist/ instead of calling driver in process, so that
 the rendered message, the code number, the choice of stderr and the exit code are covered as well
-as the diagnostics themselves. The first corpus is the syntactic "never" rules of requirements 2.2
-and the jumps with nowhere to go; T3.6 adds the semantic and type rules.
+as the diagnostics themselves. The corpus holds one program for every rule of the subset and every
+rule of the types, which is one program per code of the diag registry, except the lexer and parser
+codes that tests/parse owns and the fifty constructs that share T2021, grouped three ways.
 */
 package main
 
@@ -92,14 +100,16 @@ negative :: proc() -> (passed: bool) {
 		return false
 	}
 
-	// Sorted by name: a file system lists a directory in whatever order it keeps it, and two runs
-	// of the corpus should print the same log.
+	// A directory is skipped even when it is named like a source file: tests/negative/modules/
+	// holds one on purpose, to give an import something it cannot read.
 	names := make([dynamic]string, context.temp_allocator)
 	for entry in entries {
-		if strings.has_suffix(entry.name, ".ts") {
+		if entry.type != .Directory && strings.has_suffix(entry.name, ".ts") {
 			append(&names, entry.name)
 		}
 	}
+	// Sorted by name: a file system lists a directory in whatever order it keeps it, and two runs
+	// of the corpus should print the same log.
 	slice.sort(names[:])
 	if len(names) == 0 {
 		fmt.eprintfln("negative: no .ts program in %s", CORPUS)
@@ -248,6 +258,12 @@ parse_expectation :: proc(body: string) -> (expected: Expected, ok: bool) {
 // diagnostics_of reads what `tsnc check` printed. Every diagnostic is two lines, the error and its
 // hint. A line that is neither is the compiler saying something an expectation cannot express,
 // such as an entry file it could not read, and it fails the program rather than passing unseen.
+//
+// A diagnostic about another file fails the program as well. A corpus program may import a module
+// from tests/negative/modules/, and an expectation names no file, so a message from there would
+// otherwise be compared as if it stood in the program itself. The paths compare as written: the
+// compiler prints a file under the spelling it was reached by, folded with forward slashes, and
+// the entry file is reached under exactly the path this runner passed on the command line.
 @(private = "file")
 diagnostics_of :: proc(path, text: string) -> (got: []Expected, ok: bool) {
 	list := make([dynamic]Expected, context.temp_allocator)
@@ -258,9 +274,15 @@ diagnostics_of :: proc(path, text: string) -> (got: []Expected, ok: bool) {
 		if line == "" || strings.has_prefix(line, HINT_PREFIX) {
 			continue
 		}
-		printed, line_ok := parse_diagnostic(line)
+		printed, file, line_ok := parse_diagnostic(line)
 		if !line_ok {
 			fmt.eprintfln("negative: %s: cannot read the compiler output %q", path, line)
+			ok = false
+			continue
+		}
+		if file != path {
+			fmt.eprintfln("negative: %s: diagnostic in %s: %s", path, file, line)
+			fmt.eprintln("  a program expects only what stands in the program itself")
 			ok = false
 			continue
 		}
@@ -269,13 +291,14 @@ diagnostics_of :: proc(path, text: string) -> (got: []Expected, ok: bool) {
 	return list[:], ok
 }
 
-// parse_diagnostic reads the error line of a rendered diagnostic. Only the code and the position
-// are read: the text and the hint belong to the diag registry, which tests/diag already covers.
+// parse_diagnostic reads the error line of a rendered diagnostic: the file it stands in, its
+// position and its code. The text and the hint belong to the diag registry, which tests/diag
+// already covers.
 @(private = "file")
-parse_diagnostic :: proc(line: string) -> (printed: Expected, ok: bool) {
+parse_diagnostic :: proc(line: string) -> (printed: Expected, file: string, ok: bool) {
 	marker := strings.index(line, MARKER)
 	if marker < 0 {
-		return {}, false
+		return {}, "", false
 	}
 
 	// Before the marker stands `<path>:<line>:<column>`, read from the right so that the path is
@@ -283,12 +306,13 @@ parse_diagnostic :: proc(line: string) -> (printed: Expected, ok: bool) {
 	head := line[:marker]
 	column_colon := strings.last_index_byte(head, ':')
 	if column_colon < 0 {
-		return {}, false
+		return {}, "", false
 	}
 	line_colon := strings.last_index_byte(head[:column_colon], ':')
 	if line_colon < 0 {
-		return {}, false
+		return {}, "", false
 	}
+	file = head[:line_colon]
 	printed.line = parse_number(head[line_colon + 1:column_colon]) or_return
 	printed.column = parse_number(head[column_colon + 1:]) or_return
 
@@ -296,10 +320,10 @@ parse_diagnostic :: proc(line: string) -> (printed: Expected, ok: bool) {
 	tail := line[marker + len(MARKER):]
 	close := strings.index_byte(tail, ']')
 	if close < 0 {
-		return {}, false
+		return {}, "", false
 	}
 	printed.number = parse_number(tail[:close]) or_return
-	return printed, true
+	return printed, file, true
 }
 
 // parse_number reads a whole string of digits. strconv stops at the first byte it does not

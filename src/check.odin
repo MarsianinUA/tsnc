@@ -18,7 +18,7 @@ check :: proc(options: driver.Options) -> int {
 		fmt.eprintfln("tsnc: %s", error_text(err))
 		return 1
 	}
-	if len(report.diagnostics) == 0 {
+	if !driver.has_errors(report) {
 		return 0
 	}
 	print_diagnostics(report)
