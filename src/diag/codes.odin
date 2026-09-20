@@ -50,6 +50,10 @@ Code :: enum u16 {
 	Prototype_Access, // {0} is the member name: "__proto__", "prototype"
 	Symbol_Global,
 	Namespace_As_Value, // {0} is the local name of the `import * as`
+	// {0} names the construct the way the text reads it, as an object: "objects", "arrays",
+	// "narrowing a union". lower (T4.3) reports it for a construct of the v1 subset that the code
+	// generator does not build yet; the code leaves the registry when the last one is lowered.
+	Not_Lowered,
 
 	// T3xxx: types. check (T3.2 on) reports these, the only phase that knows what a type is.
 	Type_Mismatch, // {0} is the type of the value, {1} the type it has to fit
@@ -312,6 +316,11 @@ REGISTRY := [Code]Row {
 		number = 2026,
 		text = "`{0}` is a module and needs a name after it",
 		hint = "write `{0}.f(x)` or `{0}.Point`, or import the names you use: `import { f } from \"./m\"`",
+	},
+	.Not_Lowered = {
+		number = 2027,
+		text = "tsnc cannot compile {0} yet",
+		hint = "it is part of the v1 language and lands in milestone 5 of the compiler; `tsnc check` already types the whole program",
 	},
 	.Type_Mismatch = {
 		number = 3001,

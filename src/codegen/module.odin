@@ -98,6 +98,12 @@ c_type :: proc(ctx: llvm.LLVMContextRef, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 		return llvm.LLVMVoidTypeInContext(ctx)
 	case .Ptr:
 		return llvm.LLVMPointerTypeInContext(ctx, 0)
+	case .Number:
+		return llvm.LLVMDoubleTypeInContext(ctx)
+	case .Boolean:
+		// b64, so the call site widens its i1 and no export depends on how a C ABI passes a
+		// narrower boolean.
+		return llvm.LLVMInt64TypeInContext(ctx)
 	}
 	unreachable()
 }

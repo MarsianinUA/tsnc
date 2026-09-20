@@ -228,7 +228,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T4.1.
 Done: the verifier catches a block without a terminator and a use before definition; the dump is deterministic.
 
-### [ ] T4.3 `lower`: scalar slice
+### [x] T4.3 `lower`: scalar slice
 
 What: `lower(^Program, []Check_Result, allocator)`: numbers, booleans, `null`, `undefined`, string literals as pool constants; functions without captures, and calls; control flow (`if`, `switch`, loops, `break`, `continue`, ternary, `&&`, `||`, `??` through `phi`), `return`; top-level module code as init functions in `Program` order, `tsnc_main`; a "lib name → strategy" table for `console.log` and `console.error`, `process.exit`, `Math` (intrinsics and libm; `round`, `max`, `min` go to the runtime); mapping a TS type to an IR type, without objects. Two leftovers of the milestone 3 review belong here. `Program.init_order` lists a module that is reachable only through `import type`, which Node never loads, so its init function must not run. And every binding slot has to be zero-filled before its scope runs: a `let` with no initializer is written before it is read, but the GC scans it before that, and a hoisted function can read a binding before its declaration ran, which is Node's `ReferenceError` and which check does not catch.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rule 7; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Built-in types"; requirements §3.1, §3.5, §4.5 (`Math`), §7.
