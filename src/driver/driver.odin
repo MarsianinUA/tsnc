@@ -5,9 +5,16 @@ everything they need arrives as a value plus an allocator, and they hand back da
 diagnostics.
 
 check_only is the `tsnc check` stage: it builds the import closure from the entry file, parses and
-binds every file in it, hands the result to program for the module graph, and returns that frozen
-program together with every diagnostic, already in print order. driver never prints and never sets
-the exit code; main does both. build and run join in T4.5.
+binds every file in it, hands the result to program for the module graph, types it with one
+partition of every source file, and returns that frozen program together with every diagnostic,
+already in print order. driver never prints and never sets the exit code; main does both. build and
+run join in T4.5, and the policy between them is has_errors: nothing reaches lower while the
+program still has a mistake in it.
+
+The checker runs whatever the phases under it found. A construct outside the subset becomes a Bad
+node in parse, and check gives a Bad node the error type without a word, so a file that already
+failed adds no second message about the same place. That is what requirements 2.3 asks for: one
+pass shows everything wrong with a program, rather than one layer at a time.
 
 File_ID order. The lib file is 0, the entry file is 1, and an imported file takes the next number
 as the walk first reaches it. Files are processed in increasing File_ID and each file's requests in
@@ -31,6 +38,7 @@ import "core:mem/virtual"
 
 import "../ast"
 import "../bind"
+import "../check"
 import "../codegen"
 import "../diag"
 import "../program"
@@ -86,6 +94,9 @@ Check_Report :: struct {
 	// Files, trees, names and the module graph, all indexed by File_ID with the lib at zero. It is
 	// empty when err says the build never started.
 	program:     program.Program,
+	// What the checkers learned, one entry per partition. v1 makes a single partition, and lower
+	// takes the whole list, so the shape already holds for the several partitions of T6.2.
+	results:     []check.Check_Result,
 	diagnostics: []diag.Diagnostic, // every phase's and driver's own, in print order
 	memory:      ^Build_Memory, // owns the arenas the program lives in
 }
@@ -97,6 +108,7 @@ Check_Report :: struct {
 Build_Memory :: struct {
 	arena:     virtual.Arena, // the file table, the paths, the file texts, the merged diagnostics
 	tasks:     [dynamic]^File_Task, // one per File_ID, each owning its own arena
+	checks:    [dynamic]^Check_Task, // one per partition, each owning its own arena
 	allocator: runtime.Allocator, // where the struct above came from, for destroy
 }
 
@@ -118,6 +130,7 @@ check_only :: proc(
 		return {}, {kind = .Out_Of_Memory}
 	}
 	memory.tasks = make([dynamic]^File_Task, allocator)
+	memory.checks = make([dynamic]^Check_Task, allocator)
 
 	c := Closure {
 		memory = memory,
@@ -163,10 +176,21 @@ check_only :: proc(
 	built, cycle_errors := program.build(c.files[:], trees, bound, imports, c.arena)
 	append(&c.diagnostics, ..cycle_errors)
 
+	// The types come last, and their diagnostics join the rest before the sort that puts them all
+	// in print order: check reports in the order it reads declarations, which is not print order.
+	results := run_checkers(&c, &built)
+
 	diagnostics := c.diagnostics[:]
 	diag.sort(diagnostics)
 
-	return {program = built, diagnostics = diagnostics, memory = memory}, {}
+	return {program = built, results = results, diagnostics = diagnostics, memory = memory}, {}
+}
+
+// has_errors reports whether the program has a mistake in it. Every diagnostic tsnc makes is an
+// error, so one is enough. This is the "go to lower only without errors" policy: T4.5 asks it
+// between check and lower, and main turns the same answer into the exit code.
+has_errors :: proc(report: Check_Report) -> bool {
+	return len(report.diagnostics) > 0
 }
 
 // destroy releases every arena of the build. Nothing the report points at is valid afterwards,
@@ -176,6 +200,11 @@ destroy :: proc(report: ^Check_Report) {
 	if memory == nil {
 		return
 	}
+	for task in memory.checks {
+		virtual.arena_destroy(&task.arena)
+		free(task, memory.allocator)
+	}
+	delete(memory.checks)
 	for task in memory.tasks {
 		virtual.arena_destroy(&task.arena)
 		free(task, memory.allocator)
