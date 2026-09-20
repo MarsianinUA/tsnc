@@ -12,9 +12,10 @@ Tables: the three tables of a Typed_File are as long as the file's tree.nodes an
 node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed. A read of a
 place holds the type it has at that point rather than the one it was declared with, which is the
 narrowing lower turns into a tag check. An ast.Ident holds the symbol it names, which is bind's
-answer when the file declares the name and check's own when the name comes from the lib module; an
-ast.Type_Ref holds the same for a type name. A call holds the signature it settled on, once the
-overload was picked and the type variables worked out.
+answer when the file declares the name, check's own when the name comes from the lib module, and the
+declaration behind the import when the name was imported; an ast.Type_Ref holds the same for a type
+name, and an ast.Member holds it as well where a module stands before the dot. A call holds the
+signature it settled on, once the overload was picked and the type variables worked out.
 
 Order: a declaration is typed once, the first time anything asks for it, and the answer is cached by
 symbol. The walk over the statements asks for the same thing, so a name used above its declaration
@@ -27,16 +28,16 @@ with Check_Result.types. See types.odin.
 What this package types: primitives, literal types, unions, functions and arrows; objects under the
 exact-type rule of requirements 3.3, arrays, `interface` and `type`, contextual typing, and the
 generic signatures of the built-in types, which is the whole of src/lib/lib.d.ts; unions narrowed
-through bind's flow graph, and the rules of requirements 3.8 for `as` and `!`. Names imported from
-another module (T3.5) are not here yet: a construct that task owns gets the error type and no
-diagnostic, because the error type is assignable in both directions and so nothing cascades from it.
-Constructs the compiler will never support are rejected in parse with a T2xxx code and never reach
-here.
+through bind's flow graph, and the rules of requirements 3.8 for `as` and `!`; names another module
+declares, through the import and export tables, which is modules.odin; and the rules of the subset
+that need a type or a file to decide, which is subset.odin. Constructs the compiler can reject on
+sight are rejected in parse with a T2xxx code and never reach here.
 
 Memory: the type table, the node tables, the Typed_File list and the diagnostics come from the
 allocator passed in, which is meant to be an arena; check never frees. Names and texts are borrowed
 from the trees, so the result must not outlive the program. Scratch data, including the caches only
-one call needs, goes to context.temp_allocator.
+one call needs and the node tables of a file the call reads without typing, goes to
+context.temp_allocator.
 */
 package check
 
@@ -48,9 +49,10 @@ import "../diag"
 import "../program"
 import "../source"
 
-// Symbol_Ref names a symbol in any file of the program. bind resolves a name inside its own file
-// and leaves NO_SYMBOL on the rest; check finishes the job for the names of the lib module, and
-// from T3.5 for imported ones. A zero Symbol_Ref is the lib file and NO_SYMBOL: it means nothing.
+// Symbol_Ref names a symbol in any file of the program. bind resolves a name inside its own file and
+// leaves NO_SYMBOL on the rest; check finishes the job for the names of the lib module, and follows
+// an import to the declaration behind it. A zero Symbol_Ref is the lib file and NO_SYMBOL: it means
+// nothing.
 Symbol_Ref :: struct {
 	file:   source.File_ID,
 	symbol: bind.Symbol_ID,
@@ -64,6 +66,18 @@ Typed_File :: struct {
 	// As long as tree.nodes. For an ast.Call it is the signature the call settled on, after the
 	// overload was picked and any type variable worked out; ERROR on every other node. lower reads
 	// the answer instead of working it out again.
+	node_signatures: []Type_ID,
+}
+
+// Facts are the three tables of one file, each as long as its tree.nodes. A file of the partition
+// hands them to the result as its Typed_File; a file the checker only reads to learn the type of a
+// name gets a set of its own all the same, so that the work done there lands somewhere. Without it
+// the answer would depend on which checker read the file first: a result inferred from a narrowed
+// value needs the narrowing, and the narrowing reads these tables.
+@(private)
+Facts :: struct {
+	node_types:      []Type_ID,
+	node_symbols:    []Symbol_Ref,
 	node_signatures: []Type_ID,
 }
 
@@ -92,6 +106,7 @@ check :: proc(
 		allocator    = allocator,
 		table        = make_table(allocator),
 		in_partition = make([]bool, len(prog.files), context.temp_allocator),
+		facts        = make([]Facts, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
 		resolving    = make(map[Symbol_Ref]bool, context.temp_allocator),
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
@@ -130,6 +145,9 @@ Checker :: struct {
 	table:        Table,
 	// Whether a file is one of this call's, by source.File_ID, so that report is one index.
 	in_partition: []bool,
+	// The fact tables of every file, by source.File_ID, built the first time the checker reads the
+	// file. See Facts.
+	facts:        []Facts,
 	// The type of a symbol of any file, worked out the first time anything asks for it. The cache
 	// belongs to this call alone, as the type table does: a Type_ID of one checker means nothing
 	// in another.
@@ -161,9 +179,9 @@ Place :: struct {
 	file:            source.File_ID,
 	tree:            ^ast.File_AST,
 	bound:           ^bind.Bound_File,
-	// The fact tables of that file, or nil when the file is not in this partition. check reads such
-	// a file to learn a type, but its facts belong to the checker that owns it, so a write is
-	// dropped instead of going somewhere wrong.
+	// The fact tables of that file, which are Checker.facts of it. They are nil only while a
+	// generic lib declaration is being instantiated, where drop_facts_of_instance clears them so
+	// that the instance does not overwrite what the declaration itself recorded.
 	node_types:      []Type_ID,
 	node_symbols:    []Symbol_Ref,
 	node_signatures: []Type_ID,
@@ -173,50 +191,62 @@ Place :: struct {
 	returns:         ^[dynamic]Type_ID,
 }
 
-// check_file types one file of the partition from its root down.
+// check_file types one file of the partition from its root down. A declaration of the file that an
+// earlier file already asked for is typed once: its facts are in the file's tables already, and the
+// walk over the statements finds the answer in the symbol cache.
 @(private)
 check_file :: proc(c: ^Checker, file: source.File_ID) -> Typed_File {
-	tree := &c.program.trees[file]
-	c.at = Place {
-		file            = file,
-		tree            = tree,
-		bound           = &c.program.bound[file],
-		node_types      = make([]Type_ID, len(tree.nodes), c.allocator),
-		node_symbols    = make([]Symbol_Ref, len(tree.nodes), c.allocator),
-		node_signatures = make([]Type_ID, len(tree.nodes), c.allocator),
-		result          = ERROR,
-	}
+	previous := move_to(c, file)
+	defer c.at = previous
 
-	module, is_module := tree.nodes[ast.ROOT].variant.(ast.Module)
+	module, is_module := c.at.tree.nodes[ast.ROOT].variant.(ast.Module)
 	ensure(is_module, "the root of a File_AST is its Module")
 	check_statements(c, module.statements)
 
+	facts := c.facts[file]
 	return {
 		file = file,
-		node_types = c.at.node_types,
-		node_symbols = c.at.node_symbols,
-		node_signatures = c.at.node_signatures,
+		node_types = facts.node_types,
+		node_symbols = facts.node_symbols,
+		node_signatures = facts.node_signatures,
 	}
 }
 
-// move_to points the checker at another file, with no fact tables, and answers with the place to
-// move back to. It is how the type of a symbol declared elsewhere gets worked out.
+// move_to points the checker at a file and answers with the place to move back to. It is how the
+// type of a symbol declared elsewhere gets worked out.
 @(private)
 move_to :: proc(c: ^Checker, file: source.File_ID) -> (previous: Place) {
+	facts := facts_of(c, file)
 	previous = c.at
 	c.at = Place {
-		file   = file,
-		tree   = &c.program.trees[file],
-		bound  = &c.program.bound[file],
-		result = ERROR,
-	}
-	if file == previous.file {
-		// The same file keeps its tables: the facts are ours to write.
-		c.at.node_types = previous.node_types
-		c.at.node_symbols = previous.node_symbols
-		c.at.node_signatures = previous.node_signatures
+		file            = file,
+		tree            = &c.program.trees[file],
+		bound           = &c.program.bound[file],
+		node_types      = facts.node_types,
+		node_symbols    = facts.node_symbols,
+		node_signatures = facts.node_signatures,
+		result          = ERROR,
 	}
 	return previous
+}
+
+// facts_of is the fact tables of one file, built the first time the checker reads it. A file of the
+// partition takes them from the checker's allocator, because they become its Typed_File; a file the
+// checker only reads takes scratch, which free_scratch gives back.
+@(private)
+facts_of :: proc(c: ^Checker, file: source.File_ID) -> Facts {
+	if c.facts[file].node_types != nil {
+		return c.facts[file]
+	}
+
+	count := len(c.program.trees[file].nodes)
+	allocator := c.allocator if c.in_partition[file] else context.temp_allocator
+	c.facts[file] = {
+		node_types      = make([]Type_ID, count, allocator),
+		node_symbols    = make([]Symbol_Ref, count, allocator),
+		node_signatures = make([]Type_ID, count, allocator),
+	}
+	return c.facts[file]
 }
 
 // freeze turns the checker's growing tables into the slices of the result.
@@ -232,8 +262,18 @@ freeze :: proc(c: ^Checker, partition: []source.File_ID, files: []Typed_File) ->
 // as the tracking allocator of the tests.
 @(private)
 free_scratch :: proc(c: ^Checker) {
-	// A slice remembers no allocator, so this one has to be named: delete would otherwise hand
-	// scratch memory to the allocator of the context, which never owned it.
+	// A slice remembers no allocator, so every one has to be named: delete would otherwise hand
+	// scratch memory to the allocator of the context, which never owned it. in_partition goes last,
+	// because the tables to give back are the ones it says are not ours.
+	for facts, file in c.facts {
+		if c.in_partition[file] {
+			continue // the file's tables are its Typed_File and belong to the result
+		}
+		delete(facts.node_types, context.temp_allocator)
+		delete(facts.node_symbols, context.temp_allocator)
+		delete(facts.node_signatures, context.temp_allocator)
+	}
+	delete(c.facts, context.temp_allocator)
 	delete(c.in_partition, context.temp_allocator)
 	delete(c.symbol_types)
 	delete(c.resolving)

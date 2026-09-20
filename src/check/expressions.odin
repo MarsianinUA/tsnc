@@ -122,7 +122,8 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 // narrow_reference works out from the flow graph.
 //
 // `undefined` is a name in the grammar rather than a literal, and no file declares it, so check
-// answers for it itself.
+// answers for it itself. A name another module declares goes to imported_name, which follows the
+// import to the declaration behind it.
 @(private)
 check_ident :: proc(
 	c: ^Checker,
@@ -136,8 +137,11 @@ check_ident :: proc(
 		if node.name == "undefined" {
 			return UNDEFINED, UNDEFINED
 		}
-		report(c, .Cannot_Find_Name, span_of(c, id), node.name)
+		report_unknown_name(c, node.name, span_of(c, id))
 		return ERROR, ERROR
+	}
+	if bind.is_alias(c.program.bound[ref.file].symbols[ref.symbol].kind) {
+		return imported_name(c, id, node.name, ref)
 	}
 	set_symbol(c, id, ref)
 	declared = type_of_symbol(c, ref)
@@ -355,6 +359,12 @@ check_object_literal :: proc(
 	fields := make([dynamic]Field, 0, len(node.properties), context.temp_allocator)
 	for property_id in node.properties {
 		property := c.at.tree.nodes[property_id].variant.(ast.Property)
+		if !check_member_name(c, property.name) {
+			// The value is still typed, so a mistake inside it is found, but the field is left out:
+			// the object does not have it, and the exact-type rule must not report it a second time.
+			set_type(c, property_id, check_expression(c, property.value))
+			continue
+		}
 		declared, known := ERROR, false
 		if has_target {
 			field, found := find_field(target.fields, property.name.text)
@@ -425,7 +435,8 @@ check_array_literal :: proc(
 }
 
 // check_member is the type of `x.name`. The fields come from the apparent type: an object's own, and
-// for a string, a number or an array the members the lib file declares for it.
+// for a string, a number or an array the members the lib file declares for it. `m.name`, where m is
+// an `import * as m`, is no field read at all: it names a declaration of the other module.
 @(private)
 check_member :: proc(
 	c: ^Checker,
@@ -434,6 +445,16 @@ check_member :: proc(
 ) -> (
 	declared, narrowed: Type_ID,
 ) {
+	if !check_member_name(c, node.name) {
+		// The prototype rule is asked before the object is typed, so that `(x as any).__proto__` is
+		// reported too: a value the rules gave up on is still a value with no prototype.
+		check_expression(c, node.object)
+		return ERROR, ERROR
+	}
+	if ref, is_namespace := namespace_of(c, node.object); is_namespace {
+		return namespace_member(c, id, node, ref)
+	}
+
 	object := check_expression(c, node.object)
 	if object == ERROR || object == ANY {
 		return object, object
@@ -606,7 +627,10 @@ check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
 		if ref.symbol == bind.NO_SYMBOL {
 			return true
 		}
-		if c.program.bound[ref.file].symbols[ref.symbol].kind == .Const {
+		// An imported name is a binding of the other module seen from here, and ESM makes it
+		// read-only whichever keyword declared it there, so it answers as a `const` does.
+		kind := c.program.bound[ref.file].symbols[ref.symbol].kind
+		if kind == .Const || bind.is_alias(kind) {
 			report(c, .Assign_To_Const, span_of(c, target), v.name)
 			return false
 		}

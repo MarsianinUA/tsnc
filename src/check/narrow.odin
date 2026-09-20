@@ -34,11 +34,10 @@ make_narrowing :: proc(allocator := context.allocator) -> Narrowing {
 // a type with one kind of value is statically typed already; skipping the rest also keeps the cost
 // of the walk proportional to the feature rather than to the size of the program.
 //
-// A file outside this partition has no fact tables, so the walk finds nothing recorded and narrows
-// nothing. Today that file is only the lib module, whose declarations have no bodies and therefore
-// no flow at all. T3.5 brings in names from other modules, and has to give such a file scratch
-// tables, or a function whose result is inferred from a narrowed value would come out one type in
-// the checker that owns it and another in a checker that only reads it.
+// Every file the checker reads has fact tables, its own partition's or a scratch set (see Facts), so
+// the walk works the same in a file this call types and in one it only reads to learn the type of an
+// imported name. Without that, a result inferred from a narrowed value would come out one type in the
+// checker that owns the file and another in a checker that merely reads it.
 @(private)
 narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Type_ID {
 	if _, is_union := c.table.types[declared].(Union); !is_union {
@@ -213,8 +212,8 @@ loop_type :: proc(
 // declarator writes to the name it declares rather than to an expression, so it is matched by
 // symbol; the other three write to a place spelled out in the source.
 //
-// A `for...of` gives its loop variable an element of the iterable, whose type is T3.5, so it clears
-// what was known and says nothing new.
+// A `for...of` writes an element of the iterable into its loop variable, which for_of_variable
+// recorded on the declarator, so the write is read from there.
 @(private)
 written_type :: proc(
 	c: ^Checker,
@@ -238,8 +237,9 @@ written_type :: proc(
 			return NUMBER, true // `++` and `--` always leave a number behind
 		}
 	case ast.For_Of:
-		if declares_reference(c, loop_declarator(c, v.declaration), reference) {
-			return ERROR, true
+		if declarator := loop_declarator(c, v.declaration);
+		   declares_reference(c, declarator, reference) {
+			return recorded_type(c, declarator), true
 		}
 	}
 	return ERROR, false

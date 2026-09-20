@@ -196,7 +196,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T3.2.
 Done: tests for each kind of narrowing and for errors outside narrowing; `as any` is rejected with a code.
 
-### [ ] T3.5 `check`: modules, lib and semantic rules of the subset
+### [x] T3.5 `check`: modules, lib and semantic rules of the subset
 
 What: resolution of `import` and `export` through `Program` and the `bind` tables, `import * as m`, unknown export; lib module symbols are visible everywhere; `declare` outside lib is rejected; the semantic remainder of the "never" rules (prototypes, `__proto__`, `Symbol`, changing an object's shape); control statements and `for...of` over arrays and strings; `console.log` with any number of arguments; import cycles of only types and functions are allowed.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `check`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rule 8; requirements §2.1-2.3, §7, §3.9.
