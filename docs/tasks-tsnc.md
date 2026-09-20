@@ -189,7 +189,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T3.2, T2.6.
 Done: tests: `Point` and `Vec2` are compatible; `{x, y, z}` into `{x, y}` produces an error with a hint; `arr.map(x => x * 2)` infers `number[]`.
 
-### [ ] T3.4 `check`: union and narrowing
+### [x] T3.4 `check`: union and narrowing
 
 What: canonical unions, `T | undefined` for optional ones; narrowing by `typeof`, by a literal field (`===`, `switch`), by `null` and `undefined`, by `!`; uses the flow graph from `bind`; the narrowed type goes into `Typed_File` for the identifier at the point of use; `as` rules (widening and narrowing of a union; `as any` and `as unknown as T` are forbidden).
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `check`; [Contracts → Check_Result and Typed_File](architecture-plan-tsnc.md#check_result-and-typed_file-package-check), invariants; requirements §2.2 (union and narrowing), §3.4, §3.8, §5.

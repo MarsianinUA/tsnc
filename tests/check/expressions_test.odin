@@ -76,11 +76,19 @@ comparisons_order_two_numbers_or_two_strings :: proc(t: ^testing.T) {
 }
 
 @(test)
-strict_equality_accepts_any_pair :: proc(t: ^testing.T) {
-	// Requirements 3.7 asks nothing of `===`. Reporting two types that cannot overlap needs the
-	// comparability relation, which arrives with narrowing in T3.4.
-	c := expect_checked(t, `const same = 1 === "a";`)
-	testing.expect_value(t, declared_text(c, "same"), "boolean")
+strict_equality_rejects_two_types_with_no_value_in_common :: proc(t: ^testing.T) {
+	// Requirements 3.7 asks nothing of `===` itself, but a comparison whose two sides can never be
+	// equal is a mistake and not a test, and tsc reports it as well.
+	c := expect_errors(t, `const same = 1 === "a";`, []Error{{.No_Overlap, 1, 14}})
+	testing.expectf(
+		t,
+		strings.contains(rendered(c, 0), "no value in common"),
+		"the message does not say the two can never be equal: %q",
+		rendered(c, 0),
+	)
+
+	ok := expect_checked(t, lines(`let n = 1;`, `const same = n === 2;`))
+	testing.expect_value(t, declared_text(ok, "same"), "boolean")
 }
 
 @(test)

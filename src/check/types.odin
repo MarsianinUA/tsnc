@@ -772,11 +772,14 @@ widen :: proc(table: ^Table, id: Type_ID) -> Type_ID {
 
 // Part names what is left of a type once a test on it has gone one way. `a && b` keeps the falsy
 // part of a, `a || b` the truthy part, and `a ?? b` the part that is neither null nor undefined.
+// Nullish is the other answer of that last test: what a value turned out to be when `??` took its
+// right side, and what `x === null` leaves behind.
 @(private)
 Part :: enum u8 {
 	Falsy,
 	Truthy,
 	Not_Nullish,
+	Nullish,
 }
 
 // part_of is what survives that test. Keeping only the surviving part is what makes
@@ -791,27 +794,35 @@ part_of :: proc(table: ^Table, id: Type_ID, part: Part) -> Type_ID {
 	case Basic_Kind:
 		#partial switch v {
 		case .Null, .Undefined, .Void:
-			// All three are falsy, and the first two are the pair `??` asks about.
-			return id if part == .Falsy else NEVER
+			// All three are falsy, and the first two are the pair `??` and `=== null` ask about.
+			return id if part == .Falsy || part == .Nullish else NEVER
+		case .Any, .Unknown, .Error:
+			return id
+		}
+		if part == .Nullish {
+			return NEVER // a boolean, a number and a string are never null or undefined
+		}
+		#partial switch v {
 		case .Boolean:
 			return literal_type(table, false) if part == .Falsy else id
 		case .Number:
 			return literal_type(table, f64(0)) if part == .Falsy else id
 		case .String:
 			return literal_type(table, "") if part == .Falsy else id
-		case .Any, .Unknown, .Error:
-			return id
 		}
 		return NEVER // `never` has no values, so no part of it survives anything
 	case Literal:
+		// A literal is a number, a string or a boolean, never null or undefined.
 		if part == .Not_Nullish {
-			return id // a literal is a number, a string or a boolean, never null or undefined
+			return id
 		}
-		falsy := is_falsy(v.value)
-		return id if falsy == (part == .Falsy) else NEVER
+		if part == .Nullish {
+			return NEVER
+		}
+		return id if is_falsy(v.value) == (part == .Falsy) else NEVER
 	case Function, Object, Array, Overload:
-		// A reference is always truthy, and so is a function value.
-		return NEVER if part == .Falsy else id
+		// A reference is always truthy, and so is a function value, and neither is ever null.
+		return id if part == .Truthy || part == .Not_Nullish else NEVER
 	case Type_Var:
 		return id // nothing is known about it until a call works it out
 	case Union:

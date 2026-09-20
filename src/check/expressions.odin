@@ -33,7 +33,8 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 	case ast.Null_Literal:
 		return set_type(c, id, NULL)
 	case ast.Ident:
-		return set_type(c, id, check_ident(c, id, v))
+		_, narrowed := check_ident(c, id, v)
+		return set_type(c, id, narrowed)
 	case ast.Template:
 		for expression in v.expressions {
 			check_expression(c, expression)
@@ -57,22 +58,20 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 	case ast.Arrow:
 		return set_type(c, id, check_arrow(c, v, expected))
 	case ast.Non_Null:
-		// `x!` says the value is there. T3.4 decides when that is allowed and lower turns it into
-		// the check of requirements 3.8; the type it leaves behind is already this.
-		return set_type(c, id, part_of(&c.table, check_expression(c, v.expr), .Not_Nullish))
+		return set_type(c, id, check_non_null(c, id, v))
 	case ast.As:
-		// T3.4 owns the rules: which conversions are allowed, and that `as any` is not one.
-		check_expression(c, v.expr)
-		return set_type(c, id, resolve_type(c, v.type))
+		return set_type(c, id, check_as(c, v))
 
 	case ast.Array_Literal:
 		return set_type(c, id, check_array_literal(c, id, v, expected))
 	case ast.Object_Literal:
 		return set_type(c, id, check_object_literal(c, id, v, expected))
 	case ast.Member:
-		return set_type(c, id, check_member(c, v))
+		_, narrowed := check_member(c, id, v)
+		return set_type(c, id, narrowed)
 	case ast.Index:
-		return set_type(c, id, check_index(c, v))
+		_, narrowed := check_index(c, id, v)
+		return set_type(c, id, narrowed)
 
 	// Not expressions: a statement, a piece of type syntax, or a part of a declaration. parse has
 	// already reported a Bad node, so it says nothing here either.
@@ -118,20 +117,31 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 
 // Names.
 
-// check_ident is the type of a use of a name. `undefined` is a name in the grammar rather than a
-// literal, and no file declares it, so check answers for it itself.
+// check_ident is the type of a use of a name. It answers twice, as the other two reads of a place
+// do: with the type the name was declared with, and with the type it holds here, which
+// narrow_reference works out from the flow graph.
+//
+// `undefined` is a name in the grammar rather than a literal, and no file declares it, so check
+// answers for it itself.
 @(private)
-check_ident :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Ident) -> Type_ID {
+check_ident :: proc(
+	c: ^Checker,
+	id: ast.Node_ID,
+	node: ast.Ident,
+) -> (
+	declared, narrowed: Type_ID,
+) {
 	ref := resolve_name(c, id, node.name, .Value)
 	if ref.symbol == bind.NO_SYMBOL {
 		if node.name == "undefined" {
-			return UNDEFINED
+			return UNDEFINED, UNDEFINED
 		}
 		report(c, .Cannot_Find_Name, span_of(c, id), node.name)
-		return ERROR
+		return ERROR, ERROR
 	}
 	set_symbol(c, id, ref)
-	return type_of_symbol(c, ref)
+	declared = type_of_symbol(c, ref)
+	return declared, narrow_reference(c, id, declared)
 }
 
 // Operators.
@@ -220,8 +230,11 @@ check_binary :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Binary) -> Type_ID 
 	case .Less, .Less_Equal, .Greater, .Greater_Equal:
 		return order_result(c, span_of(c, id), left, right)
 	case .Strict_Equal, .Strict_Not_Equal:
-		// Requirements 3.7 asks nothing of `===`. tsc also reports two types that cannot overlap,
-		// which needs the comparability relation, and that arrives with narrowing in T3.4.
+		// Requirements 3.7 asks nothing of `===` itself, but two types with no value in common make
+		// a comparison that is a mistake rather than a test, and tsc reports it as well.
+		if !comparable(c, left, right) {
+			report_types(c, .No_Overlap, span_of(c, id), left, right)
+		}
 		return BOOLEAN
 	case .Equal, .Not_Equal:
 		return equality_result(c, span_of(c, id), left, right)
@@ -345,7 +358,7 @@ check_object_literal :: proc(
 		declared, known := ERROR, false
 		if has_target {
 			field, found := find_field(target.fields, property.name.text)
-			declared, known = field.type, found
+			declared, known = field_read_type(c, field), found
 			if !found {
 				span := property.name.span
 				report(c, .Field_Not_Found, span, property.name.text, text_of(c, target_id))
@@ -414,60 +427,133 @@ check_array_literal :: proc(
 // check_member is the type of `x.name`. The fields come from the apparent type: an object's own, and
 // for a string, a number or an array the members the lib file declares for it.
 @(private)
-check_member :: proc(c: ^Checker, node: ast.Member) -> Type_ID {
+check_member :: proc(
+	c: ^Checker,
+	id: ast.Node_ID,
+	node: ast.Member,
+) -> (
+	declared, narrowed: Type_ID,
+) {
 	object := check_expression(c, node.object)
 	if object == ERROR || object == ANY {
-		return object
+		return object, object
 	}
 
 	field, found := field_of(c, object, node.name.text)
 	if !found {
 		report(c, .Field_Not_Found, node.name.span, node.name.text, text_of(c, object))
-		return ERROR
+		return ERROR, ERROR
 	}
-	return field.type
+	declared = field_read_type(c, field)
+	return declared, narrow_reference(c, id, declared)
 }
 
 // check_index is the type of `x[i]`. The lib file has no index signatures, so the checker knows by
 // itself that an array gives its element and a string gives a string. Reading out of range is a
 // runtime check of requirements 3.8 and not a `T | undefined`, so the type is the element itself.
 @(private)
-check_index :: proc(c: ^Checker, node: ast.Index) -> Type_ID {
+check_index :: proc(
+	c: ^Checker,
+	id: ast.Node_ID,
+	node: ast.Index,
+) -> (
+	declared, narrowed: Type_ID,
+) {
 	object := check_expression(c, node.object)
 	index := check_expression(c, node.index)
 	if !based_on(c, index, NUMBER) {
 		report_types(c, .Type_Mismatch, span_of(c, node.index), index, NUMBER)
 	}
 	if object == ERROR || object == ANY {
-		return object
+		return object, object
 	}
 
 	if array, is_array := c.table.types[object].(Array); is_array {
-		return array.element
+		return array.element, narrow_reference(c, id, array.element)
 	}
 	if based_on(c, object, STRING) {
-		return STRING
+		return STRING, narrow_reference(c, id, STRING)
 	}
 	report(c, .Not_Indexable, span_of(c, node.object), text_of(c, object))
-	return ERROR
+	return ERROR, ERROR
+}
+
+// Assertions.
+
+// check_non_null is the type of `x!`. Requirements 3.8 makes it a runtime check and lower emits
+// one, so it has to be a check worth making: a value that can never be null or undefined is
+// reported rather than quietly accepted, which is where tsnc is stricter than tsc.
+@(private)
+check_non_null :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Non_Null) -> Type_ID {
+	value := check_expression(c, node.expr)
+	if value == ERROR || value == ANY {
+		return value
+	}
+	if part_of(&c.table, value, .Nullish) == NEVER {
+		report(c, .Needless_Non_Null, span_of(c, id), text_of(c, value))
+		return value
+	}
+	return part_of(&c.table, value, .Not_Nullish)
+}
+
+// check_as is the type of `x as T`. Requirements 3.8 allows two conversions and no others: widening
+// a value to a type that covers it, and narrowing a union to a part of it, which lower turns into a
+// tag check. Neither `any` nor `unknown` may be the target at all, and that one rule is what makes
+// `as any` and `as unknown as T` impossible, rather than a rule that looks for the pair.
+@(private)
+check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
+	value := check_expression(c, node.expr)
+	target := resolve_type(c, node.type)
+
+	if target == ANY || target == UNKNOWN {
+		report(c, .Unsafe_Assertion, span_of(c, node.type), text_of(c, target))
+		return ERROR
+	}
+	if !comparable(c, value, target) {
+		report_types(c, .Unrelated_Assertion, span_of(c, node.expr), value, target)
+	}
+	return target
 }
 
 // Assignment.
 
+// check_target types the place an assignment writes to, and answers twice: with the type the place
+// holds here, which a compound assignment computes from, and with the type it was declared with,
+// which the new value has to fit. The two have to be told apart, or a narrowing would forbid the
+// write that ends it: inside `if (typeof x === "number")` every read of x is a number, while
+// `x = "a"` is still a legal write to a `string | number`.
+@(private)
+check_target :: proc(c: ^Checker, id: ast.Node_ID) -> (narrowed, declared: Type_ID) {
+	#partial switch v in c.at.tree.nodes[id].variant {
+	case ast.Ident:
+		declared, narrowed = check_ident(c, id, v)
+	case ast.Member:
+		declared, narrowed = check_member(c, id, v)
+	case ast.Index:
+		declared, narrowed = check_index(c, id, v)
+	case:
+		// parse has already rejected a target that is no place to write to at all.
+		narrowed = check_expression(c, id)
+		return narrowed, narrowed
+	}
+	set_type(c, id, narrowed)
+	return narrowed, declared
+}
+
 @(private)
 check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
-	target := check_expression(c, node.target)
+	narrowed, declared := check_target(c, node.target)
 	writable := check_mutable(c, node.target)
-	value := check_expression(c, node.value, target if node.op == .Assign else ERROR)
+	value := check_expression(c, node.value, declared if node.op == .Assign else ERROR)
 
 	result := value
 	if node.op != .Assign {
-		result = compound_result(c, node, target, value)
+		result = compound_result(c, node, narrowed, value)
 	}
 	// A binding that cannot take another value has been reported already. Measuring the value
 	// against the one type that binding will ever have would only say the same thing twice.
-	if writable && !fits(c, result, target) {
-		report_assign_failure(c, span_of(c, node.value), result, target)
+	if writable && !fits(c, result, declared) {
+		report_assign_failure(c, span_of(c, node.value), result, declared)
 	}
 	return result
 }

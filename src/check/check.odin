@@ -9,10 +9,12 @@ the answer for a file does not depend on how the program was split. In v1 driver
 partition holding every file; T6.2 runs several calls at once.
 
 Tables: the three tables of a Typed_File are as long as the file's tree.nodes and hold a fact of a
-node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed. An ast.Ident
-holds the symbol it names, which is bind's answer when the file declares the name and check's own
-when the name comes from the lib module; an ast.Type_Ref holds the same for a type name. A call holds
-the signature it settled on, once the overload was picked and the type variables worked out.
+node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed. A read of a
+place holds the type it has at that point rather than the one it was declared with, which is the
+narrowing lower turns into a tag check. An ast.Ident holds the symbol it names, which is bind's
+answer when the file declares the name and check's own when the name comes from the lib module; an
+ast.Type_Ref holds the same for a type name. A call holds the signature it settled on, once the
+overload was picked and the type variables worked out.
 
 Order: a declaration is typed once, the first time anything asks for it, and the answer is cached by
 symbol. The walk over the statements asks for the same thing, so a name used above its declaration
@@ -22,13 +24,14 @@ a function is read where its type is worked out, and not where the walk reaches 
 Types: every type is interned in the table of this call, so a Type_ID is meaningful only together
 with Check_Result.types. See types.odin.
 
-What this task types: primitives, literal types, unions, functions and arrows; objects under the
+What this package types: primitives, literal types, unions, functions and arrows; objects under the
 exact-type rule of requirements 3.3, arrays, `interface` and `type`, contextual typing, and the
-generic signatures of the built-in types, which is the whole of src/lib/lib.d.ts. Narrowing through
-the flow graph (T3.4) and names imported from another module (T3.5) are not here yet: a construct
-one of them owns gets the error type and no diagnostic, because the error type is assignable in both
-directions and so nothing cascades from it. Constructs the compiler will never support are rejected
-in parse with a T2xxx code and never reach here.
+generic signatures of the built-in types, which is the whole of src/lib/lib.d.ts; unions narrowed
+through bind's flow graph, and the rules of requirements 3.8 for `as` and `!`. Names imported from
+another module (T3.5) are not here yet: a construct that task owns gets the error type and no
+diagnostic, because the error type is assignable in both directions and so nothing cascades from it.
+Constructs the compiler will never support are rejected in parse with a T2xxx code and never reach
+here.
 
 Memory: the type table, the node tables, the Typed_File list and the diagnostics come from the
 allocator passed in, which is meant to be an arena; check never frees. Names and texts are borrowed
@@ -94,6 +97,7 @@ check :: proc(
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
 		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
+		narrowing    = make_narrowing(context.temp_allocator),
 		diagnostics  = make([dynamic]diag.Diagnostic, allocator),
 	}
 	defer free_scratch(&c)
@@ -144,6 +148,8 @@ Checker :: struct {
 	lib:          Lib_Types,
 	// The buffer fits compares object types in. See Trail.
 	trail:        Trail,
+	// The buffer narrow_reference walks the flow graph in. See Narrowing.
+	narrowing:    Narrowing,
 	diagnostics:  [dynamic]diag.Diagnostic,
 	at:           Place,
 }
@@ -234,6 +240,8 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.bindings)
 	delete(c.aliases)
 	delete(c.trail)
+	delete(c.narrowing.answers)
+	delete(c.narrowing.loops)
 	delete(c.table.key.buf)
 }
 
@@ -319,6 +327,17 @@ span_of :: proc(c: ^Checker, id: ast.Node_ID) -> source.Span {
 fits :: proc(c: ^Checker, source, target: Type_ID) -> bool {
 	clear(&c.trail)
 	return assignable(c.table.types[:], source, target, &c.trail)
+}
+
+// comparable reports whether two types have a value in common, which is what `===` and a `switch`
+// case ask: a comparison of two types that can never be equal is a mistake rather than a test, and
+// it is also the question narrowing asks of each member of a union.
+//
+// The error type and `any` fit in both directions and everything fits `unknown`, so a value the
+// rules have already given up on never produces a second message here.
+@(private)
+comparable :: proc(c: ^Checker, a, b: Type_ID) -> bool {
+	return fits(c, a, b) || fits(c, b, a)
 }
 
 // union_of is the canonical union of two types, which is what a ternary, a logical operator and an
