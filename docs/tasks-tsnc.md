@@ -249,7 +249,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T4.4, T1.7.
 Done: `tsnc run` on a program of numbers and loops prints the result; `-emit-ir` and `-emit-llvm` write files.
 
-### [ ] T4.6 `rt/num` and primitive output in `console`
+### [x] T4.6 `rt/num` and primitive output in `console`
 
 What: `num`: conversion per `Number::toString` (§3.1) on top of `core:strconv` (shortest representation, thresholds `1e21` and `1e-7`, `-0`, `NaN`, `Infinity`), `parseFloat` per the `ToNumber` grammar, `toFixed`; `console` prints numbers, booleans, `null`, `undefined`, strings, several arguments separated by spaces; `Runtime_Proc` exports; `Math.round`, `Math.max`, `Math.min`.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), rows `num`, `console`; requirements §3.1, §3.9, §4.5 (table, row "Numbers to string and back").

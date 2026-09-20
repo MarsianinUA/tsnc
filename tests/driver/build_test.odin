@@ -15,7 +15,8 @@ them on a thread pool. The tests that link need the runtime object in that same 
 expect_built names the command that puts it there when they fail.
 
 The fixture `loops` is the done criterion of the task: numbers and loops, answering through a
-boolean and an exit code rather than a printed number, which panics in the runtime until T4.6.
+boolean and an exit code. Printed numbers are checked against Node itself, in the differential
+corpus of T4.7, and not here.
 */
 
 @(test)

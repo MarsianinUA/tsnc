@@ -207,6 +207,13 @@ numbers_have_their_values :: proc(t: ^testing.T) {
 		{"9007199254740993", 9007199254740992},
 		{"0xFFFFFFFFFFFFFFFF", 18446744073709551616},
 		{"1e400", math.inf_f64(1)},
+		// An exponent in the twenties, where strconv.parse_f64 rounds twice and lands a unit in
+		// the last place low. Odin folds the constants on the right exactly, so they are the
+		// values Node reads. A literal that misses here compiles into a program that prints the
+		// wrong digits.
+		{"3.14159265e41", 3.14159265e41},
+		{"6.02214076e44", 6.02214076e44},
+		{"1278572e37", 1278572e37},
 	}
 	for c in cases {
 		tokens := expect_kinds(t, c.text, {.Number})

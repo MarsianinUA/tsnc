@@ -7,6 +7,7 @@ import "core:unicode/utf16"
 
 import "../../../src/abi"
 import "../../../src/runtime/console"
+import "../../../src/runtime/num"
 
 // Expected output is spelled in UTF-8 bytes, not with the \u escapes of the input, so the test does
 // not trust the same encoder twice.
@@ -43,6 +44,23 @@ unpaired_surrogate_is_replacement_character :: proc(t: ^testing.T) {
 	testing.expect_value(t, line(cell_from_units({'a', 0xd83d})), "a\xef\xbf\xbd\n")
 	testing.expect_value(t, line(cell_from_units({0xde00, 'b'})), "\xef\xbf\xbdb\n")
 	testing.expect_value(t, line(cell_from_units({0xde00, 0xd83d})), "\xef\xbf\xbd\xef\xbf\xbd\n")
+}
+
+// A number reaches the console as the text of requirements 3.1, with the one exception Node makes:
+// console.log(-0) prints the sign that String(-0) drops. The digits themselves are checked against
+// Node in tests/runtime/num.
+@(test)
+a_negative_zero_keeps_its_sign_on_the_console :: proc(t: ^testing.T) {
+	NEGATIVE_ZERO :: 0h8000_0000_0000_0000
+	testing.expect_value(t, number(NEGATIVE_ZERO), "-0")
+	testing.expect_value(t, number(0), "0")
+	testing.expect_value(t, number(1.5), "1.5")
+	testing.expect_value(t, number(1e21), "1e+21")
+}
+
+number :: proc(value: f64) -> string {
+	buf: [num.STRING_MAX]byte
+	return strings.clone(console.number_text(buf[:], value), context.temp_allocator)
 }
 
 line :: proc(text: ^abi.String_Cell) -> string {

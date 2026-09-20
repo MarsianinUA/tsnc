@@ -1165,8 +1165,8 @@ write_function :: proc(b: ^strings.Builder, types: []Type, function: Function) {
 // strconv writes for a positive number, which no TypeScript type ever shows.
 //
 // Where this differs from the program it compiles: the ECMAScript `Number::toString` rules of
-// requirements 3.1, with their 1e21 and 1e-7 thresholds, belong to the runtime and arrive in T4.6.
-// A diagnostic is read by a person, not compared with Node, so the shortest decimal form does.
+// requirements 3.1, with their 1e21 and 1e-7 thresholds, live in the runtime, in `rt/num`. A
+// diagnostic is read by a person, not compared with Node, so the shortest decimal form does.
 @(private)
 write_number :: proc(b: ^strings.Builder, value: f64) {
 	strings.write_float(b, value, 'f', -1, 64)

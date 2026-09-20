@@ -15,9 +15,11 @@ package console
 
 import "core:bufio"
 import "core:io"
+import "core:math"
 import "core:os"
 
 import "../../abi"
+import "../num"
 
 // write_string writes the cell's UTF-16 units as UTF-8, with nothing after them.
 write_string :: proc(err: bool, text: ^abi.String_Cell) {
@@ -34,12 +36,22 @@ write_boolean :: proc(err: bool, value: bool) {
 	_, _ = os.write_string(stream(err), "true" if value else "false")
 }
 
-// write_number writes the digits of requirements 3.1. T4.6 brings the Number::toString rules here
-// together with the rest of package num; until then a program that prints a number says so rather
-// than printing digits Node would not.
+// write_number writes the digits of requirements 3.1. They are ASCII, so this path needs none of
+// the UTF-16 re-encoding a string goes through.
 write_number :: proc(err: bool, value: f64) {
-	_, _ = err, value
-	panic("console: printing a number lands in T4.6")
+	buf: [num.STRING_MAX]byte
+	_, _ = os.write_string(stream(err), number_text(buf[:], value))
+}
+
+// number_text is what the console prints for a number: Number::toString, except that a negative
+// zero keeps its sign. Node prints 0 for `${-0}` and -0 for console.log(-0), because a bare value
+// goes through util.inspect and not through String. The rule is the console's, so num.to_string
+// stays the conversion requirements 3.1 describes.
+number_text :: proc(buf: []byte, value: f64) -> string {
+	if value == 0 && math.sign_bit(value) {
+		return string(buf[:copy(buf, "-0")])
+	}
+	return num.to_string(buf, value)
 }
 
 // write_line writes the cell's units and a newline. It serves the hello world of T1.6, which codegen
