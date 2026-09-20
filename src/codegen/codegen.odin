@@ -1,16 +1,22 @@
 /*
-IR to machine code through LLVM. One emit call builds one LLVM module for one codegen unit and
-writes it as an object file or as textual LLVM IR.
+IR to machine code through LLVM. One emit call builds one LLVM module for the functions of one
+codegen unit and writes it as an object file or as textual LLVM IR.
 
-Until the IR exists (T4.4), a built-in hello world stands in for it: tsnc_main prints HELLO_WORLD
-through the runtime's string output. Everything around the stub is the real pipeline: runtime
-declarations from the abi table, static string cells with the abi layout, the LLVM verifier, the
-pass pipeline of the optimization level, the artifact.
+The translation is one to one: a number is a double, a boolean an i1, a tagged value the two words
+of abi.Tagged, and every reference an opaque pointer. Each IR block becomes an LLVM block and each
+instruction one or a few LLVM instructions. codegen reads the program and never changes it, and it
+knows nothing of TypeScript: the closed instruction set of package ir is the whole contract.
+
+The program is expected to have passed ir.verify. codegen relies on what the verifier promises -
+one terminator per block, definitions before uses, exact operand types - and does not check again.
 
 LLVM state: init_global_options changes process-global LLVM state, so it runs once, before any other
 thread uses LLVM; driver calls it before its thread pool. Everything else belongs to one call: emit
 creates and disposes its own context, module and target machine, so calls on different threads
 share nothing.
+
+Memory: emit owns nothing that outlives the call. Scratch goes to context.temp_allocator behind a
+temp guard, and the LLVM handles are disposed on the way out.
 
 Errors: emit returns an Error value, like every infrastructure failure in tsnc. When LLVM explains a
 failure, emit logs the text at error level through context.logger.
@@ -21,12 +27,9 @@ import "base:runtime"
 import "core:log"
 import "core:strings"
 
+import "../ir"
 import "../llvm"
 import "../target"
-
-// Unit is the part of the program one emit call compiles into one module. The hello world stub
-// compiles nothing of the program yet; T4.4 replaces this with the unit type of package ir.
-Unit :: struct {}
 
 // Optimization values are lowercase because they are the values of `tsnc -o:`: core:flags matches
 // them against the command line by exact name, and Odin's `-o:` spells them the same way.
@@ -44,6 +47,7 @@ Artifact :: enum u8 {
 Error :: enum u8 {
 	None,
 	Unsupported_Target, // no target.SPECS row, or LLVM has no backend for the triple
+	Unsupported_Instruction, // an IR instruction whose runtime arrives with milestone 5
 	Invalid_Module, // the LLVM verifier rejected the module: a codegen bug
 	Passes_Failed, // LLVMRunPasses rejected the pipeline: a codegen bug
 	Write_Failed, // the artifact could not be written to the path
@@ -69,10 +73,12 @@ init_global_options :: proc "contextless" () {
 }
 
 // emit builds the module of the unit for the target, checks it with the LLVM verifier, runs the
-// pass pipeline of the level and writes the artifact to path. init_global_options must have run.
+// pass pipeline of the level and writes the artifact to path. init_global_options must have run,
+// and the program must have passed ir.verify.
 @(require_results)
 emit :: proc(
-	unit: Unit,
+	program: ^ir.Program_IR,
+	unit: ir.Unit,
 	build_target: target.Target,
 	level: Optimization,
 	artifact: Artifact,
@@ -115,7 +121,10 @@ emit :: proc(
 	data_layout := llvm.LLVMCreateTargetDataLayout(machine)
 	llvm.LLVMSetModuleDataLayout(module, data_layout)
 	llvm.LLVMDisposeTargetData(data_layout)
-	add_hello_world(ctx, module)
+	// Before the verifier: a module abandoned halfway is not worth a verifier report.
+	if build_error := build_module(ctx, module, program, unit); build_error != .None {
+		return build_error
+	}
 
 	// --- Verify before the passes, so a codegen bug is reported against the module it made.
 	verify_message: cstring

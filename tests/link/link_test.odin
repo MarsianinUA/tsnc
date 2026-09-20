@@ -4,8 +4,11 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 
+import "../../src/abi"
 import "../../src/codegen"
+import "../../src/ir"
 import "../../src/link"
+import "../../src/source"
 import "../../src/target"
 
 // The test runner runs tests on a thread pool, so LLVM's process-global setup happens once before
@@ -19,10 +22,15 @@ init_llvm :: proc "contextless" () {
 // before these tests run.
 RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
+// HELLO is what the linked program prints. These tests say nothing about the front end, so the IR
+// is built by hand rather than compiled from a source.
+HELLO :: "Hello, world!"
+
 @(test)
 hello_world_links_and_runs :: proc(t: ^testing.T) {
+	output := hello_program()
 	object := "dist/link-hello.obj"
-	emit_err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .Object, object)
+	emit_err := codegen.emit(&output, output.units[0], target.HOST, .speed, .Object, object)
 	if !testing.expect_value(t, emit_err, codegen.Error.None) {
 		return
 	}
@@ -49,7 +57,7 @@ hello_world_links_and_runs :: proc(t: ^testing.T) {
 	if !testing.expectf(t, run_err == nil, "run %s: %v", program, run_err) {
 		return
 	}
-	testing.expect_value(t, string(stdout), codegen.HELLO_WORLD + "\n")
+	testing.expect_value(t, string(stdout), HELLO + "\n")
 	testing.expect_value(t, string(stderr), "")
 	testing.expect_value(t, state.exit_code, 0)
 
@@ -95,4 +103,24 @@ only_the_host_target_links :: proc(t: ^testing.T) {
 		testing.expectf(t, err.kind == .Unsupported_Target, "%v: %v", id, err.kind)
 		testing.expect_value(t, err.detail, "")
 	}
+}
+
+// hello_program is the smallest program there is: tsnc_main prints one line through the runtime.
+@(private = "file")
+hello_program :: proc() -> ir.Program_IR {
+	span := source.Span {
+		file  = 0,
+		start = 0,
+		end   = 1,
+	}
+	p := ir.make_builder(context.temp_allocator)
+	line := ir.intern_string(&p, HELLO)
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, span)
+	f := ir.begin_func(&p, main)
+	cell := ir.emit(&f, ir.STR, ir.Const_String{text = line}, span)
+	args := [?]ir.Value_ID{cell}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Log_String, args = args[:]}, span)
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
+	ir.end_func(&f)
+	return ir.finish(&p, main, nil)
 }

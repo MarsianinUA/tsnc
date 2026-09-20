@@ -3,22 +3,32 @@ package main
 import "core:fmt"
 import "core:os"
 
+import "../../src/abi"
 import "../../src/codegen"
+import "../../src/ir"
 import "../../src/link"
+import "../../src/source"
 import "../../src/target"
 
 // RUNTIME_BUILD builds the runtime object smoke links against; %s is its path.
 RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:%s -vet -strict-style"
 
-// smoke builds the codegen hello world for the host, links it with the runtime object in dist/,
-// runs it and compares stdout, stderr and the exit code. Until `tsnc build` exists (T4.5), smoke
-// calls codegen and link directly, the way driver will.
+// HELLO is the line the smoke program prints.
+HELLO :: "Hello, world!"
+
+// smoke builds a hello world for the host out of IR it writes by hand, links it with the runtime
+// object in dist/, runs it and compares stdout, stderr and the exit code. It answers whether
+// codegen, link and the runtime agree, and says nothing about the front end, which the diff mode
+// (T4.7) covers instead. Until `tsnc build` exists (T4.5), smoke calls codegen and link directly,
+// the way driver will.
 smoke :: proc() -> (passed: bool) {
 	codegen.init_global_options()
 
 	// --- Object file.
+	output := hello_program()
 	object := "dist/smoke-hello.obj"
-	if err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .Object, object); err != .None {
+	if err := codegen.emit(&output, output.units[0], target.HOST, .speed, .Object, object);
+	   err != .None {
 		fmt.eprintfln("smoke: codegen %s: %v", object, err)
 		if err == .Write_Failed {
 			fmt.eprintln("run the runner from the repository root; create dist/ once: mkdir dist")
@@ -54,7 +64,7 @@ smoke :: proc() -> (passed: bool) {
 		fmt.eprintfln("smoke: run %s: %v", program, run_err)
 		return false
 	}
-	want_stdout :: codegen.HELLO_WORLD + "\n"
+	want_stdout :: HELLO + "\n"
 	passed = true
 	if string(stdout) != want_stdout {
 		fmt.eprintfln("smoke: stdout: got %q, want %q", string(stdout), want_stdout)
@@ -75,4 +85,24 @@ smoke :: proc() -> (passed: bool) {
 		fmt.println("smoke: ok")
 	}
 	return passed
+}
+
+// hello_program is the smallest program there is: tsnc_main prints one line through the runtime.
+@(private = "file")
+hello_program :: proc() -> ir.Program_IR {
+	span := source.Span {
+		file  = 0,
+		start = 0,
+		end   = 1,
+	}
+	p := ir.make_builder(context.temp_allocator)
+	line := ir.intern_string(&p, HELLO)
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, span)
+	f := ir.begin_func(&p, main)
+	cell := ir.emit(&f, ir.STR, ir.Const_String{text = line}, span)
+	args := [?]ir.Value_ID{cell}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Log_String, args = args[:]}, span)
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
+	ir.end_func(&f)
+	return ir.finish(&p, main, nil)
 }
