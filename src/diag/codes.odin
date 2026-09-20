@@ -44,6 +44,19 @@ Code :: enum u16 {
 	Regular_Expression,
 	Unsupported_Syntax, // {0} is construct_text of a Construct: "labels", "intersection types"
 
+	// T3xxx: types. check (T3.2 on) reports these, the only phase that knows what a type is.
+	Type_Mismatch, // {0} is the type of the value, {1} the type it has to fit
+	Loose_Equality, // {0} and {1} are the types of the two sides
+	Operand_Not_Number, // {0} is the operator: "*", "-"; {1} the type of the operand
+	Addition_Operands, // {0} and {1} are the types of the two sides
+	Comparison_Operands, // {0} and {1} are the types of the two sides
+	Not_Callable, // {0} is the type of the callee
+	// {0} is what the function takes: "1 argument", "1 to 3 arguments"; {1} what the call passes
+	Argument_Count,
+	Missing_Annotation, // {0} is the name
+	Assign_To_Const, // {0} is the name
+	Recursive_Return_Type, // {0} is the name of the function
+
 	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
 	// need a file system to decide, and program (T3.1) the one that needs the whole module graph.
 	Redeclared_Name, // {0} is the name
@@ -53,6 +66,7 @@ Code :: enum u16 {
 	Bare_Specifier, // {0} is the specifier as written
 	Module_Unreadable, // {0} is the specifier, {1} why the file could not be read
 	Cycle_With_Side_Effects, // {0} lists the modules of the cycle; program (T3.1) reports it
+	Cannot_Find_Name, // {0} is the name; check (T3.2) reports it, once it has read the lib module
 }
 
 @(private)
@@ -241,6 +255,56 @@ REGISTRY := [Code]Row {
 		text = "{0} are not supported",
 		hint = "rewrite the code without them: tsnc supports the TypeScript subset listed in its requirements, section 2.2",
 	},
+	.Type_Mismatch = {
+		number = 3001,
+		text = "type `{0}` is not assignable to type `{1}`",
+		hint = "change the value to a `{1}`, or widen the declared type so that it covers `{0}` as well",
+	},
+	.Loose_Equality = {
+		number = 3002,
+		text = "`==` and `!=` need both sides to have the same type, but these are `{0}` and `{1}`",
+		hint = "use `===` or `!==`, which compare without converting; tsnc allows `==` only where it already means `===`",
+	},
+	.Operand_Not_Number = {
+		number = 3003,
+		text = "operator `{0}` needs a number, but an operand is `{1}`",
+		hint = "convert the operand first, with `Number.parseFloat(s)` for a string, or use `+` if you meant to join text",
+	},
+	.Addition_Operands = {
+		number = 3004,
+		text = "`+` cannot add `{0}` and `{1}`",
+		hint = "`+` adds two numbers or joins a string with anything; convert one side, or write a template string",
+	},
+	.Comparison_Operands = {
+		number = 3005,
+		text = "`{0}` and `{1}` cannot be ordered",
+		hint = "`<`, `<=`, `>` and `>=` compare two numbers or two strings; convert one side first",
+	},
+	.Not_Callable = {
+		number = 3006,
+		text = "type `{0}` is not callable",
+		hint = "call a function or an arrow; check the name, and check that a call earlier in the expression returns one",
+	},
+	.Argument_Count = {
+		number = 3007,
+		text = "this call passes {1}, but the function takes {0}",
+		hint = "add or remove arguments; a parameter may be left out only where it is written `x?: T`",
+	},
+	.Missing_Annotation = {
+		number = 3008,
+		text = "`{0}` needs a type annotation",
+		hint = "write the type after the name, as `{0}: number`; a variable can take its type from an initializer instead",
+	},
+	.Assign_To_Const = {
+		number = 3009,
+		text = "cannot assign to `{0}`, which is a `const`",
+		hint = "declare it with `let` if it has to change, or make a new binding for the new value",
+	},
+	.Recursive_Return_Type = {
+		number = 3010,
+		text = "the return type of `{0}` cannot be inferred, because it refers to itself",
+		hint = "write the return type after the parameters, as `function {0}(): number`",
+	},
 	.Redeclared_Name = {
 		number = 4001,
 		text = "`{0}` is already declared in this scope",
@@ -275,6 +339,11 @@ REGISTRY := [Code]Row {
 		number = 4007,
 		text = "import cycle between modules with top-level side effects: {0}",
 		hint = "move what these modules share into a third one, or take the top-level code out of them: a cycle is allowed as long as no module in it runs anything when it loads",
+	},
+	.Cannot_Find_Name = {
+		number = 4008,
+		text = "cannot find name `{0}`",
+		hint = "declare it before this point, or import it from the module it lives in; tsnc has no globals beyond the declarations of its built-in lib",
 	},
 }
 

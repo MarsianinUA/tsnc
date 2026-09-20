@@ -93,6 +93,7 @@ src/ast/      syntax tree: nodes indexed by Node_ID, import list, traversal
 src/parse/    source text to tokens, then to a syntax tree
 src/bind/     symbols, scopes, import and export tables, the flow graph
 src/program/  the frozen program: every file, its tree, its names, the module graph
+src/check/    TypeScript types: the type table, inference, the type rules
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, negative corpus
