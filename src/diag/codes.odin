@@ -65,6 +65,10 @@ Code :: enum u16 {
 	Empty_Array_Literal,
 	// {0} is the name of the type, {1} how many arguments it takes: "one type argument"
 	Type_Argument_Count,
+	Unsafe_Assertion, // {0} is the type `as` was given: "any", "unknown"
+	Unrelated_Assertion, // {0} is the type of the value, {1} the type `as` names
+	Needless_Non_Null, // {0} is the type `!` was written after
+	No_Overlap, // {0} and {1} are the two types being compared
 
 	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
 	// need a file system to decide, and program (T3.1) the one that needs the whole module graph.
@@ -353,6 +357,26 @@ REGISTRY := [Code]Row {
 		number = 3018,
 		text = "type `{0}` takes {1}",
 		hint = "write `Array<T>` with exactly one type argument; a type of your own takes none, because generics of your own arrive in v2",
+	},
+	.Unsafe_Assertion = {
+		number = 3019,
+		text = "`as {0}` is not allowed",
+		hint = "narrow the value with `typeof`, a literal field or a check against `null`; `as` may widen a value or narrow a union, while `{0}` would switch the type rules off",
+	},
+	.Unrelated_Assertion = {
+		number = 3020,
+		text = "type `{0}` cannot be converted to type `{1}`",
+		hint = "`as` widens a value or narrows a union, so the two types have to be related; convert the value instead of asserting it",
+	},
+	.Needless_Non_Null = {
+		number = 3021,
+		text = "`!` has nothing to check: `{0}` is never `null` or `undefined`",
+		hint = "remove the `!`; it belongs after a value whose type still holds `null` or `undefined` at this point",
+	},
+	.No_Overlap = {
+		number = 3022,
+		text = "types `{0}` and `{1}` have no value in common",
+		hint = "this comparison never holds; check the spelling of a literal, or widen one of the two types so that both values can occur",
 	},
 	.Redeclared_Name = {
 		number = 4001,

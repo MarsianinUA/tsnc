@@ -64,12 +64,15 @@ check_statement :: proc(c: ^Checker, id: ast.Node_ID) {
 		for_of_variable(c, v.declaration)
 		check_statement(c, v.body)
 	case ast.Switch:
-		check_expression(c, v.value)
+		subject := check_expression(c, v.value)
 		for clause in v.cases {
 			node := c.at.tree.nodes[clause].variant.(ast.Case)
-			// Whether a case value can ever equal the subject is the comparability rule, which
-			// arrives with narrowing in T3.4.
-			check_expression(c, node.value)
+			value := check_expression(c, node.value)
+			// A case the subject can never equal is a case that never runs, so it is a mistake and
+			// not a test, exactly as `===` between two such types is.
+			if node.value != ast.NO_NODE && !comparable(c, subject, value) {
+				report_types(c, .No_Overlap, span_of(c, node.value), subject, value)
+			}
 			check_statements(c, node.statements)
 		}
 	case ast.Return:

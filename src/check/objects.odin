@@ -394,6 +394,10 @@ lib_interface :: proc(c: ^Checker, id: bind.Symbol_ID, args: []Type_ID) -> Type_
 // field_of is the field of that name in the apparent type of id.
 @(private)
 field_of :: proc(c: ^Checker, id: Type_ID, name: string) -> (field: Field, found: bool) {
+	if _, is_union := c.table.types[id].(Union); is_union {
+		return union_field(c, id, name)
+	}
+
 	// The row has to be read after the search, and not indexed with it: an apparent type is
 	// instantiated on the spot, and the table it goes into is the one being indexed.
 	apparent := apparent_type(c, id)
@@ -402,6 +406,46 @@ field_of :: proc(c: ^Checker, id: Type_ID, name: string) -> (field: Field, found
 		return {}, false
 	}
 	return find_field(object.fields, name)
+}
+
+// union_field is the field a whole union offers: one that every member has, holding whatever any of
+// them holds. It is what makes the discriminant of a discriminated union readable before the union
+// is taken apart, since `s.kind` is then the union of the literal types a test picks from. A name
+// one member does not declare is a name the union does not have, as it is in TypeScript.
+//
+// A field is optional for the union where it is optional in any member, and readonly where it is
+// readonly in any: a write has to be legal wherever the value could have come from.
+@(private)
+union_field :: proc(c: ^Checker, id: Type_ID, name: string) -> (field: Field, found: bool) {
+	members := union_members(c, id)
+	types := make([dynamic]Type_ID, 0, len(members), context.temp_allocator)
+	optional, readonly := false, false
+	for member in members {
+		one, has := field_of(c, member, name)
+		if !has {
+			return {}, false
+		}
+		append(&types, one.type)
+		optional ||= one.optional
+		readonly ||= one.readonly
+	}
+
+	return Field {
+			name = name,
+			type = union_type(&c.table, types[:]),
+			optional = optional,
+			readonly = readonly,
+		},
+		true
+}
+
+// field_read_type is the type a field slot holds. A field written `x?: T` may be missing, and
+// requirements 3.4 gives a missing one and `T | undefined` the same representation, so that is what
+// the slot is worth. Every place that names the slot goes through here, so a read and a write agree
+// on it; `Field.optional` itself is untouched, and two types still need the same set of fields.
+@(private)
+field_read_type :: proc(c: ^Checker, field: Field) -> Type_ID {
+	return union_of(c, field.type, UNDEFINED) if field.optional else field.type
 }
 
 @(private)

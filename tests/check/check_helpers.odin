@@ -187,6 +187,28 @@ use_text :: proc(c: Checked, name: string, occurrence := 0, file := MAIN) -> str
 	return "<no such use>"
 }
 
+// member_text is the type of one read of a field: the occurrence-th `x.name` with that field name.
+// A field read is a place check narrows, so a test about `o.x` asks for it the way use_text asks
+// about a name.
+member_text :: proc(c: Checked, name: string, occurrence := 0, file := MAIN) -> string {
+	typed, ok := check.typed_file(c.result, file)
+	if !ok {
+		return "<not in the partition>"
+	}
+	seen := 0
+	for node, id in c.program.trees[file].nodes {
+		member, is_member := node.variant.(ast.Member)
+		if !is_member || member.name.text != name {
+			continue
+		}
+		if seen == occurrence {
+			return type_text(c, typed.node_types[id])
+		}
+		seen += 1
+	}
+	return "<no such use>"
+}
+
 // use_declaration is what check decided a use of a name refers to, which is bind's answer for a
 // name the file declares and check's own for a name of the lib module.
 use_declaration :: proc(

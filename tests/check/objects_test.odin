@@ -266,9 +266,19 @@ a_value_that_is_not_a_literal_needs_the_same_set_of_fields :: proc(t: ^testing.T
 
 @(test)
 an_optional_field_prints_with_its_question_mark :: proc(t: ^testing.T) {
-	c := expect_checked(t, `const opts: { x: number; y?: string } = { x: 1 };`)
+	// The question mark is part of the field set and stays in the type. Only a read of the slot
+	// names `undefined`, because requirements 3.4 gives a missing field and a `T | undefined` one
+	// representation.
+	c := expect_checked(
+		t,
+		lines(
+			`const opts: { x: number; y?: string } = { x: 1 };`, //
+			`const read = opts.y;`,
+		),
+	)
 
 	testing.expect_value(t, declared_text(c, "opts"), "{ x: number; y?: string }")
+	testing.expect_value(t, declared_text(c, "read"), "string | undefined")
 }
 
 @(test)
