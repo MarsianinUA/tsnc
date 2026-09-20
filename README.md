@@ -84,7 +84,7 @@ src/          compiler, package main
 src/runtime/  runtime, package rt, built as an object file
 src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
 src/llvm/     LLVM-C 20 bindings
-src/codegen/  LLVM module to an object file or textual LLVM IR
+src/codegen/  our IR to an LLVM module, then to an object file or textual LLVM IR
 src/link/     program and runtime objects to an executable
 src/target/   target platforms: LLVM triple, linker, link flags
 src/source/   source files: File_ID, spans, lines and columns
@@ -95,6 +95,7 @@ src/bind/     symbols, scopes, import and export tables, the flow graph
 src/program/  the frozen program: every file, its tree, its names, the module graph
 src/check/    TypeScript types: the type table, inference, the type rules
 src/ir/       our own IR: SSA blocks in flat arrays, interned layouts, the builder
+src/lower/    the typed syntax tree to our IR
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, negative corpus

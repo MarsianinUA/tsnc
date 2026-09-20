@@ -1,14 +1,11 @@
 package codegen
 
+import "core:log"
 import "core:strings"
-import "core:unicode/utf16"
 
 import "../abi"
+import "../ir"
 import "../llvm"
-
-// HELLO_WORLD is the line the hello world stub prints. T4.4 removes both when the IR takes the
-// stub's place.
-HELLO_WORLD :: "Hello, world!"
 
 // The LLVM type of a String_Cell is { i32, i32, i64, [N x i16] }: the two header words, the length,
 // then N UTF-16 units. These pin the Odin layout the mapping relies on.
@@ -17,40 +14,150 @@ HELLO_WORLD :: "Hello, world!"
 #assert(offset_of(abi.String_Cell, length) == 8)
 #assert(size_of(int) == 8)
 
-// Runtime_Function is a declared runtime export: its signature, which LLVMBuildCall2 needs, and the
-// function.
+// A Fail_Site is { ptr, i64, i32, i32, i32 }: the path as an Odin string, then the line, the column
+// and the error code. LLVM pads the tail to the 8 byte alignment, which is where the 32 bytes come
+// from.
+#assert(size_of(abi.Fail_Site) == 32)
+#assert(size_of(string) == 16)
+#assert(offset_of(abi.Fail_Site, line) == 16)
+#assert(offset_of(abi.Fail_Site, column) == 20)
+#assert(offset_of(abi.Fail_Site, error) == 24)
+#assert(size_of(abi.Runtime_Error) == 4)
+
+// A Tagged is { i64, i64 }: the tag and the payload word, which holds a double, a b64 or a pointer.
+#assert(size_of(abi.Tagged) == 16)
+#assert(size_of(abi.Tag) == 8)
+#assert(offset_of(abi.Tagged, payload) == 8)
+
+// Function is a declared function: its type, which LLVMBuildCall2 needs, and the function itself.
 @(private)
-Runtime_Function :: struct {
+Function :: struct {
 	signature: llvm.LLVMTypeRef,
 	function:  llvm.LLVMValueRef,
 }
 
-// add_hello_world fills the module with the stub that stands in for the IR: tsnc_main passes a
-// static cell with HELLO_WORLD to the runtime's string output.
+// Types are the LLVM types the translation uses everywhere, built once per module.
 @(private)
-add_hello_world :: proc(ctx: llvm.LLVMContextRef, module: llvm.LLVMModuleRef) {
-	runtime_functions := declare_runtime(ctx, module)
-	text := add_string_cell(ctx, module, HELLO_WORLD)
+Types :: struct {
+	void:   llvm.LLVMTypeRef,
+	double: llvm.LLVMTypeRef,
+	int1:   llvm.LLVMTypeRef,
+	int8:   llvm.LLVMTypeRef,
+	int16:  llvm.LLVMTypeRef,
+	int32:  llvm.LLVMTypeRef,
+	int64:  llvm.LLVMTypeRef,
+	ptr:    llvm.LLVMTypeRef,
+	tagged: llvm.LLVMTypeRef,
+}
 
-	main_signature := llvm.LLVMFunctionType(llvm.LLVMVoidTypeInContext(ctx), nil, 0, false)
-	main_function := llvm.LLVMAddFunction(module, abi.MAIN_SYMBOL, main_signature)
-	builder := llvm.LLVMCreateBuilderInContext(ctx)
-	defer llvm.LLVMDisposeBuilder(builder)
-	llvm.LLVMPositionBuilderAtEnd(
-		builder,
-		llvm.LLVMAppendBasicBlockInContext(ctx, main_function, "entry"),
-	)
-	log_string := runtime_functions[.Log_String]
-	args := [?]llvm.LLVMValueRef{text}
-	llvm.LLVMBuildCall2(
-		builder,
-		log_string.signature,
-		log_string.function,
-		&args[0],
-		len(args),
-		"",
-	)
-	llvm.LLVMBuildRetVoid(builder)
+// Module is what one emit call builds: the LLVM handles, and one LLVM value per IR id. Everything
+// in it lives in the temp allocator of the call.
+@(private)
+Module :: struct {
+	ctx:          llvm.LLVMContextRef,
+	module:       llvm.LLVMModuleRef,
+	builder:      llvm.LLVMBuilderRef,
+	program:      ^ir.Program_IR,
+	types:        Types,
+	runtime:      [abi.Runtime_Proc]Function,
+	funcs:        []Function, // by ir.Func_ID
+	globals:      []llvm.LLVMValueRef, // by ir.Global_ID
+	// string_cells is Program_IR.strings under another name: a field named strings would shadow the
+	// core:strings import inside the struct declaration.
+	string_cells: []llvm.LLVMValueRef, // by ir.String_ID
+	fail_sites:   []llvm.LLVMValueRef, // by ir.Fail_Site_ID
+	libm:         map[string]Function, // by C symbol, so each libm function is declared once
+	unsupported:  string, // the mnemonic of the first instruction codegen cannot emit yet
+}
+
+// build_module fills the module with the program data every function may reach and then with one
+// body per function of the unit.
+@(private)
+build_module :: proc(
+	ctx: llvm.LLVMContextRef,
+	module: llvm.LLVMModuleRef,
+	program: ^ir.Program_IR,
+	unit: ir.Unit,
+) -> Error {
+	m := Module {
+		ctx     = ctx,
+		module  = module,
+		program = program,
+		types   = make_types(ctx),
+		builder = llvm.LLVMCreateBuilderInContext(ctx),
+		libm    = make(map[string]Function, context.temp_allocator),
+	}
+	defer llvm.LLVMDisposeBuilder(m.builder)
+	m.runtime = declare_runtime(ctx, module, m.types)
+
+	add_string_cells(&m)
+	add_fail_sites(&m)
+	add_globals(&m)
+	declare_funcs(&m, unit)
+
+	for id in unit.funcs {
+		build_func(&m, id)
+		if m.unsupported != "" {
+			log.errorf(
+				"codegen: %s in %s: the runtime of this instruction arrives with milestone 5",
+				m.unsupported,
+				program.funcs[id].name,
+			)
+			return .Unsupported_Instruction
+		}
+	}
+	return .None
+}
+
+@(private)
+make_types :: proc(ctx: llvm.LLVMContextRef) -> (types: Types) {
+	types = Types {
+		void   = llvm.LLVMVoidTypeInContext(ctx),
+		double = llvm.LLVMDoubleTypeInContext(ctx),
+		int1   = llvm.LLVMInt1TypeInContext(ctx),
+		int8   = llvm.LLVMInt8TypeInContext(ctx),
+		int16  = llvm.LLVMInt16TypeInContext(ctx),
+		int32  = llvm.LLVMInt32TypeInContext(ctx),
+		int64  = llvm.LLVMInt64TypeInContext(ctx),
+		ptr    = llvm.LLVMPointerTypeInContext(ctx, 0),
+	}
+	// A named struct, so the text of a tagged value reads as one thing in -emit-llvm output.
+	TAGGED :: "tsnc.tagged"
+	types.tagged = llvm.LLVMStructCreateNamed(ctx, TAGGED)
+	words := [2]llvm.LLVMTypeRef{types.int64, types.int64}
+	llvm.LLVMStructSetBody(types.tagged, &words[0], len(words), false)
+	return
+}
+
+// value_type is how a value of the IR type sits in a register.
+@(private)
+value_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
+	switch type.kind {
+	case .Void:
+		return m.types.void
+	case .F64:
+		return m.types.double
+	case .Bool:
+		return m.types.int1
+	case .Tagged:
+		return m.types.tagged
+	case .Str, .Closure, .Ref:
+		// Opaque pointers: a reference is the address of a cell, and its layout is compile time
+		// knowledge that never reaches the LLVM type.
+		return m.types.ptr
+	}
+	unreachable()
+}
+
+// storage_type is how a value of the IR type sits in memory. Only a boolean differs: abi stores it
+// as b64, in a slot, in a tagged payload and in a runtime argument alike, so one rule holds
+// everywhere - i1 in a register, i64 in memory.
+@(private)
+storage_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
+	if type.kind == .Bool {
+		return m.types.int64
+	}
+	return value_type(m, type)
 }
 
 // declare_runtime declares every export of abi.RUNTIME_EXPORTS, so generated code calls the runtime
@@ -60,8 +167,9 @@ add_hello_world :: proc(ctx: llvm.LLVMContextRef, module: llvm.LLVMModuleRef) {
 declare_runtime :: proc(
 	ctx: llvm.LLVMContextRef,
 	module: llvm.LLVMModuleRef,
+	types: Types,
 ) -> (
-	functions: [abi.Runtime_Proc]Runtime_Function,
+	functions: [abi.Runtime_Proc]Function,
 ) {
 	NORETURN :: "noreturn"
 	noreturn := llvm.LLVMCreateEnumAttribute(
@@ -73,10 +181,10 @@ declare_runtime :: proc(
 	for export, id in exports {
 		params := make([]llvm.LLVMTypeRef, len(export.params), context.temp_allocator)
 		for param, i in export.params {
-			params[i] = c_type(ctx, param)
+			params[i] = c_type(types, param)
 		}
 		signature := llvm.LLVMFunctionType(
-			c_type(ctx, export.result),
+			c_type(types, export.result),
 			raw_data(params),
 			u32(len(params)),
 			false,
@@ -92,63 +200,182 @@ declare_runtime :: proc(
 }
 
 @(private)
-c_type :: proc(ctx: llvm.LLVMContextRef, kind: abi.C_Type) -> llvm.LLVMTypeRef {
+c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 	switch kind {
 	case .Void:
-		return llvm.LLVMVoidTypeInContext(ctx)
+		return types.void
 	case .Ptr:
-		return llvm.LLVMPointerTypeInContext(ctx, 0)
+		return types.ptr
 	case .Number:
-		return llvm.LLVMDoubleTypeInContext(ctx)
+		return types.double
 	case .Boolean:
 		// b64, so the call site widens its i1 and no export depends on how a C ABI passes a
 		// narrower boolean.
-		return llvm.LLVMInt64TypeInContext(ctx)
+		return types.int64
 	}
 	unreachable()
 }
 
-// add_string_cell adds a String_Cell holding text as UTF-16 and returns its global. The cell is
+// declare_funcs declares every function of the program and answers the call target of each. Only
+// tsnc_main leaves the object file, because the runtime calls it; the rest of the unit is internal,
+// which in v1 - one unit holding the whole program - lets the optimizer see all of it. A function
+// outside the unit stays an external declaration, which is what v2 needs when a call crosses units.
+@(private)
+declare_funcs :: proc(m: ^Module, unit: ir.Unit) {
+	m.funcs = make([]Function, len(m.program.funcs), context.temp_allocator)
+	in_unit := make([]bool, len(m.program.funcs), context.temp_allocator)
+	for id in unit.funcs {
+		in_unit[id] = true
+	}
+	for body, i in m.program.funcs {
+		id := ir.Func_ID(i)
+		signature := func_signature(m, body)
+		name := strings.clone_to_cstring(body.name, context.temp_allocator)
+		function := llvm.LLVMAddFunction(m.module, name, signature)
+		if in_unit[id] && id != m.program.main {
+			llvm.LLVMSetLinkage(function, .LLVMInternalLinkage)
+		}
+		m.funcs[id] = {signature, function}
+	}
+}
+
+// func_signature is the LLVM type of an IR function. A function that captures takes its environment
+// ahead of the TypeScript parameters, which is the closure convention of abi.
+@(private)
+func_signature :: proc(m: ^Module, body: ir.Func) -> llvm.LLVMTypeRef {
+	first := 1 if body.env != ir.NO_LAYOUT else 0
+	params := make([]llvm.LLVMTypeRef, first + len(body.params), context.temp_allocator)
+	if first == 1 {
+		params[0] = m.types.ptr
+	}
+	for type, i in body.params {
+		params[first + i] = value_type(m, type)
+	}
+	return llvm.LLVMFunctionType(
+		value_type(m, body.result),
+		raw_data(params),
+		u32(len(params)),
+		false,
+	)
+}
+
+// add_globals gives every module binding a zero filled cell in the data segment. The zero is load
+// bearing: abi.Tag.Undefined is zero, so a tagged binding reads as undefined before its module init
+// has run, and a reference reads as null.
+@(private)
+add_globals :: proc(m: ^Module) {
+	m.globals = make([]llvm.LLVMValueRef, len(m.program.globals), context.temp_allocator)
+	for binding, i in m.program.globals {
+		type := storage_type(m, binding.type)
+		name := strings.clone_to_cstring(binding.name, context.temp_allocator)
+		global := llvm.LLVMAddGlobal(m.module, type, name)
+		llvm.LLVMSetInitializer(global, llvm.LLVMConstNull(type))
+		llvm.LLVMSetLinkage(global, .LLVMInternalLinkage)
+		m.globals[i] = global
+	}
+}
+
+// add_string_cells writes the string pool into read-only data, one abi.String_Cell per entry. The
+// units are emitted as the pool holds them: it keeps a lone surrogate that no UTF-8 round trip
+// would survive.
+@(private)
+add_string_cells :: proc(m: ^Module) {
+	m.string_cells = make([]llvm.LLVMValueRef, len(m.program.strings), context.temp_allocator)
+	for units, i in m.program.strings {
+		m.string_cells[i] = add_string_cell(m, units)
+	}
+}
+
+// add_string_cell adds a String_Cell holding the units and returns its global. The cell is
 // constant: it lives in read-only data, and the GC never marks it (see abi).
 @(private)
-add_string_cell :: proc(
-	ctx: llvm.LLVMContextRef,
-	module: llvm.LLVMModuleRef,
-	text: string,
-) -> llvm.LLVMValueRef {
-	// UTF-8 never takes fewer bytes than UTF-16 takes units, so len(text) units are enough.
-	units := make([]u16, len(text), context.temp_allocator)
-	units = units[:utf16.encode_string(units, text)]
-
-	i16_type := llvm.LLVMInt16TypeInContext(ctx)
+add_string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
 	unit_values := make([]llvm.LLVMValueRef, len(units), context.temp_allocator)
-	for u, i in units {
-		unit_values[i] = llvm.LLVMConstInt(i16_type, u64(u), false)
+	for unit, i in units {
+		unit_values[i] = llvm.LLVMConstInt(m.types.int16, u64(unit), false)
 	}
 
-	i32_type := llvm.LLVMInt32TypeInContext(ctx)
-	i64_type := llvm.LLVMInt64TypeInContext(ctx)
 	field_types := [?]llvm.LLVMTypeRef {
-		i32_type,
-		i32_type,
-		i64_type,
-		llvm.LLVMArrayType2(i16_type, u64(len(units))),
+		m.types.int32,
+		m.types.int32,
+		m.types.int64,
+		llvm.LLVMArrayType2(m.types.int16, u64(len(units))),
 	}
 	fields := [?]llvm.LLVMValueRef {
-		llvm.LLVMConstInt(i32_type, u64(abi.Builtin_Table.String), false), // header.type_table
-		llvm.LLVMConstInt(i32_type, 0, false), // header.flags: none
-		llvm.LLVMConstInt(i64_type, u64(len(units)), false), // length
-		llvm.LLVMConstArray2(i16_type, raw_data(unit_values), u64(len(unit_values))), // units
+		llvm.LLVMConstInt(m.types.int32, u64(abi.Builtin_Table.String), false), // header.type_table
+		llvm.LLVMConstInt(m.types.int32, 0, false), // header.flags: none
+		llvm.LLVMConstInt(m.types.int64, u64(len(units)), false), // length
+		llvm.LLVMConstArray2(m.types.int16, raw_data(unit_values), u64(len(unit_values))), // units
 	}
-	cell_type := llvm.LLVMStructTypeInContext(ctx, &field_types[0], len(field_types), false)
-	cell := llvm.LLVMAddGlobal(module, cell_type, "str")
+	cell_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
+	cell := llvm.LLVMAddGlobal(m.module, cell_type, "str")
 	llvm.LLVMSetInitializer(
 		cell,
-		llvm.LLVMConstStructInContext(ctx, &fields[0], len(fields), false),
+		llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false),
 	)
 	llvm.LLVMSetGlobalConstant(cell, true)
 	llvm.LLVMSetLinkage(cell, .LLVMPrivateLinkage)
 	llvm.LLVMSetUnnamedAddress(cell, .LLVMGlobalUnnamedAddr)
 	llvm.LLVMSetAlignment(cell, align_of(abi.String_Cell))
 	return cell
+}
+
+// add_fail_sites writes one constant abi.Fail_Site per site the program can reach, which is what
+// tsnc_fail reads to print where the program failed. The paths are shared: a program has many more
+// sites than files.
+@(private)
+add_fail_sites :: proc(m: ^Module) {
+	m.fail_sites = make([]llvm.LLVMValueRef, len(m.program.fail_sites), context.temp_allocator)
+	paths := make(map[string]llvm.LLVMValueRef, context.temp_allocator)
+
+	field_types := [?]llvm.LLVMTypeRef {
+		m.types.ptr,
+		m.types.int64,
+		m.types.int32,
+		m.types.int32,
+		m.types.int32,
+	}
+	site_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
+
+	for site, i in m.program.fail_sites {
+		path, known := paths[site.file]
+		if !known {
+			path = add_text(m, site.file)
+			paths[site.file] = path
+		}
+		fields := [?]llvm.LLVMValueRef {
+			path,
+			llvm.LLVMConstInt(m.types.int64, u64(len(site.file)), false),
+			llvm.LLVMConstInt(m.types.int32, u64(site.line), true),
+			llvm.LLVMConstInt(m.types.int32, u64(site.column), true),
+			llvm.LLVMConstInt(m.types.int32, u64(site.error), false),
+		}
+		global := llvm.LLVMAddGlobal(m.module, site_type, "fail_site")
+		llvm.LLVMSetInitializer(
+			global,
+			llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false),
+		)
+		llvm.LLVMSetGlobalConstant(global, true)
+		llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
+		llvm.LLVMSetUnnamedAddress(global, .LLVMGlobalUnnamedAddr)
+		llvm.LLVMSetAlignment(global, align_of(abi.Fail_Site))
+		m.fail_sites[i] = global
+	}
+}
+
+// add_text adds the bytes of an Odin string, without a terminator: the runtime reads the length
+// from the value that points here.
+@(private)
+add_text :: proc(m: ^Module, text: string) -> llvm.LLVMValueRef {
+	bytes := llvm.LLVMConstStringInContext(m.ctx, raw_data(text), u32(len(text)), true)
+	global := llvm.LLVMAddGlobal(
+		m.module,
+		llvm.LLVMArrayType2(m.types.int8, u64(len(text))),
+		"text",
+	)
+	llvm.LLVMSetInitializer(global, bytes)
+	llvm.LLVMSetGlobalConstant(global, true)
+	llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
+	llvm.LLVMSetUnnamedAddress(global, .LLVMGlobalUnnamedAddr)
+	return global
 }

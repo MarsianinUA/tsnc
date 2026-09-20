@@ -235,7 +235,7 @@ Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundari
 After: T4.2, T3.6.
 Done: the IR dump for programs with loops and `switch` passes the verifier; a test checks that the strategy table covers all names from the lib file.
 
-### [ ] T4.4 `codegen` from IR
+### [x] T4.4 `codegen` from IR
 
 What: mapping of IR types to LLVM (tagged as a struct of two 64-bit words, references as pointers), instructions one to one, `phi`; runtime function declarations from `abi`; `llvm.*.f64` intrinsics and libm; static string cells; pass pipeline by level; `-disable-lsr`; object and `.ll`; `Unit` as a slice of functions; remove the hello world stub from T1.6.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `codegen`; [Interaction map](architecture-plan-tsnc.md#interaction-map); requirements §4.1 item 5, §4.2, §6 (LSR).

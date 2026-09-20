@@ -9,19 +9,17 @@ import "core:testing"
 import "../../src/codegen"
 import "../../src/target"
 
-// The test runner runs tests on a thread pool, so LLVM's process-global setup happens once before
-// the pool starts, the way driver sets it up before its own pool.
-@(init)
-init_llvm :: proc "contextless" () {
-	codegen.init_global_options()
-}
+// HELLO is the line the linked tests expect on stdout; tests/link and tests/runner print the same.
+HELLO :: "Hello, world!"
 
 // dist/hello.obj and dist/hello.ll are the same module as an object file and as text.
 @(test)
-hello_world_writes_object_and_llvm_ir :: proc(t: ^testing.T) {
-	object_err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .Object, "dist/hello.obj")
+a_program_writes_an_object_and_llvm_ir :: proc(t: ^testing.T) {
+	output := hello_program(HELLO)
+	unit := output.units[0]
+	object_err := codegen.emit(&output, unit, target.HOST, .speed, .Object, "dist/hello.obj")
 	testing.expect_value(t, object_err, codegen.Error.None)
-	ir_err := codegen.emit(codegen.Unit{}, target.HOST, .speed, .LLVM_IR, "dist/hello.ll")
+	ir_err := codegen.emit(&output, unit, target.HOST, .speed, .LLVM_IR, "dist/hello.ll")
 	testing.expect_value(t, ir_err, codegen.Error.None)
 
 	object, object_read_err := os.read_entire_file("dist/hello.obj", context.allocator)
@@ -38,63 +36,43 @@ hello_world_writes_object_and_llvm_ir :: proc(t: ^testing.T) {
 		fmt.tprintf("target triple = \"%s\"", target.SPECS[target.HOST].triple),
 		"define void @tsnc_main()",
 		"call void @tsnc_log_string(ptr",
-		// HELLO_WORLD as an abi.String_Cell in read-only data: the String type table, no flags,
+		// HELLO as an abi.String_Cell in read-only data: the String type table, no flags,
 		// 13 UTF-16 units.
 		"private unnamed_addr constant { i32, i32, i64, [13 x i16] } { i32 0, i32 0, i64 13,",
 		"[13 x i16] [i16 72, i16 101, i16 108, i16 108, i16 111, i16 44, i16 32, i16 119,",
 		"i16 111, i16 114, i16 108, i16 100, i16 33] }, align 8",
 	}
-	for want in wants {
-		testing.expectf(
-			t,
-			strings.contains(string(ir), want),
-			"dist/hello.ll lacks %q:\n%s",
-			want,
-			string(ir),
-		)
-	}
+	expect_text(t, string(ir), wants)
 }
 
 // tsnc_fail never returns, so LLVM may treat the code after its call as unreachable. Level none
-// keeps the declaration: the stub does not call tsnc_fail, and the optimizer drops it.
+// keeps the declaration: this program does not call tsnc_fail, and the optimizer drops it.
 @(test)
 diverging_export_is_declared_noreturn :: proc(t: ^testing.T) {
-	path := "dist/codegen-noreturn.ll"
-	err := codegen.emit(codegen.Unit{}, target.HOST, .none, .LLVM_IR, path)
-	if !testing.expect_value(t, err, codegen.Error.None) {
-		return
-	}
-	ir, read_err := os.read_entire_file(path, context.allocator)
-	defer delete(ir)
-	if !testing.expectf(t, read_err == nil, "read %s: %v", path, read_err) {
+	output := hello_program(HELLO)
+	text := llvm_text(t, &output, "noreturn")
+	if text == "" {
 		return
 	}
 	// On Windows LLVM writes the text with CRLF, so the patterns stop short of the line end.
 	wants := []string{"declare void @tsnc_fail(ptr) #0", "attributes #0 = { noreturn }"}
-	for want in wants {
-		testing.expectf(
-			t,
-			strings.contains(string(ir), want),
-			"%s lacks %q:\n%s",
-			path,
-			want,
-			string(ir),
-		)
-	}
+	expect_text(t, text, wants)
+
 	returning := "declare void @tsnc_log_string(ptr) #"
 	testing.expectf(
 		t,
-		!strings.contains(string(ir), returning),
+		!strings.contains(text, returning),
 		"tsnc_log_string has attributes:\n%s",
-		string(ir),
+		text,
 	)
 }
 
 @(test)
 every_level_emits_an_object :: proc(t: ^testing.T) {
+	output := hello_program(HELLO)
 	for level in codegen.Optimization {
 		path := fmt.tprintf("dist/codegen-%v.obj", level)
-		err := codegen.emit(codegen.Unit{}, target.HOST, level, .Object, path)
+		err := codegen.emit(&output, output.units[0], target.HOST, level, .Object, path)
 		testing.expectf(t, err == .None, "%v: %v", level, err)
 	}
 }
@@ -111,6 +89,7 @@ every_supported_target_emits_its_object_format :: proc(t: ^testing.T) {
 		.darwin_arm64  = "\xcf\xfa\xed\xfe",
 		.darwin_amd64  = "\xcf\xfa\xed\xfe",
 	}
+	output := hello_program(HELLO)
 	for id in target.Target {
 		if !target.supported(id) {
 			continue
@@ -119,7 +98,7 @@ every_supported_target_emits_its_object_format :: proc(t: ^testing.T) {
 			continue
 		}
 		path := fmt.tprintf("dist/codegen-%v.obj", id)
-		err := codegen.emit(codegen.Unit{}, id, .speed, .Object, path)
+		err := codegen.emit(&output, output.units[0], id, .speed, .Object, path)
 		if !testing.expectf(t, err == .None, "%v: %v", id, err) {
 			continue
 		}
@@ -138,14 +117,16 @@ every_supported_target_emits_its_object_format :: proc(t: ^testing.T) {
 
 @(test)
 target_without_a_row_is_unsupported :: proc(t: ^testing.T) {
+	output := hello_program(HELLO)
 	path := "dist/codegen-wasm32_wasi.obj"
-	err := codegen.emit(codegen.Unit{}, .wasm32_wasi, .speed, .Object, path)
+	err := codegen.emit(&output, output.units[0], .wasm32_wasi, .speed, .Object, path)
 	testing.expect_value(t, err, codegen.Error.Unsupported_Target)
 	testing.expectf(t, !os.exists(path), "%s was written", path)
 }
 
 @(test)
 missing_directory_is_a_write_error :: proc(t: ^testing.T) {
+	output := hello_program(HELLO)
 	for artifact in codegen.Artifact {
 		path := fmt.tprintf("dist/codegen-missing-directory/hello-%v", artifact)
 		err: codegen.Error
@@ -153,7 +134,7 @@ missing_directory_is_a_write_error :: proc(t: ^testing.T) {
 			// emit logs LLVM's reason at error level, and the test runner fails a test on any
 			// error log. The scope keeps the expects below on the runner's logger.
 			context.logger = log.nil_logger()
-			err = codegen.emit(codegen.Unit{}, target.HOST, .speed, artifact, path)
+			err = codegen.emit(&output, output.units[0], target.HOST, .speed, artifact, path)
 		}
 		testing.expectf(t, err == .Write_Failed, "%v: %v", artifact, err)
 	}

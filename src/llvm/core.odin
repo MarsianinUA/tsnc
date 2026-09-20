@@ -34,6 +34,38 @@ LLVMUnnamedAddr :: enum i32 {
 	LLVMGlobalUnnamedAddr = 2,
 }
 
+LLVMIntPredicate :: enum i32 {
+	LLVMIntEQ  = 32,
+	LLVMIntNE  = 33,
+	LLVMIntUGT = 34,
+	LLVMIntUGE = 35,
+	LLVMIntULT = 36,
+	LLVMIntULE = 37,
+	LLVMIntSGT = 38,
+	LLVMIntSGE = 39,
+	LLVMIntSLT = 40,
+	LLVMIntSLE = 41,
+}
+
+LLVMRealPredicate :: enum i32 {
+	LLVMRealPredicateFalse = 0,
+	LLVMRealOEQ            = 1,
+	LLVMRealOGT            = 2,
+	LLVMRealOGE            = 3,
+	LLVMRealOLT            = 4,
+	LLVMRealOLE            = 5,
+	LLVMRealONE            = 6,
+	LLVMRealORD            = 7,
+	LLVMRealUNO            = 8,
+	LLVMRealUEQ            = 9,
+	LLVMRealUGT            = 10,
+	LLVMRealUGE            = 11,
+	LLVMRealULT            = 12,
+	LLVMRealULE            = 13,
+	LLVMRealUNE            = 14,
+	LLVMRealPredicateTrue  = 15,
+}
+
 LLVMAttributeIndex :: u32
 
 LLVMAttributeReturnIndex :: LLVMAttributeIndex(0)
@@ -57,6 +89,7 @@ foreign lib {
 	LLVMPrintModuleToString :: proc(M: LLVMModuleRef) -> cstring ---
 	LLVMAddFunction :: proc(M: LLVMModuleRef, Name: cstring, FunctionTy: LLVMTypeRef) -> LLVMValueRef ---
 
+	LLVMInt1TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMInt8TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMInt16TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMInt32TypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
@@ -64,14 +97,27 @@ foreign lib {
 	LLVMDoubleTypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 	LLVMFunctionType :: proc(ReturnType: LLVMTypeRef, ParamTypes: [^]LLVMTypeRef, ParamCount: u32, IsVarArg: LLVMBool) -> LLVMTypeRef ---
 	LLVMStructTypeInContext :: proc(C: LLVMContextRef, ElementTypes: [^]LLVMTypeRef, ElementCount: u32, Packed: LLVMBool) -> LLVMTypeRef ---
+	LLVMStructCreateNamed :: proc(C: LLVMContextRef, Name: cstring) -> LLVMTypeRef ---
+	LLVMStructSetBody :: proc(StructTy: LLVMTypeRef, ElementTypes: [^]LLVMTypeRef, ElementCount: u32, Packed: LLVMBool) ---
 	LLVMArrayType2 :: proc(ElementType: LLVMTypeRef, ElementCount: u64) -> LLVMTypeRef ---
 	LLVMPointerTypeInContext :: proc(C: LLVMContextRef, AddressSpace: u32) -> LLVMTypeRef ---
 	LLVMVoidTypeInContext :: proc(C: LLVMContextRef) -> LLVMTypeRef ---
 
 	LLVMConstNull :: proc(Ty: LLVMTypeRef) -> LLVMValueRef ---
+	LLVMGetUndef :: proc(Ty: LLVMTypeRef) -> LLVMValueRef ---
 	LLVMConstInt :: proc(IntTy: LLVMTypeRef, N: u64, SignExtend: LLVMBool) -> LLVMValueRef ---
+	LLVMConstReal :: proc(RealTy: LLVMTypeRef, N: f64) -> LLVMValueRef ---
+	LLVMConstStringInContext :: proc(C: LLVMContextRef, Str: [^]u8, Length: u32, DontNullTerminate: LLVMBool) -> LLVMValueRef ---
 	LLVMConstStructInContext :: proc(C: LLVMContextRef, ConstantVals: [^]LLVMValueRef, Count: u32, Packed: LLVMBool) -> LLVMValueRef ---
+	LLVMConstNamedStruct :: proc(StructTy: LLVMTypeRef, ConstantVals: [^]LLVMValueRef, Count: u32) -> LLVMValueRef ---
 	LLVMConstArray2 :: proc(ElementTy: LLVMTypeRef, ConstantVals: [^]LLVMValueRef, Length: u64) -> LLVMValueRef ---
+
+	// Intrinsics. LLVMLookupIntrinsicID answers 0 for a name this LLVM does not know, which is how
+	// codegen decides between an intrinsic and a libm call. An overloaded intrinsic takes the types
+	// it is overloaded on in ParamTypes, and both procedures mangle the name from them.
+	LLVMLookupIntrinsicID :: proc(Name: [^]u8, NameLen: uint) -> u32 ---
+	LLVMGetIntrinsicDeclaration :: proc(Mod: LLVMModuleRef, ID: u32, ParamTypes: [^]LLVMTypeRef, ParamCount: uint) -> LLVMValueRef ---
+	LLVMIntrinsicGetType :: proc(Ctx: LLVMContextRef, ID: u32, ParamTypes: [^]LLVMTypeRef, ParamCount: uint) -> LLVMTypeRef ---
 
 	LLVMSetLinkage :: proc(Global: LLVMValueRef, Linkage: LLVMLinkage) ---
 	LLVMSetUnnamedAddress :: proc(Global: LLVMValueRef, UnnamedAddr: LLVMUnnamedAddr) ---
@@ -81,6 +127,7 @@ foreign lib {
 	LLVMSetGlobalConstant :: proc(GlobalVar: LLVMValueRef, IsConstant: LLVMBool) ---
 
 	LLVMAddAttributeAtIndex :: proc(F: LLVMValueRef, Idx: LLVMAttributeIndex, A: LLVMAttributeRef) ---
+	LLVMGetParam :: proc(Fn: LLVMValueRef, Index: u32) -> LLVMValueRef ---
 	LLVMAppendBasicBlockInContext :: proc(C: LLVMContextRef, Fn: LLVMValueRef, Name: cstring) -> LLVMBasicBlockRef ---
 
 	LLVMCreateBuilderInContext :: proc(C: LLVMContextRef) -> LLVMBuilderRef ---
@@ -90,6 +137,42 @@ foreign lib {
 	LLVMBuildRetVoid :: proc(B: LLVMBuilderRef) -> LLVMValueRef ---
 	LLVMBuildRet :: proc(B: LLVMBuilderRef, V: LLVMValueRef) -> LLVMValueRef ---
 	LLVMBuildCall2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Fn: LLVMValueRef, Args: [^]LLVMValueRef, NumArgs: u32, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildBr :: proc(B: LLVMBuilderRef, Dest: LLVMBasicBlockRef) -> LLVMValueRef ---
+	LLVMBuildCondBr :: proc(B: LLVMBuilderRef, If: LLVMValueRef, Then: LLVMBasicBlockRef, Else: LLVMBasicBlockRef) -> LLVMValueRef ---
+	LLVMBuildUnreachable :: proc(B: LLVMBuilderRef) -> LLVMValueRef ---
+
+	LLVMBuildFAdd :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFSub :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFMul :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFDiv :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFRem :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFNeg :: proc(B: LLVMBuilderRef, V: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildShl :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildLShr :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildAShr :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildAnd :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildOr :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildXor :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildNot :: proc(B: LLVMBuilderRef, V: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+
+	LLVMBuildICmp :: proc(B: LLVMBuilderRef, Op: LLVMIntPredicate, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFCmp :: proc(B: LLVMBuilderRef, Op: LLVMRealPredicate, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildPhi :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMAddIncoming :: proc(PhiNode: LLVMValueRef, IncomingValues: [^]LLVMValueRef, IncomingBlocks: [^]LLVMBasicBlockRef, Count: u32) ---
+	LLVMBuildSelect :: proc(B: LLVMBuilderRef, If: LLVMValueRef, Then: LLVMValueRef, Else: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+
+	LLVMBuildLoad2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, PointerVal: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildStore :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, Ptr: LLVMValueRef) -> LLVMValueRef ---
+	LLVMBuildExtractValue :: proc(B: LLVMBuilderRef, AggVal: LLVMValueRef, Index: u32, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildInsertValue :: proc(B: LLVMBuilderRef, AggVal: LLVMValueRef, EltVal: LLVMValueRef, Index: u32, Name: cstring) -> LLVMValueRef ---
+
+	LLVMBuildTrunc :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildZExt :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildSIToFP :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildUIToFP :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildPtrToInt :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildIntToPtr :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildBitCast :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 
 	LLVMGetBufferSize :: proc(MemBuf: LLVMMemoryBufferRef) -> uint ---
 	LLVMDisposeMemoryBuffer :: proc(MemBuf: LLVMMemoryBufferRef) ---
