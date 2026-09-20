@@ -243,16 +243,29 @@ read_artifact :: proc(t: ^testing.T, path: string, loc := #caller_location) -> s
 // expect_no_leftovers checks that the build left nothing beside its artifact: the temporary file
 // it wrote before the rename, and the object file an executable passes through, both carry the
 // artifact's name and a process id.
+//
+// It walks the directory rather than reading it whole. Every test here writes into the one
+// directory beside the test executable and the runner runs them on a thread pool, so another test's
+// build renames its own `<output>.<pid>.tmp` into place while this walk is going. That entry is
+// gone by the time the walk stats it, and read_all_directory_by_path turns the one missing entry
+// into a failure of the whole read: on the arm64 CI runner it read as "dist: Not_Exist", as though
+// the directory itself were missing. An entry that vanishes is never the one being checked, since
+// every test names its artifact differently, so the walk passes over it.
 @(private = "file")
 expect_no_leftovers :: proc(t: ^testing.T, artifact: string, loc := #caller_location) {
 	directory := os.dir(artifact)
-	entries, err := os.read_all_directory_by_path(directory, context.temp_allocator)
-	if !testing.expectf(t, err == nil, "read %s: %v", directory, err, loc = loc) {
+	handle, open_err := os.open(directory)
+	if !testing.expectf(t, open_err == nil, "open %s: %v", directory, open_err, loc = loc) {
 		return
 	}
+	defer os.close(handle)
+
+	it := os.read_directory_iterator_create(handle)
+	defer os.read_directory_iterator_destroy(&it)
 
 	name := os.base(artifact)
-	for entry in entries {
+	for entry in os.read_directory_iterator(&it) {
+		// An entry the walk could not stat arrives empty, and no name of ours matches that.
 		if entry.name == name || !strings.has_prefix(entry.name, name) {
 			continue
 		}
