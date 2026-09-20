@@ -8,10 +8,11 @@ any file of the program, though, because a name used in its partition may be dec
 the answer for a file does not depend on how the program was split. In v1 driver passes one
 partition holding every file; T6.2 runs several calls at once.
 
-Tables: node_types and node_symbols of a Typed_File are as long as the file's tree.nodes and hold a
-fact of a node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed.
-An ast.Ident holds the symbol it names, which is bind's answer when the file declares the name and
-check's own when the name comes from the lib module.
+Tables: the three tables of a Typed_File are as long as the file's tree.nodes and hold a fact of a
+node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed. An ast.Ident
+holds the symbol it names, which is bind's answer when the file declares the name and check's own
+when the name comes from the lib module; an ast.Type_Ref holds the same for a type name. A call holds
+the signature it settled on, once the overload was picked and the type variables worked out.
 
 Order: a declaration is typed once, the first time anything asks for it, and the answer is cached by
 symbol. The walk over the statements asks for the same thing, so a name used above its declaration
@@ -21,10 +22,11 @@ a function is read where its type is worked out, and not where the walk reaches 
 Types: every type is interned in the table of this call, so a Type_ID is meaningful only together
 with Check_Result.types. See types.odin.
 
-What this task types: primitives, literal types, unions, functions and arrows, and the expressions
-built out of them. Objects, arrays and the generic built-in types (T3.3), narrowing through the flow
-graph (T3.4) and names imported from another module (T3.5) are not here yet: a construct one of
-them owns gets the error type and no diagnostic, because the error type is assignable in both
+What this task types: primitives, literal types, unions, functions and arrows; objects under the
+exact-type rule of requirements 3.3, arrays, `interface` and `type`, contextual typing, and the
+generic signatures of the built-in types, which is the whole of src/lib/lib.d.ts. Narrowing through
+the flow graph (T3.4) and names imported from another module (T3.5) are not here yet: a construct
+one of them owns gets the error type and no diagnostic, because the error type is assignable in both
 directions and so nothing cascades from it. Constructs the compiler will never support are rejected
 in parse with a T2xxx code and never reach here.
 
@@ -53,9 +55,13 @@ Symbol_Ref :: struct {
 
 // Typed_File is what check learned about one file.
 Typed_File :: struct {
-	file:         source.File_ID,
-	node_types:   []Type_ID, // as long as tree.nodes; ERROR where a node has no type of its own
-	node_symbols: []Symbol_Ref, // as long as tree.nodes; what an ast.Ident names
+	file:            source.File_ID,
+	node_types:      []Type_ID, // as long as tree.nodes; ERROR where a node has no type of its own
+	node_symbols:    []Symbol_Ref, // as long as tree.nodes; what an ast.Ident names
+	// As long as tree.nodes. For an ast.Call it is the signature the call settled on, after the
+	// overload was picked and any type variable worked out; ERROR on every other node. lower reads
+	// the answer instead of working it out again.
+	node_signatures: []Type_ID,
 }
 
 // Check_Result is the frozen answer of one call. Its Type_ID values index its own types and mean
@@ -85,6 +91,9 @@ check :: proc(
 		in_partition = make([]bool, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
 		resolving    = make(map[Symbol_Ref]bool, context.temp_allocator),
+		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
+		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
+		trail        = make(Trail, 0, 8, context.temp_allocator),
 		diagnostics  = make([dynamic]diag.Diagnostic, allocator),
 	}
 	defer free_scratch(&c)
@@ -124,6 +133,17 @@ Checker :: struct {
 	// The symbols whose type is being worked out right now. A declaration that needs its own type
 	// finds itself here, which is the only way that search could fail to end.
 	resolving:    map[Symbol_Ref]bool,
+	// The type arguments in force while the members of a generic lib declaration are read: `T` of
+	// `Array<T>` stands for `number` while `Array<number>` is built. Saved and restored around one
+	// instantiation, so a nested one cannot see the outer bindings.
+	bindings:     map[Decl_Ref]Type_ID,
+	// The type aliases being resolved right now. An alias is transparent, so one that names itself
+	// has nothing to stand for; an interface needs no guard, because its row is reserved first.
+	aliases:      map[Decl_Ref]bool,
+	// The lib declarations check has to know by name rather than by use. Filled on first use.
+	lib:          Lib_Types,
+	// The buffer fits compares object types in. See Trail.
+	trail:        Trail,
 	diagnostics:  [dynamic]diag.Diagnostic,
 	at:           Place,
 }
@@ -132,18 +152,19 @@ Checker :: struct {
 // A symbol declared in another file moves the checker there and back.
 @(private)
 Place :: struct {
-	file:         source.File_ID,
-	tree:         ^ast.File_AST,
-	bound:        ^bind.Bound_File,
+	file:            source.File_ID,
+	tree:            ^ast.File_AST,
+	bound:           ^bind.Bound_File,
 	// The fact tables of that file, or nil when the file is not in this partition. check reads such
 	// a file to learn a type, but its facts belong to the checker that owns it, so a write is
 	// dropped instead of going somewhere wrong.
-	node_types:   []Type_ID,
-	node_symbols: []Symbol_Ref,
+	node_types:      []Type_ID,
+	node_symbols:    []Symbol_Ref,
+	node_signatures: []Type_ID,
 	// The declared result of the function being typed. While a result is being inferred instead,
 	// returns collects what its `return` statements gave and result says nothing.
-	result:       Type_ID,
-	returns:      ^[dynamic]Type_ID,
+	result:          Type_ID,
+	returns:         ^[dynamic]Type_ID,
 }
 
 // check_file types one file of the partition from its root down.
@@ -151,19 +172,25 @@ Place :: struct {
 check_file :: proc(c: ^Checker, file: source.File_ID) -> Typed_File {
 	tree := &c.program.trees[file]
 	c.at = Place {
-		file         = file,
-		tree         = tree,
-		bound        = &c.program.bound[file],
-		node_types   = make([]Type_ID, len(tree.nodes), c.allocator),
-		node_symbols = make([]Symbol_Ref, len(tree.nodes), c.allocator),
-		result       = ERROR,
+		file            = file,
+		tree            = tree,
+		bound           = &c.program.bound[file],
+		node_types      = make([]Type_ID, len(tree.nodes), c.allocator),
+		node_symbols    = make([]Symbol_Ref, len(tree.nodes), c.allocator),
+		node_signatures = make([]Type_ID, len(tree.nodes), c.allocator),
+		result          = ERROR,
 	}
 
 	module, is_module := tree.nodes[ast.ROOT].variant.(ast.Module)
 	ensure(is_module, "the root of a File_AST is its Module")
 	check_statements(c, module.statements)
 
-	return {file = file, node_types = c.at.node_types, node_symbols = c.at.node_symbols}
+	return {
+		file = file,
+		node_types = c.at.node_types,
+		node_symbols = c.at.node_symbols,
+		node_signatures = c.at.node_signatures,
+	}
 }
 
 // move_to points the checker at another file, with no fact tables, and answers with the place to
@@ -181,6 +208,7 @@ move_to :: proc(c: ^Checker, file: source.File_ID) -> (previous: Place) {
 		// The same file keeps its tables: the facts are ours to write.
 		c.at.node_types = previous.node_types
 		c.at.node_symbols = previous.node_symbols
+		c.at.node_signatures = previous.node_signatures
 	}
 	return previous
 }
@@ -203,6 +231,9 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.in_partition, context.temp_allocator)
 	delete(c.symbol_types)
 	delete(c.resolving)
+	delete(c.bindings)
+	delete(c.aliases)
+	delete(c.trail)
 	delete(c.table.key.buf)
 }
 
@@ -223,6 +254,14 @@ set_type :: proc(c: ^Checker, id: ast.Node_ID, type: Type_ID) -> Type_ID {
 set_symbol :: proc(c: ^Checker, id: ast.Node_ID, ref: Symbol_Ref) {
 	if c.at.node_symbols != nil {
 		c.at.node_symbols[id] = ref
+	}
+}
+
+// set_signature records the signature a call settled on.
+@(private)
+set_signature :: proc(c: ^Checker, id: ast.Node_ID, signature: Type_ID) {
+	if c.at.node_signatures != nil {
+		c.at.node_signatures[id] = signature
 	}
 }
 
@@ -273,10 +312,13 @@ span_of :: proc(c: ^Checker, id: ast.Node_ID) -> source.Span {
 	return c.at.tree.nodes[id].span
 }
 
-// fits reports whether a value of source may stand where target is expected.
+// fits reports whether a value of source may stand where target is expected. One trail serves the
+// whole check: assignable reads the frozen rows and never calls back here, so no second comparison
+// can be running while this one is.
 @(private)
 fits :: proc(c: ^Checker, source, target: Type_ID) -> bool {
-	return assignable(c.table.types[:], source, target)
+	clear(&c.trail)
+	return assignable(c.table.types[:], source, target, &c.trail)
 }
 
 // union_of is the canonical union of two types, which is what a ternary, a logical operator and an

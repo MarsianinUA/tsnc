@@ -141,19 +141,29 @@ expect_errors :: proc(
 // about inference asks for.
 //
 // A name holds one value and one type, and the lib file uses both of `String` and `Math`, so this
-// asks for the value: a type declaration is T3.3 and has nothing to print yet.
-declared_text :: proc(c: Checked, name: string, file := MAIN) -> string {
+// asks for the value by default; meaning names which one to read, as declared_type_text does.
+declared_text :: proc(
+	c: Checked,
+	name: string,
+	file := MAIN,
+	meaning := bind.Meaning.Value,
+) -> string {
 	typed, ok := check.typed_file(c.result, file)
 	if !ok {
 		return "<not in the partition>"
 	}
 	for symbol in c.program.bound[file].symbols[1:] {
-		is_value := .Value in bind.meanings(symbol.kind)
+		is_value := meaning in bind.meanings(symbol.kind)
 		if is_value && symbol.name.text == name && symbol.declaration != ast.NO_NODE {
 			return type_text(c, typed.node_types[symbol.declaration])
 		}
 	}
 	return "<no such name>"
+}
+
+// declared_type_text is what an `interface` or a `type` alias declares, printed.
+declared_type_text :: proc(c: Checked, name: string, file := MAIN) -> string {
+	return declared_text(c, name, file, .Type)
 }
 
 // use_text is the type of one use of a name: the occurrence-th ast.Ident with that text, counted
@@ -214,6 +224,26 @@ rendered :: proc(c: Checked, index: int) -> string {
 	return strings.to_string(b)
 }
 
+// call_text is the signature the occurrence-th call of the file settled on, printed. It is what a
+// test about an overload or a generic signature asks for.
+call_text :: proc(c: Checked, occurrence := 0, file := MAIN) -> string {
+	typed, ok := check.typed_file(c.result, file)
+	if !ok {
+		return "<not in the partition>"
+	}
+	seen := 0
+	for node, id in c.program.trees[file].nodes {
+		if _, is_call := node.variant.(ast.Call); !is_call {
+			continue
+		}
+		if seen == occurrence {
+			return type_text(c, typed.node_signatures[id])
+		}
+		seen += 1
+	}
+	return "<no such call>"
+}
+
 type_text :: proc(c: Checked, id: check.Type_ID) -> string {
 	return check.type_text(c.result.types, id, context.temp_allocator)
 }
@@ -231,13 +261,15 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 
 	for typed in c.result.files {
 		nodes := len(c.program.trees[typed.file].nodes)
+		lengths := len(typed.node_types) == nodes && len(typed.node_symbols) == nodes
 		testing.expectf(
 			t,
-			len(typed.node_types) == nodes && len(typed.node_symbols) == nodes,
-			"file %d: tables are %d and %d long, want %d",
+			lengths && len(typed.node_signatures) == nodes,
+			"file %d: tables are %d, %d and %d long, want %d",
 			typed.file,
 			len(typed.node_types),
 			len(typed.node_symbols),
+			len(typed.node_signatures),
 			nodes,
 			loc = loc,
 		)
@@ -250,6 +282,21 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 				loc = loc,
 			)
 		}
+		for signature, id in typed.node_signatures {
+			if signature == check.ERROR {
+				continue
+			}
+			_, is_call := c.program.trees[typed.file].nodes[id].variant.(ast.Call)
+			testing.expectf(t, is_call, "a node that is no call settled on a signature", loc = loc)
+			_, is_function := c.result.types[signature].(check.Function)
+			testing.expectf(
+				t,
+				is_function,
+				"a call settled on %s, which is no signature",
+				type_text(c, signature),
+				loc = loc,
+			)
+		}
 		for ref in typed.node_symbols {
 			known :=
 				int(ref.file) < len(c.program.files) &&
@@ -259,6 +306,18 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 	}
 
 	for type in c.result.types {
+		if object, is_object := type.(check.Object); is_object {
+			check_object(t, c, object, loc)
+		}
+		if array, is_array := type.(check.Array); is_array {
+			testing.expectf(
+				t,
+				int(array.element) < len(c.result.types),
+				"an array element is past the end of the table",
+				loc = loc,
+			)
+		}
+
 		union_type, is_union := type.(check.Union)
 		if !is_union {
 			continue
@@ -288,6 +347,32 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 				)
 			}
 		}
+	}
+}
+
+// check_object asserts what lower relies on: the fields are in canonical order, by name, with no
+// name twice, and every field type is a row of the table.
+@(private = "file")
+check_object :: proc(t: ^testing.T, c: Checked, object: check.Object, loc := #caller_location) {
+	for field, i in object.fields {
+		testing.expectf(
+			t,
+			int(field.type) < len(c.result.types),
+			"field `%s` holds a type past the end of the table",
+			field.name,
+			loc = loc,
+		)
+		if i == 0 {
+			continue
+		}
+		testing.expectf(
+			t,
+			object.fields[i - 1].name < field.name,
+			"fields `%s` and `%s` are out of canonical order, or are one name twice",
+			object.fields[i - 1].name,
+			field.name,
+			loc = loc,
+		)
 	}
 }
 

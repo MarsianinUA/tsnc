@@ -43,8 +43,8 @@ a_variable_with_no_type_and_no_value_is_reported :: proc(t: ^testing.T) {
 
 @(test)
 a_parameter_with_no_type_is_reported :: proc(t: ^testing.T) {
-	// T3.3 gives an arrow parameter its type from the call it is written in. Until then, and for
-	// every other parameter, a name with no type is a name nothing can check.
+	// Only an arrow written inside a call takes its parameter types from the signature it goes
+	// into. Everywhere else a name with no type is a name nothing can check.
 	expect_errors(
 		t,
 		`function twice(n): number { return 1; }`,
@@ -96,29 +96,18 @@ a_name_used_above_its_declaration_is_typed_once :: proc(t: ^testing.T) {
 
 @(test)
 a_construct_a_later_task_owns_gets_the_error_type_in_silence :: proc(t: ^testing.T) {
-	// Objects, arrays, members and named types are T3.3, and `console.log` needs them. They must
-	// not fill the screen with messages about work that is not done yet, and the error type is
+	// The element type of a `for...of` is T3.5, with the rest of the control statements. It must not
+	// fill the screen with messages about work that is not done yet, and the error type is
 	// assignable in both directions, so nothing cascades from one.
-	c := expect_checked(
-		t,
-		lines(
-			`interface Point { x: number; y: number; }`, //
-			`type Pair = Point;`,
-			`const origin: Point = { x: 0, y: 0 };`,
-			`const numbers = [1, 2, 3];`,
-			`const first = numbers[0];`,
-			`console.log("hello", 1);`,
-		),
-	)
+	c := expect_checked(t, `for (const n of [1, 2, 3]) { console.log(n); }`)
 
-	testing.expect_value(t, declared_text(c, "origin"), "?")
-	testing.expect_value(t, declared_text(c, "numbers"), "?")
-	testing.expect_value(t, declared_text(c, "first"), "?")
+	testing.expect_value(t, use_text(c, "n"), "?")
 }
 
 @(test)
 a_mistake_inside_a_construct_of_a_later_task_is_still_found :: proc(t: ^testing.T) {
-	// The node has no type yet, but its parts are typed, so nothing hides inside one.
+	// The parts of a construct are typed even where the construct itself is not, so nothing hides
+	// inside one.
 	expect_errors(t, `const numbers = [1, "a" * 2];`, []Error{{.Operand_Not_Number, 1, 21}})
 }
 

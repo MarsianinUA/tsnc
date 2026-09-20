@@ -7,13 +7,23 @@ is row 0 of every table. A parameter name is not part of a function type, as it 
 TypeScript, so two signatures that differ only in their names share one id and print with the names
 of whichever one arrived first.
 
+Named objects: an `interface` is interned by its declaration rather than by its shape, because
+`interface Node { next: Node | undefined }` cannot have its members interned before itself. Its row
+is reserved first and filled once the members are read, so a member that names the object again
+finds the reserved row. Point and Vec2 with the same fields are therefore two ids that fit each
+other in both directions, not one id. An object type written out in place has no declaration and is
+interned by its fields, as every other type is.
+
 The error type: the type of a node that failed. It is assignable in both directions, so one mistake
 produces one diagnostic and not a line of them.
 
 Canonical order: the members of a union are sorted by structure, never by Type_ID. Type_ID values
 follow the order one checker happened to intern things in, while the printed type reaches the user;
 sorting by structure is what makes two checkers over two partitions spell one union the same way,
-whatever `-j` says.
+whatever `-j` says. A named object is the one type that cannot be ordered by structure alone, since
+it may hold itself, and since its fields are not all read yet while it is being reserved; it is
+ordered by the declaration it came from, which is a fact of the Program and so reads the same in
+every partition.
 
 Memory: a type and its parts come from the allocator the table was made with, which is meant to be
 an arena; the table never frees. Interning keys, and the parts of a type that turns out to be in the
@@ -26,6 +36,7 @@ import "core:slice"
 import "core:strings"
 
 import "../ast"
+import "../source"
 
 // Type_ID indexes the type table of one Check_Result. It means nothing without that table.
 Type_ID :: distinct u32
@@ -44,12 +55,16 @@ NULL :: Type_ID(Basic_Kind.Null)
 UNDEFINED :: Type_ID(Basic_Kind.Undefined)
 
 // Type is one TypeScript type. lower reads it as a value: the parameters and the result of a
-// function, the members of a union in canonical order.
+// function, the members of a union in canonical order, the fields of an object in canonical order.
 Type :: union #no_nil {
 	Basic_Kind, // a zero Type is Basic_Kind.Error, the type of a node that failed
 	Literal,
 	Function,
 	Union,
+	Object,
+	Array,
+	Type_Var,
+	Overload,
 }
 
 // Basic_Kind is a type with no parts. The order is the first half of the canonical order of a
@@ -76,10 +91,13 @@ Literal :: struct {
 }
 
 Function :: struct {
-	params:   []Param, // in source order
-	result:   Type_ID,
-	required: int, // a call has to supply this many; the rest are optional or the rest parameter
-	variadic: bool, // the last parameter is `...xs: T[]`, so a call may pass any number past it
+	params:      []Param, // in source order
+	result:      Type_ID,
+	required:    int, // a call has to supply this many; the rest are optional or the rest parameter
+	variadic:    bool, // the last parameter is `...xs: T[]`, so a call may pass any number past it
+	// The type variables a call has to work out, as `map<U>` has U. Only a signature of the lib file
+	// has any: generics of one's own are v2.
+	type_params: []Type_ID,
 }
 
 // Param is one parameter of a function type. The name is borrowed from the tree and is printed in a
@@ -93,6 +111,59 @@ Param :: struct {
 // them. A union of one member is that member, and a union of none is `never`.
 Union :: struct {
 	members: []Type_ID,
+}
+
+// Decl_Ref names the declaration a named type came from: an ast.Interface_Decl or an ast.Type_Param.
+// It is a fact of the frozen Program and so reads the same in every partition, which is what lets a
+// type that holds itself be interned and ordered at all. NO_DECL is the zero value and means the type
+// was written out in place, since node zero of a file is its Module and declares nothing.
+Decl_Ref :: struct {
+	file: source.File_ID,
+	node: ast.Node_ID,
+}
+
+NO_DECL :: Decl_Ref{}
+
+// Object is an object type: an `interface`, a `{ ... }` type written in place, or the type of an
+// object literal. The fields are in canonical order, by name, which is the order requirements 3.3
+// makes the memory layout from.
+Object :: struct {
+	fields: []Field,
+	name:   string, // the interface name, borrowed from the tree, for printing only; "" without one
+	decl:   Decl_Ref, // NO_DECL for an object type written in place
+	args:   []Type_ID, // the type arguments of decl; empty unless the declaration is generic
+}
+
+// Field is one field of an object type. `optional` is part of the field set and so takes part in
+// assignability, as requirements 3.3 says; `readonly` only rejects a write and is ignored when types
+// are compared, as it is in TypeScript.
+Field :: struct {
+	name:     string,
+	type:     Type_ID,
+	optional: bool, // `x?: T`
+	readonly: bool, // `readonly x: T`
+}
+
+// Array is `T[]`, which is the same type as `Array<T>`. Elements are unboxed (requirements 3.6), so
+// the element type is invariant: a `number[]` buffer is not a `(number | string)[]` buffer, and tsnc
+// rejects the assignment that tsc allows.
+Array :: struct {
+	element: Type_ID,
+}
+
+// Type_Var is a type parameter of a generic lib declaration before anything instantiates it: `T` of
+// `Array<T>` while its members are read, `U` of `map<U>` until a call works it out from the arrow it
+// is given.
+Type_Var :: struct {
+	name: string, // borrowed from the tree, for printing
+	decl: Decl_Ref, // the ast.Type_Param that declares it, which is its identity
+}
+
+// Overload holds the signatures one lib member declares under one name, as `reduce` does with and
+// without an initial value. A call takes the first whose arity fits, which is what src/lib/lib.d.ts
+// says it relies on.
+Overload :: struct {
+	signatures: []Type_ID,
 }
 
 // Table is the type universe of one check call. It is not part of the result: Check_Result carries
@@ -140,8 +211,8 @@ literal_type :: proc(table: ^Table, value: ast.Literal) -> Type_ID {
 	return intern(table, Literal{value = value})
 }
 
-// function_type is the type of a function, an arrow or a function type. params may be scratch:
-// intern copies what it keeps.
+// function_type is the type of a function, an arrow or a function type. params and type_params may be
+// scratch: intern copies what it keeps.
 @(private)
 function_type :: proc(
 	table: ^Table,
@@ -149,14 +220,81 @@ function_type :: proc(
 	result: Type_ID,
 	required: int,
 	variadic: bool,
+	type_params: []Type_ID = nil,
 ) -> Type_ID {
 	function := Function {
-		params   = params,
-		result   = result,
-		required = required,
-		variadic = variadic,
+		params      = params,
+		result      = result,
+		required    = required,
+		variadic    = variadic,
+		type_params = type_params,
 	}
 	return intern(table, function)
+}
+
+// array_type is `T[]`.
+@(private)
+array_type :: proc(table: ^Table, element: Type_ID) -> Type_ID {
+	return intern(table, Array{element = element})
+}
+
+// type_var_type is the type variable one type parameter of the lib file stands for.
+@(private)
+type_var_type :: proc(table: ^Table, name: string, decl: Decl_Ref) -> Type_ID {
+	return intern(table, Type_Var{name = name, decl = decl})
+}
+
+// overload_type is the type of a member declared more than once. One signature is that signature.
+@(private)
+overload_type :: proc(table: ^Table, signatures: []Type_ID) -> Type_ID {
+	if len(signatures) == 1 {
+		return signatures[0]
+	}
+	return intern(table, Overload{signatures = signatures})
+}
+
+// plain_object_type is an object type written in place, interned by its fields. fields must already
+// be in canonical order; intern copies what it keeps.
+@(private)
+plain_object_type :: proc(table: ^Table, fields: []Field) -> Type_ID {
+	return intern(table, Object{fields = fields})
+}
+
+// reserve_object gives a named object its row before its members are read, and says whether the row
+// is new. A member that names the object again comes back here and finds the reserved row, which is
+// how `interface Node { next: Node | undefined }` gets interned at all. The caller fills the row with
+// finish_object once the members are read, and until then the object reads as one with no fields.
+@(private)
+reserve_object :: proc(
+	table: ^Table,
+	name: string,
+	decl: Decl_Ref,
+	args: []Type_ID,
+) -> (
+	id: Type_ID,
+	fresh: bool,
+) {
+	strings.builder_reset(&table.key)
+	write_key(&table.key, Object{name = name, decl = decl, args = args})
+	probe := strings.to_string(table.key)
+	if existing, found := table.by_key[probe]; found {
+		return existing, false
+	}
+
+	owned := make([]Type_ID, len(args), table.allocator)
+	copy(owned, args)
+	id = Type_ID(len(table.types))
+	append(&table.types, Object{name = name, decl = decl, args = owned})
+	table.by_key[strings.clone(probe, table.allocator)] = id
+	return id, true
+}
+
+// finish_object writes the members of a reserved row. fields may be scratch.
+@(private)
+finish_object :: proc(table: ^Table, id: Type_ID, fields: []Field) {
+	object := table.types[id].(Object)
+	object.fields = clone_fields(fields, table.allocator)
+	table.types[id] = object
 }
 
 // union_type is the canonical union of members: every union among them is flattened into its own
@@ -276,20 +414,30 @@ intern :: proc(table: ^Table, type: Type) -> Type_ID {
 
 	owned := type
 	switch v in type {
-	case Basic_Kind, Literal:
+	case Basic_Kind, Literal, Array, Type_Var:
 	// No parts to copy.
 	case Function:
 		owned = Function {
-			params   = clone_params(v.params, table.allocator),
-			result   = v.result,
-			required = v.required,
-			variadic = v.variadic,
+			params      = clone_params(v.params, table.allocator),
+			result      = v.result,
+			required    = v.required,
+			variadic    = v.variadic,
+			type_params = clone_ids(v.type_params, table.allocator),
 		}
 	case Union:
-		members := make([]Type_ID, len(v.members), table.allocator)
-		copy(members, v.members)
 		owned = Union {
-			members = members,
+			members = clone_ids(v.members, table.allocator),
+		}
+	case Overload:
+		owned = Overload {
+			signatures = clone_ids(v.signatures, table.allocator),
+		}
+	case Object:
+		// A named object never arrives here: reserve_object gives it its row before its members are
+		// read, because a member may name the object itself.
+		assert(v.decl == NO_DECL, "a named object is interned by reserve_object")
+		owned = Object {
+			fields = clone_fields(v.fields, table.allocator),
 		}
 	}
 
@@ -306,9 +454,24 @@ clone_params :: proc(params: []Param, allocator: runtime.Allocator) -> []Param {
 	return owned
 }
 
+@(private)
+clone_fields :: proc(fields: []Field, allocator: runtime.Allocator) -> []Field {
+	owned := make([]Field, len(fields), allocator)
+	copy(owned, fields)
+	return owned
+}
+
+@(private)
+clone_ids :: proc(ids: []Type_ID, allocator: runtime.Allocator) -> []Type_ID {
+	owned := make([]Type_ID, len(ids), allocator)
+	copy(owned, ids)
+	return owned
+}
+
 // write_key writes the key a type is interned under. It is built from the Type_ID values of the
-// parts, which are interned already, so it stays short and it always terminates, even once a type
-// can name itself. A parameter name is left out, because it is not part of the type. The key is
+// parts, which are interned already, so it stays short and it always terminates: a type that names
+// itself does so through a named object, whose key is its declaration and not its members. A
+// parameter name and an interface name are left out, because neither is part of the type. The key is
 // internal: it is never printed and never ordered.
 @(private)
 write_key :: proc(b: ^strings.Builder, type: Type) {
@@ -331,6 +494,10 @@ write_key :: proc(b: ^strings.Builder, type: Type) {
 		strings.write_string(b, "f")
 		strings.write_int(b, v.required)
 		strings.write_string(b, "v" if v.variadic else "-")
+		for type_param in v.type_params {
+			strings.write_byte(b, '<')
+			strings.write_u64(b, u64(type_param))
+		}
 		for param in v.params {
 			strings.write_byte(b, ',')
 			strings.write_u64(b, u64(param.type))
@@ -339,19 +506,55 @@ write_key :: proc(b: ^strings.Builder, type: Type) {
 		strings.write_u64(b, u64(v.result))
 	case Union:
 		strings.write_string(b, "u")
-		for member in v.members {
+		write_id_key(b, v.members)
+	case Overload:
+		strings.write_string(b, "x")
+		write_id_key(b, v.signatures)
+	case Array:
+		strings.write_string(b, "a")
+		strings.write_u64(b, u64(v.element))
+	case Type_Var:
+		strings.write_string(b, "v")
+		write_decl_key(b, v.decl)
+	case Object:
+		if v.decl != NO_DECL {
+			strings.write_string(b, "o")
+			write_decl_key(b, v.decl)
+			write_id_key(b, v.args)
+			return
+		}
+		strings.write_string(b, "O")
+		for field in v.fields {
 			strings.write_byte(b, ',')
-			strings.write_u64(b, u64(member))
+			strings.write_quoted_string(b, field.name)
+			strings.write_byte(b, '?' if field.optional else '-')
+			strings.write_byte(b, 'r' if field.readonly else '-')
+			strings.write_u64(b, u64(field.type))
 		}
 	}
+}
+
+@(private)
+write_id_key :: proc(b: ^strings.Builder, ids: []Type_ID) {
+	for id in ids {
+		strings.write_byte(b, ',')
+		strings.write_u64(b, u64(id))
+	}
+}
+
+@(private)
+write_decl_key :: proc(b: ^strings.Builder, decl: Decl_Ref) {
+	strings.write_u64(b, u64(decl.file))
+	strings.write_byte(b, ':')
+	strings.write_u64(b, u64(decl.node))
 }
 
 // Canonical order.
 
 // compare_types orders two types by structure: negative when a comes first, zero when they are one
 // type. It reads no Type_ID as a number, so two checkers that built one union independently sort it
-// the same way. It recurses only into the parts of a type, and no type of this milestone can hold
-// itself, so it terminates.
+// the same way. It terminates because the one type that can hold itself, a named object, is settled
+// by its field names and its declaration before anything looks at a field type.
 @(private)
 compare_types :: proc(types: []Type, a, b: Type_ID) -> int {
 	if a == b {
@@ -370,13 +573,22 @@ compare_types :: proc(types: []Type, a, b: Type_ID) -> int {
 		return compare_functions(types, v, right.(Function))
 	case Union:
 		return compare_members(types, v.members, right.(Union).members)
+	case Overload:
+		return compare_members(types, v.signatures, right.(Overload).signatures)
+	case Array:
+		return compare_types(types, v.element, right.(Array).element)
+	case Type_Var:
+		return compare_decls(v.decl, right.(Type_Var).decl)
+	case Object:
+		return compare_objects(types, v, right.(Object))
 	}
 	// Two types with no parts and one rank are one type, which the first line already answered.
 	return 0
 }
 
 // rank is where a kind of type stands in the canonical order: the kinds with no parts first, in the
-// order of Basic_Kind, then the literals, then functions, then unions.
+// order of Basic_Kind, then the literals, then functions, then unions, then the kinds that hold a
+// reference, which go last so that no union written before them changes how it prints.
 @(private)
 rank :: proc(type: Type) -> int {
 	BASIC :: len(Basic_Kind)
@@ -389,6 +601,14 @@ rank :: proc(type: Type) -> int {
 		return BASIC + 3
 	case Union:
 		return BASIC + 4
+	case Array:
+		return BASIC + 5
+	case Object:
+		return BASIC + 6
+	case Type_Var:
+		return BASIC + 7
+	case Overload:
+		return BASIC + 8
 	}
 	return 0
 }
@@ -459,6 +679,59 @@ compare_members :: proc(types: []Type, a, b: []Type_ID) -> int {
 	return 0
 }
 
+// compare_objects orders a named object by its declaration and one written in place by its fields.
+// A declaration is a number the Program fixed, so every partition reads it the same way, and asking
+// for it first settles the two cases the fields cannot answer: an object that holds itself, and one
+// whose row is reserved but whose fields are not read yet. An object written in place never holds
+// itself and is always built out of types that already exist, so its fields terminate.
+@(private)
+compare_objects :: proc(types: []Type, a, b: Object) -> int {
+	if a.decl != b.decl {
+		return compare_decls(a.decl, b.decl)
+	}
+	if a.decl != NO_DECL {
+		// One declaration and one set of arguments is one type, which compare_types already
+		// answered, so the arguments are what differ here.
+		for arg, i in a.args {
+			if order := compare_types(types, arg, b.args[i]); order != 0 {
+				return order
+			}
+		}
+		return 0
+	}
+
+	if len(a.fields) != len(b.fields) {
+		return -1 if len(a.fields) < len(b.fields) else 1
+	}
+	for field, i in a.fields {
+		other := b.fields[i]
+		if order := strings.compare(field.name, other.name); order != 0 {
+			return order
+		}
+		if field.optional != other.optional {
+			return -1 if !field.optional else 1
+		}
+		if field.readonly != other.readonly {
+			return -1 if !field.readonly else 1
+		}
+		if order := compare_types(types, field.type, other.type); order != 0 {
+			return order
+		}
+	}
+	return 0
+}
+
+@(private)
+compare_decls :: proc(a, b: Decl_Ref) -> int {
+	if a.file != b.file {
+		return -1 if a.file < b.file else 1
+	}
+	if a.node != b.node {
+		return -1 if a.node < b.node else 1
+	}
+	return 0
+}
+
 // Reading types.
 
 // literal_base is the type a literal type is one value of.
@@ -481,7 +754,9 @@ literal_base :: proc(value: ast.Literal) -> Type_ID {
 @(private)
 widen :: proc(table: ^Table, id: Type_ID) -> Type_ID {
 	switch v in table.types[id] {
-	case Basic_Kind, Function:
+	case Basic_Kind, Function, Object, Array, Type_Var, Overload:
+		// An object keeps its fields as they were built, where each one was widened already, and an
+		// array keeps its element type, which the literal that made it widened.
 		return id
 	case Literal:
 		return literal_base(v.value)
@@ -534,8 +809,11 @@ part_of :: proc(table: ^Table, id: Type_ID, part: Part) -> Type_ID {
 		}
 		falsy := is_falsy(v.value)
 		return id if falsy == (part == .Falsy) else NEVER
-	case Function:
-		return NEVER if part == .Falsy else id // a function value is always truthy
+	case Function, Object, Array, Overload:
+		// A reference is always truthy, and so is a function value.
+		return NEVER if part == .Falsy else id
+	case Type_Var:
+		return id // nothing is known about it until a call works it out
 	case Union:
 		out := make([dynamic]Type_ID, 0, len(v.members), context.temp_allocator)
 		for member in v.members {
@@ -559,9 +837,16 @@ is_falsy :: proc(value: ast.Literal) -> bool {
 	return false
 }
 
+// Trail is the pairs of types a comparison is already inside. Two interfaces that name themselves
+// would otherwise be compared forever, so a pair already on the trail answers yes, which is the usual
+// rule for structural types that hold themselves. fits owns one buffer for the whole check: assignable
+// never calls back into the checker, so no second comparison can be running.
+@(private)
+Trail :: [dynamic][2]Type_ID
+
 // assignable reports whether a value of `source` may stand where `target` is expected.
 @(private)
-assignable :: proc(types: []Type, source, target: Type_ID) -> bool {
+assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> bool {
 	if source == target {
 		return true
 	}
@@ -590,7 +875,7 @@ assignable :: proc(types: []Type, source, target: Type_ID) -> bool {
 	// A union fits where every one of its members fits.
 	if members, is_union := types[source].(Union); is_union {
 		for member in members.members {
-			if !assignable(types, member, target) {
+			if !assignable(types, member, target, trail) {
 				return false
 			}
 		}
@@ -599,7 +884,17 @@ assignable :: proc(types: []Type, source, target: Type_ID) -> bool {
 	// A value fits a union when it fits one of the members.
 	if members, is_union := types[target].(Union); is_union {
 		for member in members.members {
-			if assignable(types, source, member) {
+			if assignable(types, source, member, trail) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// An overloaded member fits wherever one of its signatures does.
+	if overload, is_overload := types[source].(Overload); is_overload {
+		for signature in overload.signatures {
+			if assignable(types, signature, target, trail) {
 				return true
 			}
 		}
@@ -609,7 +904,22 @@ assignable :: proc(types: []Type, source, target: Type_ID) -> bool {
 	source_function, source_is_function := types[source].(Function)
 	target_function, target_is_function := types[target].(Function)
 	if source_is_function && target_is_function {
-		return function_assignable(types, source_function, target_function)
+		return function_assignable(types, source_function, target_function, trail)
+	}
+
+	source_array, source_is_array := types[source].(Array)
+	target_array, target_is_array := types[target].(Array)
+	if source_is_array && target_is_array {
+		// Invariant, because requirements 3.6 stores elements unboxed: a `number[]` buffer holds f64
+		// and a `(number | string)[]` buffer holds tagged values, so one is not the other. tsc allows
+		// the assignment; tsnc may be stricter where its model says so (requirements 5).
+		return source_array.element == target_array.element
+	}
+
+	source_object, source_is_object := types[source].(Object)
+	target_object, target_is_object := types[target].(Object)
+	if source_is_object && target_is_object {
+		return object_assignable(types, source, target, source_object, target_object, trail)
 	}
 	return false
 }
@@ -619,26 +929,65 @@ assignable :: proc(types: []Type, source, target: Type_ID) -> bool {
 // parameter is compared the other way round, and the result has to fit unless the target throws it
 // away.
 @(private)
-function_assignable :: proc(types: []Type, source, target: Function) -> bool {
+function_assignable :: proc(types: []Type, source, target: Function, trail: ^Trail) -> bool {
 	if !target.variadic && source.required > len(target.params) {
 		return false
 	}
 	shared := min(len(source.params), len(target.params))
 	for i in 0 ..< shared {
-		if !assignable(types, target.params[i].type, source.params[i].type) {
+		if !assignable(types, target.params[i].type, source.params[i].type, trail) {
 			return false
 		}
 	}
 	if target.result == VOID {
 		return true
 	}
-	return assignable(types, source.result, target.result)
+	return assignable(types, source.result, target.result, trail)
+}
+
+// object_assignable is the exact-type rule of requirements 3.3: an object fits only a type with the
+// same set of fields, where a field written `x?: T` counts as its own kind of field. The fields of
+// both are in canonical order, so one walk settles it. `readonly` is left out, as it is in TypeScript:
+// it says who may write the field, not what the field holds.
+@(private)
+object_assignable :: proc(
+	types: []Type,
+	source_id, target_id: Type_ID,
+	source, target: Object,
+	trail: ^Trail,
+) -> bool {
+	if len(source.fields) != len(target.fields) {
+		return false
+	}
+
+	pair := [2]Type_ID{source_id, target_id}
+	for seen in trail^ {
+		if seen == pair {
+			// The two are already being compared further up, so this is the question that asked it.
+			// Answering yes is what makes two interfaces that name themselves comparable at all.
+			return true
+		}
+	}
+	append(trail, pair)
+	defer pop(trail)
+
+	for field, i in source.fields {
+		other := target.fields[i]
+		if field.name != other.name || field.optional != other.optional {
+			return false
+		}
+		if !assignable(types, field.type, other.type, trail) {
+			return false
+		}
+	}
+	return true
 }
 
 // Printing a type.
 
-// type_text is how a type reads: `number`, `"circle"`, `(a: number) => string`, `number | string`.
-// types is the table the id belongs to, which is Check_Result.types.
+// type_text is how a type reads: `number`, `"circle"`, `(a: number) => string`, `number | string`,
+// `Point`, `{ x: number; y: number }`, `number[]`. types is the table the id belongs to, which is
+// Check_Result.types.
 //
 // Inside check it is called with the checker's allocator, because a diagnostic borrows its
 // arguments and is rendered long after the phase has returned.
@@ -679,11 +1028,89 @@ write_type :: proc(b: ^strings.Builder, types: []Type, id: Type_ID) {
 				strings.write_byte(b, ')')
 			}
 		}
+	case Overload:
+		// TypeScript writes an overloaded member as the intersection of its signatures, and the only
+		// ones tsnc has are the two of `reduce`.
+		for signature, i in v.signatures {
+			if i > 0 {
+				strings.write_string(b, " & ")
+			}
+			write_type(b, types, signature)
+		}
+	case Type_Var:
+		strings.write_string(b, v.name)
+	case Array:
+		// A union or a function element needs brackets, or the `[]` would bind to the last member.
+		element := types[v.element]
+		_, is_union := element.(Union)
+		_, is_function := element.(Function)
+		brackets := is_union || is_function
+		if brackets {
+			strings.write_byte(b, '(')
+		}
+		write_type(b, types, v.element)
+		if brackets {
+			strings.write_byte(b, ')')
+		}
+		strings.write_string(b, "[]")
+	case Object:
+		write_object(b, types, v)
 	}
+}
+
+// write_object prints a named object as its name, the way tsc does, and one written in place as its
+// fields. A name is what keeps a message about a type that holds itself finite and short.
+@(private)
+write_object :: proc(b: ^strings.Builder, types: []Type, object: Object) {
+	if object.name != "" {
+		strings.write_string(b, object.name)
+		if len(object.args) > 0 {
+			strings.write_byte(b, '<')
+			for arg, i in object.args {
+				if i > 0 {
+					strings.write_string(b, ", ")
+				}
+				write_type(b, types, arg)
+			}
+			strings.write_byte(b, '>')
+		}
+		return
+	}
+
+	if len(object.fields) == 0 {
+		strings.write_string(b, "{}")
+		return
+	}
+	strings.write_string(b, "{ ")
+	for field, i in object.fields {
+		if i > 0 {
+			strings.write_string(b, "; ")
+		}
+		if field.readonly {
+			strings.write_string(b, "readonly ")
+		}
+		strings.write_string(b, field.name)
+		if field.optional {
+			strings.write_byte(b, '?')
+		}
+		strings.write_string(b, ": ")
+		write_type(b, types, field.type)
+	}
+	strings.write_string(b, " }")
 }
 
 @(private)
 write_function :: proc(b: ^strings.Builder, types: []Type, function: Function) {
+	if len(function.type_params) > 0 {
+		strings.write_byte(b, '<')
+		for type_param, i in function.type_params {
+			if i > 0 {
+				strings.write_string(b, ", ")
+			}
+			write_type(b, types, type_param)
+		}
+		strings.write_byte(b, '>')
+	}
 	strings.write_byte(b, '(')
 	for param, i in function.params {
 		if i > 0 {

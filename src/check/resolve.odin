@@ -6,9 +6,9 @@ import "../program"
 
 // Type syntax.
 
-// resolve_type is the type a type slot names. A slot a later task of this milestone owns — an
-// object type, an array, a named type — answers with the error type and says nothing, so that the
-// lib file, which is written out of exactly those, stays quiet until T3.3 reaches it.
+// resolve_type is the type a type slot names. A slot a later task owns — a qualified name, a name
+// imported from another module, a type parameter outside the lib file — answers with the error type
+// and says nothing.
 @(private)
 resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	if id == ast.NO_NODE {
@@ -26,11 +26,39 @@ resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 		}
 		return set_type(c, id, union_type(&c.table, members[:]))
 	case ast.Function_Type:
+		type_params := resolve_type_params(c, v.type_params)
 		params, required, variadic := resolve_params(c, v.params)
 		result := resolve_type(c, v.return_type)
-		return set_type(c, id, function_type(&c.table, params, result, required, variadic))
+		type := function_type(&c.table, params, result, required, variadic, type_params)
+		return set_type(c, id, type)
+	case ast.Array_Type:
+		return set_type(c, id, array_type(&c.table, resolve_type(c, v.element)))
+	case ast.Object_Type:
+		return set_type(c, id, plain_object_type(&c.table, object_fields(c, v.members)))
+	case ast.Type_Ref:
+		return set_type(c, id, type_ref_type(c, id, v))
 	}
 	return set_type(c, id, ERROR)
+}
+
+// resolve_type_params is the type variables a generic signature has to work out at a call. Only the
+// lib file declares any: a type parameter of a user file answers with the error type, and a
+// signature that holds none is the ordinary case.
+@(private)
+resolve_type_params :: proc(c: ^Checker, ids: []ast.Node_ID) -> []Type_ID {
+	if len(ids) == 0 || c.at.file != program.LIB {
+		return nil
+	}
+	out := make([dynamic]Type_ID, 0, len(ids), context.temp_allocator)
+	for id in ids {
+		type_param := c.at.tree.nodes[id].variant.(ast.Type_Param)
+		decl := Decl_Ref {
+			file = c.at.file,
+			node = id,
+		}
+		append(&out, type_var_type(&c.table, type_param.name.text, decl))
+	}
+	return out[:]
 }
 
 @(private, rodata)
@@ -49,10 +77,15 @@ KEYWORD_TYPES := [ast.Type_Keyword]Type_ID {
 // resolve_params reads the parameters of a function, an arrow or a function type. required counts
 // the parameters a call has to supply, which is the run of required ones at the front: a required
 // parameter behind an optional one is a signature tsc rejects, and tsnc takes its input from tsc.
+//
+// contextual is the parameter list of the signature an arrow is going into, and gives a parameter
+// with no annotation its type. Everywhere else it is empty, and a parameter with no annotation is a
+// name nothing can check.
 @(private)
 resolve_params :: proc(
 	c: ^Checker,
 	ids: []ast.Node_ID,
+	contextual: []Param = nil,
 ) -> (
 	params: []Param,
 	required: int,
@@ -62,11 +95,12 @@ resolve_params :: proc(
 	for id, i in ids {
 		param := c.at.tree.nodes[id].variant.(ast.Param)
 		type := ERROR
-		if param.type != ast.NO_NODE {
+		switch {
+		case param.type != ast.NO_NODE:
 			type = resolve_type(c, param.type)
-		} else {
-			// T3.3 gives an arrow parameter its type from the call it sits in. Until then, and for
-			// every other parameter, a name with no type is a name nothing can check.
+		case i < len(contextual):
+			type = contextual[i].type
+		case:
 			report(c, .Missing_Annotation, param.name.span, param.name.text)
 		}
 
@@ -159,8 +193,8 @@ declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type
 		// anything in the body can name it.
 		return c.at.node_types == nil ? ERROR : c.at.node_types[node]
 	}
-	// An interface, a type alias, a type parameter and an imported name are not values of this
-	// task: T3.3 and T3.5 answer for those.
+	// An interface, a type alias and a type parameter are types and not values, and named_type is
+	// the path that answers for them. An imported name is T3.5.
 	return ERROR
 }
 
@@ -176,9 +210,9 @@ declarator_type :: proc(
 	if node.type != ast.NO_NODE {
 		declared := resolve_type(c, node.type)
 		if node.init != ast.NO_NODE {
-			value := check_expression(c, node.init)
+			value := check_expression(c, node.init, declared)
 			if !fits(c, value, declared) {
-				report_types(c, .Type_Mismatch, span_of(c, node.init), value, declared)
+				report_assign_failure(c, span_of(c, node.init), value, declared)
 			}
 		}
 		return set_type(c, id, declared)
@@ -284,12 +318,12 @@ check_body :: proc(c: ^Checker, body: ast.Node_ID, result: Type_ID, returns: ^[d
 	}
 
 	// An arrow with no braces returns the expression it is.
-	type := check_expression(c, body)
+	type := check_expression(c, body, result)
 	if returns != nil {
 		append(returns, type)
 		return
 	}
 	if !fits(c, type, result) {
-		report_types(c, .Type_Mismatch, span_of(c, body), type, result)
+		report_assign_failure(c, span_of(c, body), type, result)
 	}
 }

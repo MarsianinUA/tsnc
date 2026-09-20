@@ -32,7 +32,10 @@ check_statement :: proc(c: ^Checker, id: ast.Node_ID) {
 	case ast.Function_Decl:
 		check_declaration(c, id)
 	case ast.Interface_Decl, ast.Type_Alias_Decl:
-	// Type declarations are T3.3. Nothing in them can be a mistake this task would find.
+		// A type declaration is read here as well as where a name uses it, so that a mistake inside
+		// one is found even where nothing names it. Both paths answer from the same cache, so the
+		// members are read once either way.
+		check_type_declaration(c, id)
 	case ast.Import_Named, ast.Import_Namespace, ast.Export_Named:
 	// What a name refers to across modules is T3.5.
 
@@ -104,10 +107,34 @@ check_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	type_of_symbol(c, {file = c.at.file, symbol = symbol})
 }
 
+// check_type_declaration types an `interface` or a `type` alias that a statement reached. A generic
+// one is read only where it is used, with its arguments in force: on its own there is nothing to put
+// in place of its type parameters.
+@(private)
+check_type_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
+	symbol := c.at.bound.node_symbols[id]
+	if symbol == bind.NO_SYMBOL {
+		return // parse could not read the name and has reported it
+	}
+
+	type_params: []ast.Node_ID
+	#partial switch v in c.at.tree.nodes[id].variant {
+	case ast.Interface_Decl:
+		type_params = v.type_params
+	case ast.Type_Alias_Decl:
+		type_params = v.type_params
+	}
+	if len(type_params) > 0 {
+		return
+	}
+
+	named_type(c, {file = c.at.file, symbol = symbol}, nil, c.at.bound.symbols[symbol].name)
+}
+
 // for_of_variable gives the loop variable of a `for...of` the error type without asking where it
-// came from. Its type is the element type of the iterable, a string or an array, so it waits for
-// T3.3 and T3.5. Until then it must not go through the usual path, which would see a `let` with
-// neither an annotation nor an initializer and ask for one.
+// came from. Its type is the element type of the iterable, a string or an array, which T3.5 works
+// out with the rest of the control statements. Until then it must not go through the usual path,
+// which would see a `let` with neither an annotation nor an initializer and ask for one.
 @(private)
 for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID) {
 	if declaration == ast.NO_NODE {
@@ -141,12 +168,12 @@ check_return :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Return) {
 		return
 	}
 
-	value := check_expression(c, node.value)
+	value := check_expression(c, node.value, c.at.result)
 	if c.at.returns != nil {
 		append(c.at.returns, value)
 		return
 	}
 	if !fits(c, value, c.at.result) {
-		report_types(c, .Type_Mismatch, span_of(c, node.value), value, c.at.result)
+		report_assign_failure(c, span_of(c, node.value), value, c.at.result)
 	}
 }
