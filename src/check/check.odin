@@ -108,7 +108,7 @@ check :: proc(
 		in_partition = make([]bool, len(prog.files), context.temp_allocator),
 		facts        = make([]Facts, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
-		resolving    = make(map[Symbol_Ref]bool, context.temp_allocator),
+		resolving    = make(map[Symbol_Ref]int, context.temp_allocator),
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
 		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
@@ -152,9 +152,13 @@ Checker :: struct {
 	// belongs to this call alone, as the type table does: a Type_ID of one checker means nothing
 	// in another.
 	symbol_types: map[Symbol_Ref]Type_ID,
-	// The symbols whose type is being worked out right now. A declaration that needs its own type
-	// finds itself here, which is the only way that search could fail to end.
-	resolving:    map[Symbol_Ref]bool,
+	// The symbols whose type is being worked out right now, each with the body depth the search
+	// started at. A declaration that needs its own type finds itself here, which is the only way
+	// that search could fail to end; a greater depth means the read stands inside a function body,
+	// which runs after the declaration has its type.
+	resolving:    map[Symbol_Ref]int,
+	// How many function bodies the checker is inside. check_body raises it.
+	depth:        int,
 	// The type arguments in force while the members of a generic lib declaration are read: `T` of
 	// `Array<T>` stands for `number` while `Array<number>` is built. Saved and restored around one
 	// instantiation, so a nested one cannot see the outer bindings.
@@ -282,13 +286,15 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.trail)
 	delete(c.narrowing.answers)
 	delete(c.narrowing.loops)
+	delete(c.narrowing.partial)
 	delete(c.table.key.buf)
 }
 
 // Facts of a node.
 
-// set_type records the type of a node and hands it back, so a caller can end on it. A file outside
-// this partition has no tables and drops the fact.
+// set_type records the type of a node and hands it back, so a caller can end on it. The tables are
+// nil only while a generic lib declaration is being instantiated, and the fact is then dropped so
+// that the instance does not overwrite what the declaration recorded. See Place.
 @(private)
 set_type :: proc(c: ^Checker, id: ast.Node_ID, type: Type_ID) -> Type_ID {
 	if c.at.node_types != nil {
@@ -373,11 +379,24 @@ fits :: proc(c: ^Checker, source, target: Type_ID) -> bool {
 // case ask: a comparison of two types that can never be equal is a mistake rather than a test, and
 // it is also the question narrowing asks of each member of a union.
 //
+// Where neither type fits the other, the members are asked one pair at a time, because `"a" | "b"`
+// and `"b" | "c"` do have a value in common. `as` asks the narrower question itself, in check_as.
+//
 // The error type and `any` fit in both directions and everything fits `unknown`, so a value the
 // rules have already given up on never produces a second message here.
 @(private)
 comparable :: proc(c: ^Checker, a, b: Type_ID) -> bool {
-	return fits(c, a, b) || fits(c, b, a)
+	if fits(c, a, b) || fits(c, b, a) {
+		return true
+	}
+	for left in union_members(c, a) {
+		for right in union_members(c, b) {
+			if fits(c, left, right) || fits(c, right, left) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // union_of is the canonical union of two types, which is what a ternary, a logical operator and an

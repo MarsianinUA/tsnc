@@ -249,3 +249,39 @@ compound_assignment_follows_its_operator :: proc(t: ^testing.T) {
 		[]Error{{.Operand_Not_Number, 2, 10}},
 	)
 }
+
+@(test)
+strict_equality_accepts_two_unions_that_share_a_member :: proc(t: ^testing.T) {
+	// Neither union fits the other, and `"b"` is still a value both sides can hold, so the
+	// comparison is a test and not a mistake.
+	expect_checked(
+		t,
+		lines(
+			`function same(a: "a" | "b", b: "b" | "c"): boolean { return a === b; }`, //
+			`function wide(a: number | string, b: string | boolean): boolean { return a === b; }`,
+		),
+	)
+}
+
+@(test)
+an_assertion_between_two_unions_that_merely_overlap_is_reported :: proc(t: ^testing.T) {
+	// `as` may widen a value or narrow a union and nothing in between, which is a narrower rule
+	// than having a value in common.
+	expect_errors(
+		t,
+		`function pick(a: "a" | "b"): "b" | "c" { return a as "b" | "c"; }`,
+		[]Error{{.Unrelated_Assertion, 1, 49}},
+	)
+}
+
+@(test)
+a_write_to_a_function_declaration_is_reported :: proc(t: ^testing.T) {
+	expect_errors(
+		t,
+		lines(
+			`function one(): number { return 1; }`, //
+			`one = (): number => 2;`,
+		),
+		[]Error{{.Assign_To_Function, 2, 1}},
+	)
+}

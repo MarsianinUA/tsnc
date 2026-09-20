@@ -2,6 +2,7 @@ package check
 
 import "../ast"
 import "../bind"
+import "../diag"
 import "../program"
 
 // Type syntax.
@@ -78,14 +79,16 @@ KEYWORD_TYPES := [ast.Type_Keyword]Type_ID {
 // the parameters a call has to supply, which is the run of required ones at the front: a required
 // parameter behind an optional one is a signature tsc rejects, and tsnc takes its input from tsc.
 //
-// contextual is the parameter list of the signature an arrow is going into, and gives a parameter
-// with no annotation its type. Everywhere else it is empty, and a parameter with no annotation is a
-// name nothing can check.
+// contextual is the signature an arrow is going into, and gives a parameter with no annotation its
+// type. parameter_at answers for the position, so one landing on an optional parameter is
+// `T | undefined` and one landing on a rest parameter is the element type: what a call can really
+// leave there. Everywhere else there is no signature, and a parameter with no annotation is a name
+// nothing can check.
 @(private)
 resolve_params :: proc(
 	c: ^Checker,
 	ids: []ast.Node_ID,
-	contextual: []Param = nil,
+	contextual: Maybe(Function) = nil,
 ) -> (
 	params: []Param,
 	required: int,
@@ -98,8 +101,12 @@ resolve_params :: proc(
 		switch {
 		case param.type != ast.NO_NODE:
 			type = resolve_type(c, param.type)
-		case i < len(contextual):
-			type = contextual[i].type
+		case contextual != nil:
+			// Past the end of a signature with no rest parameter there is no context at all.
+			type = parameter_at(c, contextual.?, i)
+			if type == ERROR {
+				report(c, .Missing_Annotation, param.name.span, param.name.text)
+			}
 		case:
 			report(c, .Missing_Annotation, param.name.span, param.name.text)
 		}
@@ -149,6 +156,10 @@ resolve_name :: proc(
 // type_of_symbol is the type of a declared name, worked out the first time anything asks and kept
 // afterwards. A declaration that needs its own type to answer has no answer at all, and the
 // annotation has to say instead.
+//
+// A name read inside a function body is a different matter: the body runs later, so the declaration
+// may well have its type by then. The node holds it as soon as it is known without the body, which
+// is what makes a recursive arrow with a return type work.
 @(private)
 type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 	if ref.symbol == bind.NO_SYMBOL {
@@ -159,13 +170,18 @@ type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 	}
 
 	symbol := c.program.bound[ref.file].symbols[ref.symbol]
-	if ref in c.resolving {
-		report(c, .Recursive_Return_Type, symbol.name.span, symbol.name.text)
+	if started, found := c.resolving[ref]; found {
+		if c.depth > started {
+			if type := recorded_declaration(c, ref, symbol); type != ERROR {
+				return type
+			}
+		}
+		report(c, recursion_code(c, ref, symbol), symbol.name.span, symbol.name.text)
 		c.symbol_types[ref] = ERROR
 		return ERROR
 	}
 
-	c.resolving[ref] = true
+	c.resolving[ref] = c.depth
 	previous := move_to(c, ref.file)
 	type := declared_type(c, ref, symbol)
 	c.at = previous
@@ -178,6 +194,36 @@ type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 	}
 	c.symbol_types[ref] = type
 	return type
+}
+
+// recorded_declaration is the type the declaring node already holds, while the search for it is
+// still running further out. It is there as soon as the type is known without reading a body: an
+// annotated declarator, and an arrow whose result is written out.
+@(private)
+recorded_declaration :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type_ID {
+	types := c.facts[ref.file].node_types
+	if types == nil || symbol.declaration == ast.NO_NODE {
+		return ERROR
+	}
+	return types[symbol.declaration]
+}
+
+// recursion_code names the mistake a declaration that needs its own type makes. A function and an
+// arrow both lack a result the search could use, which is what an annotation supplies; any other
+// variable has an initializer that reads the name it is defining.
+@(private)
+recursion_code :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> diag.Code {
+	if symbol.kind == .Function {
+		return .Recursive_Return_Type
+	}
+	nodes := c.program.trees[ref.file].nodes
+	if declarator, is_declarator := nodes[symbol.declaration].variant.(ast.Declarator);
+	   is_declarator {
+		if _, is_arrow := nodes[declarator.init].variant.(ast.Arrow); is_arrow {
+			return .Recursive_Return_Type
+		}
+	}
+	return .Circular_Initializer
 }
 
 // declared_type works out the type of a symbol from the node that declares it.
@@ -202,6 +248,10 @@ declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type
 
 // declarator_type is the type of one `let` or `const` binding, and it checks the initializer while
 // it is here. The walk over the statements comes through here too, so this happens exactly once.
+//
+// The node holds its type before the initializer is read wherever the type is known without it, so
+// that a name used inside its own initializer's body finds the answer rather than the search still
+// running.
 @(private)
 declarator_type :: proc(
 	c: ^Checker,
@@ -211,13 +261,17 @@ declarator_type :: proc(
 ) -> Type_ID {
 	if node.type != ast.NO_NODE {
 		declared := resolve_type(c, node.type)
+		set_type(c, id, declared)
 		if node.init != ast.NO_NODE {
 			value := check_expression(c, node.init, declared)
 			if !fits(c, value, declared) {
 				report_assign_failure(c, span_of(c, node.init), value, declared)
 			}
+		} else if kind == .Let && exported(c, id) && !fits(c, UNDEFINED, declared) {
+			// No walk sees across modules, so a write in another one cannot be looked for at all.
+			report(c, .Used_Before_Assigned, node.name.span, node.name.text)
 		}
-		return set_type(c, id, declared)
+		return declared
 	}
 
 	if node.init == ast.NO_NODE {
@@ -226,10 +280,35 @@ declarator_type :: proc(
 		return set_type(c, id, ERROR)
 	}
 
+	if arrow, is_arrow := c.at.tree.nodes[node.init].variant.(ast.Arrow); is_arrow {
+		if arrow.return_type != ast.NO_NODE && !is_open_arrow(c, node.init) {
+			// The signature is known without reading the body, so check_arrow records it on this
+			// declaration before it goes in. That is what lets an arrow call itself.
+			type := check_arrow(c, arrow, ERROR, id)
+			set_type(c, node.init, type)
+			return set_type(c, id, type)
+		}
+	}
+
 	value := check_expression(c, node.init)
 	// A `const` keeps the literal type of its value, because the binding never takes another one.
 	// A `let` widens, because it can.
 	return set_type(c, id, value if kind == .Const else widen(&c.table, value))
+}
+
+// exported reports whether the module exports the symbol a node declares.
+@(private)
+exported :: proc(c: ^Checker, declaration: ast.Node_ID) -> bool {
+	symbol := c.at.bound.node_symbols[declaration]
+	if symbol == bind.NO_SYMBOL {
+		return false
+	}
+	for export in c.at.bound.exports {
+		if export.symbol == symbol {
+			return true
+		}
+	}
+	return false
 }
 
 // function_decl_type is the type of a `function` declaration, and it reads the body while it is
@@ -251,6 +330,7 @@ function_decl_type :: proc(
 		c.symbol_types[ref] = type
 		set_type(c, id, type)
 		check_body(c, node.body, result, nil)
+		check_result_reached(c, node.body, node.return_type, result)
 		return type
 	}
 
@@ -260,22 +340,39 @@ function_decl_type :: proc(
 	return set_type(c, id, function_type(&c.table, params, result, required, variadic))
 }
 
+// check_result_reached reports a function whose body can end without a `return` while the result it
+// declares does not hold `undefined`. `void` and `any` take it, and so does a result written
+// `T | undefined`; anything else would hand the caller a value that is not there.
+@(private)
+check_result_reached :: proc(
+	c: ^Checker,
+	body: ast.Node_ID,
+	annotation: ast.Node_ID,
+	result: Type_ID,
+) {
+	if !falls_through(c, body) || fits(c, UNDEFINED, result) {
+		return
+	}
+	report(c, .Missing_Return, span_of(c, annotation), text_of(c, result))
+}
+
 // inferred_result is the result of a function with no annotation: the union of what its `return`
 // statements gave, widened, because what a call hands back is not the one literal the body happened
-// to write. A bare `return` gives nothing to the union, as in tsc, so a body that returns no value
-// at all gives `void`.
+// to write.
 //
-// A body that can also run off its end gives `undefined` besides, which is what tsc infers for
-// `function f(c: boolean) { if (c) return 1; }`.
+// A body whose every `return` is bare gives `void`, as in tsc. One that mixes a bare `return` with
+// a `return` of a value gives `undefined` for the bare one, which is what check_return's VOID
+// marker says; and a body that can also run off its end gives `undefined` besides, which is what
+// tsc infers for `function f(c: boolean) { if (c) return 1; }`.
 @(private)
 inferred_result :: proc(c: ^Checker, body: ast.Node_ID, returns: []Type_ID) -> Type_ID {
-	if len(returns) == 0 {
+	if len(returns) == 0 || every_return_is_bare(returns) {
 		return VOID
 	}
 
 	widened := make([dynamic]Type_ID, 0, len(returns) + 1, context.temp_allocator)
 	for type in returns {
-		append(&widened, widen(&c.table, type))
+		append(&widened, UNDEFINED if type == VOID else widen(&c.table, type))
 	}
 	if falls_through(c, body) {
 		append(&widened, UNDEFINED)
@@ -283,9 +380,21 @@ inferred_result :: proc(c: ^Checker, body: ast.Node_ID, returns: []Type_ID) -> T
 	return union_type(&c.table, widened[:])
 }
 
-// falls_through reports whether control can reach the end of a body. bind already knows: it leaves
-// the flow after a `return` unreachable, and records the flow left at the end of the body block. An
-// arrow written without braces is its own value and always produces one.
+@(private)
+every_return_is_bare :: proc(returns: []Type_ID) -> bool {
+	for type in returns {
+		if type != VOID {
+			return false
+		}
+	}
+	return true
+}
+
+// falls_through reports whether control can reach the end of a body. The flow at the end of a block
+// is where the paths through it join, and a join is a node whether or not anything arrives, so the
+// question is asked of the graph: reaches_start walks back and stops at a `return`, at a call that
+// never returns and at an exhausted `switch`. An arrow written without braces is its own value and
+// always produces one.
 @(private)
 falls_through :: proc(c: ^Checker, body: ast.Node_ID) -> bool {
 	if body == ast.NO_NODE {
@@ -294,7 +403,7 @@ falls_through :: proc(c: ^Checker, body: ast.Node_ID) -> bool {
 	if _, is_block := c.at.tree.nodes[body].variant.(ast.Block); !is_block {
 		return false
 	}
-	return c.at.bound.node_flow[body] != bind.UNREACHABLE
+	return reaches_start(c, c.at.bound.node_flow[body])
 }
 
 // check_body reads the body of a function or an arrow. returns is non-nil while the result is being
@@ -308,9 +417,13 @@ check_body :: proc(c: ^Checker, body: ast.Node_ID, result: Type_ID, returns: ^[d
 
 	previous_result, previous_returns := c.at.result, c.at.returns
 	c.at.result, c.at.returns = result, returns
+	// The body runs after every declaration around it has its type, which is what lets a name
+	// inside it refer to a declaration whose own type is still being worked out.
+	c.depth += 1
 	defer {
 		c.at.result = previous_result
 		c.at.returns = previous_returns
+		c.depth -= 1
 	}
 
 	if block, is_block := c.at.tree.nodes[body].variant.(ast.Block); is_block {

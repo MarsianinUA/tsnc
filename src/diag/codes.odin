@@ -77,6 +77,10 @@ Code :: enum u16 {
 	Needless_Non_Null, // {0} is the type `!` was written after
 	No_Overlap, // {0} and {1} are the two types being compared
 	Not_Iterable, // {0} is the type written after `of`
+	Missing_Return, // {0} is the result the function declares
+	Used_Before_Assigned, // {0} is the name
+	Assign_To_Function, // {0} is the name
+	Circular_Initializer, // {0} is the name
 
 	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
 	// need a file system to decide, program (T3.1) the one that needs the whole module graph, and
@@ -357,7 +361,7 @@ REGISTRY := [Code]Row {
 	.Recursive_Return_Type = {
 		number = 3010,
 		text = "the return type of `{0}` cannot be inferred, because it refers to itself",
-		hint = "write the return type after the parameters, as `function {0}(): number`",
+		hint = "write the return type after the parameters, as `function {0}(): number` or `const {0} = (): number => ...`",
 	},
 	.Field_Not_Found = {
 		number = 3011,
@@ -423,6 +427,26 @@ REGISTRY := [Code]Row {
 		number = 3023,
 		text = "type `{0}` cannot be looped over with `for...of`",
 		hint = "loop over an array or a string; for anything else use a `for` loop with an index, or take the array a field holds",
+	},
+	.Missing_Return = {
+		number = 3024,
+		text = "this function can end without a `return`, and its result `{0}` does not include `undefined`",
+		hint = "add a `return` at the end, or write the result as `{0} | undefined`",
+	},
+	.Used_Before_Assigned = {
+		number = 3025,
+		text = "`{0}` may be read before it is given a value",
+		hint = "assign on every path that leads here, or give it an initial value; a variable that is exported, or read inside a `function` declaration or an arrow made before the assignment, needs an initial value or `| undefined`, because tsnc has no runtime check behind the read",
+	},
+	.Assign_To_Function = {
+		number = 3026,
+		text = "cannot assign to `{0}`, which is a function",
+		hint = "declare `let {0} = (...) => ...` if the name has to hold another function later",
+	},
+	.Circular_Initializer = {
+		number = 3027,
+		text = "the type of `{0}` cannot be inferred, because its initializer refers to itself",
+		hint = "write the type after the name, as `let {0}: number = ...`",
 	},
 	.Redeclared_Name = {
 		number = 4001,

@@ -554,7 +554,7 @@ write_decl_key :: proc(b: ^strings.Builder, decl: Decl_Ref) {
 // compare_types orders two types by structure: negative when a comes first, zero when they are one
 // type. It reads no Type_ID as a number, so two checkers that built one union independently sort it
 // the same way. It terminates because the one type that can hold itself, a named object, is settled
-// by its field names and its declaration before anything looks at a field type.
+// by its declaration before anything looks at a field type.
 @(private)
 compare_types :: proc(types: []Type, a, b: Type_ID) -> int {
 	if a == b {
@@ -939,8 +939,22 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 // call the source accepts. So the source may ask for fewer arguments but never for more, each
 // parameter is compared the other way round, and the result has to fit unless the target throws it
 // away.
+//
+// A rest parameter arrives as one array and a positional one as a value, so a signature with one
+// and a signature without are passed differently and neither is the other: the same argument arrays
+// are invariant for (requirements 3.6). tsc allows some of these mixes; tsnc may be stricter where
+// its model says so (requirements 5).
+//
+// An argument the target may leave out arrives as `undefined`, so a source that insists on a value
+// in that position does not fit either.
 @(private)
 function_assignable :: proc(types: []Type, source, target: Function, trail: ^Trail) -> bool {
+	if source.variadic != target.variadic {
+		return false
+	}
+	if source.variadic && len(source.params) != len(target.params) {
+		return false
+	}
 	if !target.variadic && source.required > len(target.params) {
 		return false
 	}
@@ -948,6 +962,11 @@ function_assignable :: proc(types: []Type, source, target: Function, trail: ^Tra
 	for i in 0 ..< shared {
 		if !assignable(types, target.params[i].type, source.params[i].type, trail) {
 			return false
+		}
+		if i >= target.required && i < source.required {
+			if !assignable(types, UNDEFINED, source.params[i].type, trail) {
+				return false
+			}
 		}
 	}
 	if target.result == VOID {

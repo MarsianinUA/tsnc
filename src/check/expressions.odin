@@ -34,6 +34,9 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 		return set_type(c, id, NULL)
 	case ast.Ident:
 		_, narrowed := check_ident(c, id, v)
+		// This is where a name is read. check_ident also answers for the target of a plain
+		// `s = "a"`, which is a write and asks nothing about what the variable held before.
+		check_assigned(c, id)
 		return set_type(c, id, narrowed)
 	case ast.Template:
 		for expression in v.expressions {
@@ -146,6 +149,50 @@ check_ident :: proc(
 	set_symbol(c, id, ref)
 	declared = type_of_symbol(c, ref)
 	return declared, narrow_reference(c, id, declared)
+}
+
+// check_assigned reports a read of a `let` that no path leading here has given a value. It is the
+// rule tsc writes TS2454, and it is flow analysis rather than a look at the declaration: a variable
+// assigned in both branches of an `if` is fine, one assigned in a single branch is not.
+//
+// Three shapes tsc accepts are reported all the same. tsc assumes an outer variable is assigned
+// whenever the read stands in another function, and it can, because Node throws when that turns out
+// false; tsnc has no such check at run time, so the variable would hold garbage. The hint says what
+// to write instead.
+@(private)
+check_assigned :: proc(c: ^Checker, id: ast.Node_ID) {
+	// bind's own answer, not check's: it names a symbol for a name this file declares, and the one
+	// an import declares is an alias rather than a `let`, so starts_empty stops there. That is what
+	// keeps an exported variable, reported once at its own declaration, to one message.
+	symbol := c.at.bound.node_symbols[id]
+	if symbol == bind.NO_SYMBOL {
+		return
+	}
+	ref := Symbol_Ref {
+		file   = c.at.file,
+		symbol = symbol,
+	}
+	if !starts_empty(c, ref) || !reaches_start(c, c.at.bound.node_flow[id], id) {
+		return
+	}
+	report(c, .Used_Before_Assigned, span_of(c, id), c.at.bound.symbols[symbol].name.text)
+}
+
+// starts_empty reports whether a binding holds no value until something writes one: a `let` written
+// with a type, with no initializer, whose type does not admit `undefined`. A variable that admits it
+// simply starts as `undefined`, and a `for...of` variable has no type of its own to write.
+@(private)
+starts_empty :: proc(c: ^Checker, ref: Symbol_Ref) -> bool {
+	symbol := c.program.bound[ref.file].symbols[ref.symbol]
+	if symbol.kind != .Let || symbol.declaration == ast.NO_NODE {
+		return false
+	}
+	declaration := c.program.trees[ref.file].nodes[symbol.declaration].variant
+	node, is_declarator := declaration.(ast.Declarator)
+	if !is_declarator || node.type == ast.NO_NODE || node.init != ast.NO_NODE {
+		return false
+	}
+	return !fits(c, UNDEFINED, type_of_symbol(c, ref))
 }
 
 // Operators.
@@ -351,10 +398,13 @@ check_object_literal :: proc(
 	expected: Type_ID,
 ) -> Type_ID {
 	names := make([dynamic]string, 0, len(node.properties), context.temp_allocator)
+	tags := make([dynamic]Type_ID, 0, len(node.properties), context.temp_allocator)
 	for property_id in node.properties {
-		append(&names, c.at.tree.nodes[property_id].variant.(ast.Property).name.text)
+		property := c.at.tree.nodes[property_id].variant.(ast.Property)
+		append(&names, property.name.text)
+		append(&tags, tag_type(c, property.value))
 	}
-	target_id, target, has_target := expected_object(c, expected, names[:])
+	target_id, target, has_target := expected_object(c, expected, names[:], tags[:])
 
 	fields := make([dynamic]Field, 0, len(node.properties), context.temp_allocator)
 	for property_id in node.properties {
@@ -402,6 +452,37 @@ check_object_literal :: proc(
 	return target_id
 }
 
+// tag_type is what a property value is worth before anything is typed, where it is written out as
+// one: a discriminated union is picked by these, so every shape that can tag one answers here. A
+// tag given through a name, as `{ kind: k }`, is not one of them and is not looked at.
+//
+// `undefined` is a name in the grammar rather than a literal, and it is that name only where no
+// file declares it, which is how check_ident tells it too.
+@(private)
+tag_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
+	#partial switch v in c.at.tree.nodes[id].variant {
+	case ast.String_Literal:
+		return literal_type(&c.table, v.value)
+	case ast.Number_Literal:
+		return literal_type(&c.table, v.value)
+	case ast.Bool_Literal:
+		return literal_type(&c.table, v.value)
+	case ast.Null_Literal:
+		return NULL
+	case ast.Unary:
+		// A minus written in front of a number is part of the number, as check_unary reads it.
+		number, is_number := c.at.tree.nodes[v.operand].variant.(ast.Number_Literal)
+		if v.op == .Minus && is_number {
+			return literal_type(&c.table, -number.value)
+		}
+	case ast.Ident:
+		if v.name == "undefined" && resolve_name(c, id, v.name, .Value).symbol == bind.NO_SYMBOL {
+			return UNDEFINED
+		}
+	}
+	return ERROR
+}
+
 // check_array_literal is the type of `[1, 2, 3]`. Requirements 5 takes an array's element type from
 // its literal, so with no context it is the canonical union of the widened element types. An empty
 // literal has nothing to take it from and says so rather than guessing, since guessing would push
@@ -413,14 +494,15 @@ check_array_literal :: proc(
 	node: ast.Array_Literal,
 	expected: Type_ID,
 ) -> Type_ID {
-	if target, is_array := c.table.types[expected].(Array); is_array {
+	wanted := context_of(c, expected, .Array)
+	if target, is_array := c.table.types[wanted].(Array); is_array {
 		for element in node.elements {
 			value := check_expression(c, element, target.element)
 			if !fits(c, value, target.element) {
 				report_assign_failure(c, span_of(c, element), value, target.element)
 			}
 		}
-		return expected
+		return wanted
 	}
 
 	elements := make([dynamic]Type_ID, 0, len(node.elements), context.temp_allocator)
@@ -530,7 +612,10 @@ check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 		report(c, .Unsafe_Assertion, span_of(c, node.type), text_of(c, target))
 		return ERROR
 	}
-	if !comparable(c, value, target) {
+	// One of the two conversions has to be the whole of it: `as` may widen a value to a type that
+	// covers it, or narrow a union to a part of it, and nothing in between. That is narrower than
+	// comparable, which lets two unions through where they merely share a member.
+	if !fits(c, value, target) && !fits(c, target, value) {
 		report_types(c, .Unrelated_Assertion, span_of(c, node.expr), value, target)
 	}
 	return target
@@ -564,6 +649,11 @@ check_target :: proc(c: ^Checker, id: ast.Node_ID) -> (narrowed, declared: Type_
 @(private)
 check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	narrowed, declared := check_target(c, node.target)
+	if node.op != .Assign {
+		// `x += y` means `x = x + y`, so the target is read as well; check_target went through
+		// check_ident, which is not where a read is counted.
+		check_assigned(c, node.target)
+	}
 	writable := check_mutable(c, node.target)
 	value := check_expression(c, node.value, declared if node.op == .Assign else ERROR)
 
@@ -627,16 +717,26 @@ check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
 		if ref.symbol == bind.NO_SYMBOL {
 			return true
 		}
+		kind := c.program.bound[ref.file].symbols[ref.symbol].kind
+		if kind == .Function {
+			report(c, .Assign_To_Function, span_of(c, target), v.name)
+			return false
+		}
 		// An imported name is a binding of the other module seen from here, and ESM makes it
 		// read-only whichever keyword declared it there, so it answers as a `const` does.
-		kind := c.program.bound[ref.file].symbols[ref.symbol].kind
 		if kind == .Const || bind.is_alias(kind) {
 			report(c, .Assign_To_Const, span_of(c, target), v.name)
 			return false
 		}
 	case ast.Member:
+		if _, is_namespace := namespace_of(c, v.object); is_namespace {
+			// `m.x` through an `import * as m` names the other module's binding, which is the same
+			// binding an imported name is, so it answers the same way.
+			report(c, .Assign_To_Const, v.name.span, v.name.text)
+			return false
+		}
 		if c.at.node_types == nil {
-			return true // a file of another partition, whose diagnostics are dropped anyway
+			return true // a generic lib declaration being instantiated records no facts
 		}
 		field, found := field_of(c, c.at.node_types[v.object], v.name.text)
 		if found && field.readonly {
@@ -730,26 +830,172 @@ parameter_at :: proc(c: ^Checker, function: Function, index: int) -> Type_ID {
 // parameter with no annotation its type from the signature the arrow is going into, so
 // `arr.map(x => x * 2)` needs no `x: number`.
 //
-// The result is never taken from the context, only the parameters: the body's own answer is what a
-// call reads `U` back out of, and what a context asked for is checked afterwards by fits.
+// The result is taken from the context too, where the context asks for one that holds no type
+// variable and the body delivers it. A type variable is exactly what a call reads back out of the
+// body, so `map<U>` and `reduce<U>` keep inferring; everything else reads better with the context,
+// because `r => ({ kind: "circle", r: r })` has to keep `kind` a literal.
+//
+// declaration is the node this arrow is the initializer of, when there is one. The signature lands
+// there before the body goes in, so that a call to the name inside the body finds it.
 @(private)
-check_arrow :: proc(c: ^Checker, node: ast.Arrow, expected := ERROR) -> Type_ID {
-	contextual: []Param
-	if signature, is_function := c.table.types[expected].(Function); is_function {
-		contextual = signature.params
+check_arrow :: proc(
+	c: ^Checker,
+	node: ast.Arrow,
+	expected := ERROR,
+	declaration := ast.NO_NODE,
+) -> Type_ID {
+	contextual: Maybe(Function)
+	given := context_of(c, expected, .Function)
+	if signature, is_function := c.table.types[given].(Function); is_function {
+		contextual = signature
 	}
 	params, required, variadic := resolve_params(c, node.params, contextual)
 
 	if node.return_type != ast.NO_NODE {
 		result := resolve_type(c, node.return_type)
+		type := function_type(&c.table, params, result, required, variadic)
+		if declaration != ast.NO_NODE {
+			set_type(c, declaration, type)
+		}
 		check_body(c, node.body, result, nil)
-		return function_type(&c.table, params, result, required, variadic)
+		check_result_reached(c, node.body, node.return_type, result)
+		return type
 	}
 
+	wanted := contextual_result(c, contextual)
 	returns := make([dynamic]Type_ID, 0, 4, context.temp_allocator)
-	check_body(c, node.body, ERROR, &returns)
+	check_body(c, node.body, wanted, &returns)
+	if wanted != ERROR && returns_fit(c, node.body, returns[:], wanted) {
+		return function_type(&c.table, params, wanted, required, variadic)
+	}
+
 	result := inferred_result(c, node.body, returns[:])
 	return function_type(&c.table, params, result, required, variadic)
+}
+
+// contextual_result is the result an arrow's body may be typed against: the one the context asks
+// for, where the context is a signature whose result is known and holds no type variable anywhere
+// inside it.
+@(private)
+contextual_result :: proc(c: ^Checker, contextual: Maybe(Function)) -> Type_ID {
+	signature, has_signature := contextual.?
+	if !has_signature || signature.result == ERROR || has_type_var(c, signature.result) {
+		return ERROR
+	}
+	return signature.result
+}
+
+// returns_fit reports whether every path out of a body gives a value the contextual result takes: a
+// bare `return`, which is VOID here and `undefined` in the result, and running off the end as well.
+// A body with no `return` at all has nothing to take the context on.
+@(private)
+returns_fit :: proc(c: ^Checker, body: ast.Node_ID, returns: []Type_ID, result: Type_ID) -> bool {
+	if len(returns) == 0 {
+		return false
+	}
+	for type in returns {
+		if !fits(c, UNDEFINED if type == VOID else type, result) {
+			return false
+		}
+	}
+	return !falls_through(c, body) || fits(c, UNDEFINED, result)
+}
+
+// has_type_var reports whether a type holds a type variable anywhere inside it. A named object is
+// settled by its arguments: `Array<U>` holds `U` there, and a field of it holds nothing the
+// arguments do not, while asking the fields would not end for an interface that names itself.
+@(private)
+has_type_var :: proc(c: ^Checker, id: Type_ID) -> bool {
+	switch v in c.table.types[id] {
+	case Basic_Kind, Literal:
+		return false
+	case Type_Var:
+		return true
+	case Array:
+		return has_type_var(c, v.element)
+	case Union:
+		for member in v.members {
+			if has_type_var(c, member) {
+				return true
+			}
+		}
+	case Overload:
+		for signature in v.signatures {
+			if has_type_var(c, signature) {
+				return true
+			}
+		}
+	case Function:
+		for param in v.params {
+			if has_type_var(c, param.type) {
+				return true
+			}
+		}
+		return has_type_var(c, v.result)
+	case Object:
+		for arg in v.args {
+			if has_type_var(c, arg) {
+				return true
+			}
+		}
+		if v.decl != NO_DECL {
+			return false
+		}
+		for field in v.fields {
+			if has_type_var(c, field.type) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Shape is what an expression needs of the type it is going into: an array literal needs an array,
+// an arrow needs a signature.
+@(private)
+Shape :: enum u8 {
+	Array,
+	Function,
+}
+
+// context_of is the part of an expected type an expression can read. An optional parameter and a
+// variable written `T | undefined` are unions, and a literal going into one has to look through it
+// the way an object literal already does: the answer is the type itself where it has the shape, the
+// one member of a union that has it, and the error type where none or several do.
+@(private)
+context_of :: proc(c: ^Checker, expected: Type_ID, shape: Shape) -> Type_ID {
+	if has_shape(c, expected, shape) {
+		return expected
+	}
+	members, is_union := c.table.types[expected].(Union)
+	if !is_union {
+		return ERROR
+	}
+
+	found := ERROR
+	for member in members.members {
+		if !has_shape(c, member, shape) {
+			continue
+		}
+		if found != ERROR {
+			return ERROR // two members of the shape leave a choice nothing here can make
+		}
+		found = member
+	}
+	return found
+}
+
+@(private)
+has_shape :: proc(c: ^Checker, id: Type_ID, shape: Shape) -> bool {
+	switch shape {
+	case .Array:
+		_, is_array := c.table.types[id].(Array)
+		return is_array
+	case .Function:
+		_, is_function := c.table.types[id].(Function)
+		return is_function
+	}
+	return false
 }
 
 // Reading a type.

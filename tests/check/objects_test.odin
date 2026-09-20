@@ -338,3 +338,58 @@ reading_a_field_that_is_not_there_is_reported :: proc(t: ^testing.T) {
 		[]Error{{.Field_Not_Found, 3, 13}},
 	)
 }
+
+// A literal into a union.
+
+@(test)
+a_literal_picks_the_member_of_a_union_its_tag_names :: proc(t: ^testing.T) {
+	// The members have the same field names, so only the literal the tag is written with tells
+	// them apart. Picking by names alone would always land on the first.
+	c := expect_checked(
+		t,
+		lines(
+			`interface Add { kind: "add"; left: number; right: number; }`, //
+			`interface Sub { kind: "sub"; left: number; right: number; }`,
+			`const plus: Add | Sub = { kind: "add", left: 1, right: 2 };`,
+			`const minus: Add | Sub = { kind: "sub", left: 1, right: 2 };`,
+			`function value(n: Add | Sub): number { return n.left; }`,
+			`const answer = value({ kind: "sub", left: 1, right: 2 });`,
+			`const echoed = minus;`,
+		),
+	)
+
+	// The declaration keeps the type it was written with; the literal's own answer is what the
+	// write left behind, which a read after it holds.
+	testing.expect_value(t, declared_text(c, "echoed"), "Sub")
+}
+
+@(test)
+a_literal_whose_tag_fits_no_member_is_reported_once :: proc(t: ^testing.T) {
+	// No member takes the tag, so the second pass picks by names alone and the value is measured
+	// against that one: one mistake, one message.
+	expect_errors(
+		t,
+		lines(
+			`interface Add { kind: "add"; left: number; }`, //
+			`interface Sub { kind: "sub"; left: number; }`,
+			`const times: Add | Sub = { kind: "mul", left: 1 };`,
+		),
+		[]Error{{.Type_Mismatch, 3, 34}},
+	)
+}
+
+@(test)
+a_tag_written_as_a_name_falls_back_to_the_field_names :: proc(t: ^testing.T) {
+	// `{ kind: k }` says nothing before anything is typed, so the choice is the first member the
+	// names fit, and the value is measured against it.
+	expect_errors(
+		t,
+		lines(
+			`interface Add { kind: "add"; left: number; }`, //
+			`interface Sub { kind: "sub"; left: number; }`,
+			`const k: "sub" = "sub";`,
+			`const times: Add | Sub = { kind: k, left: 1 };`,
+		),
+		[]Error{{.Type_Mismatch, 4, 34}},
+	)
+}

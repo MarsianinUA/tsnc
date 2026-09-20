@@ -185,8 +185,9 @@ for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID, element: Type_ID)
 }
 
 // check_return checks a `return` against the declared result, or records what it gives so that the
-// result can be worked out from all of them together. A bare `return` gives nothing to that, as in
-// tsc, so a body that returns no value at all is `void`.
+// result can be worked out from all of them together. A bare `return` leaves VOID as a marker:
+// inferred_result reads it as `void` where every `return` is bare, which is what tsc infers for a
+// body that returns no value at all, and as `undefined` where one of them does return a value.
 //
 // At the top level of a module there is no function and no declared result, so a stray `return`
 // value is measured against the error type and passes. Whether it may stand there at all is bind's
@@ -194,7 +195,11 @@ for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID, element: Type_ID)
 @(private)
 check_return :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Return) {
 	if node.value == ast.NO_NODE {
-		if c.at.returns == nil && !fits(c, UNDEFINED, c.at.result) {
+		if c.at.returns != nil {
+			append(c.at.returns, VOID)
+			return
+		}
+		if !fits(c, UNDEFINED, c.at.result) {
 			report_types(c, .Type_Mismatch, span_of(c, id), UNDEFINED, c.at.result)
 		}
 		return

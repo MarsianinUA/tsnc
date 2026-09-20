@@ -1,5 +1,6 @@
 package check_tests
 
+import "core:strings"
 import "core:testing"
 
 import "../../src/source"
@@ -321,6 +322,43 @@ a_write_of_the_wrong_type_is_still_reported_inside_a_narrowing :: proc(t: ^testi
 	)
 }
 
+@(test)
+a_write_to_the_object_drops_what_was_known_about_its_field :: proc(t: ^testing.T) {
+	// The write lands on `b` and not on `b.v`, but it is what `b.v` is read through, so the test
+	// above it says nothing about the new value.
+	expect_errors(
+		t,
+		lines(
+			`interface Box { v: number | undefined; }`, //
+			`function f(b: Box, other: Box): void {`,
+			`if (b.v !== undefined) {`,
+			`b = other;`,
+			`const n: number = b.v;`,
+			`}`,
+			`}`,
+		),
+		[]Error{{.Type_Mismatch, 5, 19}},
+	)
+}
+
+@(test)
+a_write_to_another_name_keeps_what_was_known_about_a_field :: proc(t: ^testing.T) {
+	c := expect_checked(
+		t,
+		lines(
+			`interface Box { v: number | undefined; }`, //
+			`function f(b: Box, k: number): void {`,
+			`if (b.v !== undefined) {`,
+			`k = 1;`,
+			`const n: number = b.v;`,
+			`}`,
+			`}`,
+		),
+	)
+
+	testing.expect_value(t, member_text(c, "v", 1), "number")
+}
+
 // Loops.
 
 @(test)
@@ -393,6 +431,170 @@ a_narrowing_does_not_carry_into_an_arrow_when_the_name_is_written_to :: proc(t: 
 		),
 		[]Error{{.Field_Not_Found, 3, 29}},
 	)
+}
+
+@(test)
+a_loop_body_with_many_branches_is_walked_once :: proc(t: ^testing.T) {
+	// An answer worked out under a back edge is kept until the loop that cut it has been
+	// evaluated, so a run of N branches in a body costs N walks and not one per path, which is
+	// 2^N. Without that this program does not finish.
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "function count(k: number, v: string | number): number {\n")
+	strings.write_string(&b, "let t = 0;\n")
+	strings.write_string(&b, "let x: string | number = v;\n")
+	strings.write_string(&b, "while (t < 10) {\n")
+	for i in 0 ..< 40 {
+		strings.write_string(&b, "if (k === ")
+		strings.write_int(&b, i)
+		strings.write_string(&b, ") { t = t + ")
+		strings.write_int(&b, i)
+		strings.write_string(&b, "; }\n")
+	}
+	strings.write_string(&b, `if (typeof x === "string") { t = t + 1; }`)
+	strings.write_string(&b, "\n}\nreturn t;\n}")
+
+	c := expect_checked(t, strings.to_string(b))
+	testing.expect_value(t, use_text(c, "x", 0), "number | string")
+}
+
+@(test)
+a_break_out_of_a_loop_carries_what_the_body_left :: proc(t: ^testing.T) {
+	// The `break` leaves the loop while the condition still holds, so after it the value is
+	// whatever the head held rather than what the condition ruled out.
+	expect_errors(
+		t,
+		lines(
+			`function run(c: boolean, v: string | number): void {`, //
+			`let x: string | number = v;`,
+			`let t = 0;`,
+			`while (typeof x === "string") {`,
+			`if (c) { break; }`,
+			`t = t + 1;`,
+			`}`,
+			`const n: number = x;`,
+			`}`,
+		),
+		[]Error{{.Type_Mismatch, 8, 19}},
+	)
+}
+
+// Calls that never return.
+
+@(test)
+a_call_that_never_returns_ends_the_path_it_stands_on :: proc(t: ^testing.T) {
+	// `process.exit` answers `never`, so the branch that called it reaches nothing below the `if`,
+	// and the join after it holds only the other one.
+	c := expect_checked(
+		t,
+		lines(
+			`function size(x: string | undefined): number {`, //
+			`if (x === undefined) { process.exit(1); }`,
+			`return x.length;`,
+			`}`,
+		),
+	)
+
+	testing.expect_value(t, use_text(c, "x", 1), "string")
+}
+
+@(test)
+a_read_after_a_call_that_never_returns_keeps_the_declared_type :: proc(t: ^testing.T) {
+	// Code nothing reaches is not narrowed, so the read is still the union it was declared with
+	// and the field it does not have is still reported once.
+	c := check_text(
+		t,
+		lines(
+			`function size(x: string | number): number {`, //
+			`process.exit(1);`,
+			`return x.length;`,
+			`}`,
+		),
+	)
+
+	testing.expect_value(t, use_text(c, "x", 0), "number | string")
+}
+
+// `switch` and `default`.
+
+@(test)
+a_default_clause_narrows_to_what_the_cases_left :: proc(t: ^testing.T) {
+	// The exhaustiveness idiom: every value of the union matched a case, so `default` is entered
+	// with nothing left, and `never` is what a value that cannot occur is worth.
+	expect_checked(
+		t,
+		lines(
+			`type Kind = "a" | "b" | "c";`, //
+			`function name(k: Kind): number {`,
+			`switch (k) {`,
+			`case "a": return 1;`,
+			`case "b": return 2;`,
+			`case "c": return 3;`,
+			`default: {`,
+			`const unreachable: never = k;`,
+			`return unreachable;`,
+			`}`,
+			`}`,
+			`}`,
+		),
+	)
+}
+
+@(test)
+a_default_clause_narrows_a_discriminated_union :: proc(t: ^testing.T) {
+	expect_checked(
+		t,
+		lines(
+			SHAPE_TYPES, //
+			`function area(s: Shape): number {`,
+			`switch (s.kind) {`,
+			`case "circle": return s.r;`,
+			`case "square": return s.side;`,
+			`default: {`,
+			`const unreachable: never = s;`,
+			`return unreachable;`,
+			`}`,
+			`}`,
+			`}`,
+		),
+	)
+}
+
+@(test)
+a_default_clause_of_a_switch_that_leaves_a_member_keeps_it :: proc(t: ^testing.T) {
+	c := expect_checked(
+		t,
+		lines(
+			`function name(k: "a" | "b" | "c"): string {`, //
+			`switch (k) {`,
+			`case "a": return "first";`,
+			`default: return k;`,
+			`}`,
+			`}`,
+		),
+	)
+
+	testing.expect_value(t, use_text(c, "k", 1), `"b" | "c"`)
+}
+
+// An optional discriminant.
+
+@(test)
+an_optional_discriminant_survives_a_test_against_undefined :: proc(t: ^testing.T) {
+	// `kind?: "a"` reads as `"a" | undefined`, so a value of that member can be the one the test
+	// found; narrowing the union to `never` would make the branch below unreachable.
+	c := expect_checked(
+		t,
+		lines(
+			`interface Loose { kind?: "a"; left: number; }`, //
+			`interface Tight { kind: "b"; right: number; }`,
+			`function pick(s: Loose | Tight): number {`,
+			`if (s.kind === undefined) { return s.left; }`,
+			`return 0;`,
+			`}`,
+		),
+	)
+
+	testing.expect_value(t, use_text(c, "s", 1), "Loose")
 }
 
 // Determinism.

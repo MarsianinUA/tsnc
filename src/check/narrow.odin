@@ -3,6 +3,24 @@ package check
 import "../ast"
 import "../bind"
 
+// NO_CUT is the cut of an answer no back edge was cut under. See Answer.
+@(private)
+NO_CUT :: max(int)
+
+// Answer is what one walk worked out at a flow node: the type the reference holds there, and
+// whether any path arrives there at all. The two used to be one, with `never` standing for both,
+// and they are not the same thing: an exhausted union is a type, while code nothing reaches is not
+// narrowed at all.
+@(private)
+Answer :: struct {
+	type:    Type_ID,
+	reached: bool,
+	// The shallowest index into Narrowing.loops of a head whose back edge was cut while this
+	// answer was worked out, and NO_CUT where none was. Such an answer holds only until that loop
+	// has been evaluated, because the head then contributes what the back edge did not.
+	cut:     int,
+}
+
 // Narrowing is the state of one walk over the flow graph. One buffer serves the whole check: the
 // walk reads facts check has already recorded and never calls check_expression, so no second walk
 // can be running while this one is, which is the argument Trail makes for fits.
@@ -11,17 +29,24 @@ Narrowing :: struct {
 	// The answer already worked out for a flow node of this walk, cleared before the next one. It
 	// is read by key alone: Odin's map iteration order changes between runs, and a narrowed type
 	// reaches the output. Without it a run of branches would be walked once per path through it.
-	answers: map[bind.Flow_ID]Type_ID,
+	answers:    map[bind.Flow_ID]Answer,
 	// The loop heads the walk is inside right now. A back edge that reaches one again contributes
 	// nothing, which is what makes the walk end.
-	loops:   [dynamic]bind.Flow_ID,
+	loops:      [dynamic]bind.Flow_ID,
+	// The nodes whose kept answer carries a cut, in the order they were kept. loop_type drops the
+	// ones its own evaluation added.
+	partial:    [dynamic]bind.Flow_ID,
+	// The cut of the answer being worked out right now. See Answer.
+	lowest_cut: int,
 }
 
 @(private)
 make_narrowing :: proc(allocator := context.allocator) -> Narrowing {
 	return {
-		answers = make(map[bind.Flow_ID]Type_ID, allocator),
+		answers = make(map[bind.Flow_ID]Answer, allocator),
 		loops = make([dynamic]bind.Flow_ID, 0, 8, allocator),
+		partial = make([dynamic]bind.Flow_ID, 0, 8, allocator),
+		lowest_cut = NO_CUT,
 	}
 }
 
@@ -50,23 +75,35 @@ narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Typ
 
 	clear(&c.narrowing.answers)
 	clear(&c.narrowing.loops)
-	return flow_type(c, flow, id, declared)
+	clear(&c.narrowing.partial)
+	c.narrowing.lowest_cut = NO_CUT
+
+	answer := flow_type(c, flow, id, declared)
+	// Code nothing reaches is not narrowed: a `never` there would only make the next read of the
+	// value report a field that the value does have. A reached `never` is the other thing, a union
+	// whose members the tests on the way here have all ruled out, and it is let through.
+	return answer.type if answer.reached else declared
 }
 
 // The walk.
 
-// flow_type is the type of the reference at one node of the flow graph. The nodes that say nothing
-// about this reference are stepped over in a loop rather than by recursion: a long run of writes to
-// other names is the one shape that could otherwise grow the stack with the size of a function.
+// flow_type is the answer for the reference at one node of the flow graph. The nodes that say
+// nothing about this reference are stepped over in a loop rather than by recursion: a long run of
+// writes to other names is the one shape that could otherwise grow the stack with the size of a
+// function.
+//
+// An answer is kept for the rest of the walk, or, when a back edge was cut while it was worked out,
+// until the loop that cut it has been evaluated. Without that a loop body with a run of N `if`
+// statements would be walked once per path through it, which is 2^N.
 @(private)
 flow_type :: proc(
 	c: ^Checker,
 	start: bind.Flow_ID,
 	reference: ast.Node_ID,
 	declared: Type_ID,
-) -> Type_ID {
-	if answer, found := c.narrowing.answers[start]; found {
-		return answer
+) -> Answer {
+	if hit, found := cached(c, start); found {
+		return hit
 	}
 
 	flow := start
@@ -77,15 +114,50 @@ flow_type :: proc(
 		}
 		flow = next
 	}
+	// The step-over walked on before anything was worked out, and the node it stopped on may have
+	// an answer of its own: the head of a `for...of` is reached both directly and through the
+	// assignment that gives the loop variable its element.
+	if hit, found := cached(c, flow); found {
+		return hit
+	}
 
-	answer := settled_type(c, flow, reference, declared)
-	if len(c.narrowing.loops) == 0 {
-		// An answer worked out under a back edge is only part of that loop's answer, so it is not
-		// kept: another path would then read a fact that holds one way round the loop and not the
-		// next.
-		c.narrowing.answers[start] = answer
+	outer := c.narrowing.lowest_cut
+	c.narrowing.lowest_cut = NO_CUT
+	type, reached := settled_type(c, flow, reference, declared)
+	mine := c.narrowing.lowest_cut
+	c.narrowing.lowest_cut = min(outer, mine)
+
+	answer := Answer {
+		type    = type,
+		reached = reached,
+		cut     = mine,
+	}
+	remember(c, start, answer)
+	if flow != start {
+		remember(c, flow, answer)
 	}
 	return answer
+}
+
+// cached is the answer this walk already has for a node. Reading one is borrowing its cut: the
+// answer being worked out is no better than the answers it was built from.
+@(private)
+cached :: proc(c: ^Checker, flow: bind.Flow_ID) -> (hit: Answer, found: bool) {
+	hit, found = c.narrowing.answers[flow]
+	if found {
+		c.narrowing.lowest_cut = min(c.narrowing.lowest_cut, hit.cut)
+	}
+	return hit, found
+}
+
+// remember keeps an answer for the nodes that lead to it. One with a cut goes on the partial list
+// as well, so that the loop it was cut under can drop it again.
+@(private)
+remember :: proc(c: ^Checker, flow: bind.Flow_ID, answer: Answer) {
+	c.narrowing.answers[flow] = answer
+	if answer.cut != NO_CUT {
+		append(&c.narrowing.partial, flow)
+	}
 }
 
 // steps_over answers with the node before this one where this one says nothing about the reference:
@@ -120,12 +192,13 @@ settled_type :: proc(
 	flow: bind.Flow_ID,
 	reference: ast.Node_ID,
 	declared: Type_ID,
-) -> Type_ID {
+) -> (
+	type: Type_ID,
+	reached: bool,
+) {
 	switch node in c.at.bound.flow[flow] {
 	case bind.Flow_Unreachable:
-		// Code nothing reaches is not narrowed. A `never` here would only make the next read of the
-		// value report a field that the value does have.
-		return declared
+		return declared, false
 	case bind.Flow_Start:
 		return start_type(c, node, reference, declared)
 	case bind.Flow_Branch:
@@ -134,17 +207,29 @@ settled_type :: proc(
 		return loop_type(c, flow, node.antecedents, reference, declared)
 	case bind.Flow_Assignment:
 		written, _ := written_type(c, node.node, reference)
-		return reduce_to_assigned(c, declared, written)
+		return reduce_to_assigned(c, declared, written), true
 	case bind.Flow_Condition:
 		before := flow_type(c, node.antecedent, reference, declared)
-		return condition_type(c, node, reference, before)
+		if !before.reached {
+			return before.type, false
+		}
+		return condition_type(c, node, reference, before.type), true
 	case bind.Flow_Switch_Clause:
 		before := flow_type(c, node.antecedent, reference, declared)
-		return switch_clause_type(c, node, reference, before)
+		if !before.reached {
+			return before.type, false
+		}
+		if node.clause_start == node.clause_end && switch_exhausted(c, node) {
+			// Every value the subject can hold matched a case, so the path bind draws for "nothing
+			// matched" is no path at all.
+			return before.type, false
+		}
+		return switch_clause_type(c, node, reference, before.type), true
 	case bind.Flow_Call:
-		return declared // the call never returns, so nothing before it reaches this point
+		// The callee returns `never`, so no path goes on past the call.
+		return NEVER, false
 	}
-	return declared
+	return declared, true
 }
 
 // start_type is what a reference is worth at the start of a function. An arrow keeps the flow where
@@ -160,32 +245,52 @@ start_type :: proc(
 	node: bind.Flow_Start,
 	reference: ast.Node_ID,
 	declared: Type_ID,
-) -> Type_ID {
+) -> (
+	type: Type_ID,
+	reached: bool,
+) {
 	if node.outer == bind.UNREACHABLE || assigned_anywhere(c, reference) {
-		return declared
+		return declared, true
 	}
-	return flow_type(c, node.outer, reference, declared)
+	answer := flow_type(c, node.outer, reference, declared)
+	return answer.type, answer.reached
 }
 
-// joined_type is the type where paths meet: the value is whatever any one of them left.
+// joined_type is the type where paths meet: the value is whatever any one of the paths that arrive
+// left. A path that arrives nowhere contributes nothing, and a join no path arrives at is itself
+// not reached.
 @(private)
 joined_type :: proc(
 	c: ^Checker,
 	antecedents: []bind.Flow_ID,
 	reference: ast.Node_ID,
 	declared: Type_ID,
-) -> Type_ID {
+) -> (
+	type: Type_ID,
+	reached: bool,
+) {
 	parts := make([dynamic]Type_ID, 0, len(antecedents), context.temp_allocator)
 	for antecedent in antecedents {
-		append(&parts, flow_type(c, antecedent, reference, declared))
+		answer := flow_type(c, antecedent, reference, declared)
+		if !answer.reached {
+			continue
+		}
+		reached = true
+		append(&parts, answer.type)
 	}
-	return union_type(&c.table, parts[:])
+	if !reached {
+		return declared, false
+	}
+	return union_type(&c.table, parts[:]), true
 }
 
 // loop_type is the type at the head of a loop: the path that enters it joined with what comes back
 // from the body. A back edge that reaches the head again finds it on the stack and contributes
-// nothing, which is what makes the walk end; a head left with nothing at all answers with the
-// declared type rather than `never`.
+// nothing, which is what makes the walk end.
+//
+// Every cycle of the graph passes a loop head, and that head is on the stack between an open
+// flow_type frame and a second entry into the same node, so an answer worked out under a back edge
+// always carries a cut and is dropped here, before the frame outside the loop keeps its own.
 @(private)
 loop_type :: proc(
 	c: ^Checker,
@@ -193,17 +298,33 @@ loop_type :: proc(
 	antecedents: []bind.Flow_ID,
 	reference: ast.Node_ID,
 	declared: Type_ID,
-) -> Type_ID {
-	for head in c.narrowing.loops {
+) -> (
+	type: Type_ID,
+	reached: bool,
+) {
+	for head, depth in c.narrowing.loops {
 		if head == flow {
-			return NEVER
+			c.narrowing.lowest_cut = min(c.narrowing.lowest_cut, depth)
+			return NEVER, false
 		}
 	}
 
+	mark := len(c.narrowing.partial)
+	depth := len(c.narrowing.loops)
 	append(&c.narrowing.loops, flow)
-	defer pop(&c.narrowing.loops)
-	joined := joined_type(c, antecedents, reference, declared)
-	return declared if joined == NEVER else joined
+	type, reached = joined_type(c, antecedents, reference, declared)
+	pop(&c.narrowing.loops)
+
+	for id in c.narrowing.partial[mark:] {
+		delete_key(&c.narrowing.answers, id)
+	}
+	resize(&c.narrowing.partial, mark)
+	if c.narrowing.lowest_cut >= depth {
+		// Every cut made while this loop was evaluated was cut at this head or at one nested in
+		// it, and both have now been settled, so the answer no longer depends on the stack.
+		c.narrowing.lowest_cut = NO_CUT
+	}
+	return type, reached
 }
 
 // Writes.
@@ -211,6 +332,10 @@ loop_type :: proc(
 // written_type is what one write left in the reference, and whether it wrote there at all. A
 // declarator writes to the name it declares rather than to an expression, so it is matched by
 // symbol; the other three write to a place spelled out in the source.
+//
+// A write to something the reference is read through counts too: `b = other` leaves nothing known
+// about `b.v`. The value is then unknown, which is the error type, and reduce_to_assigned turns
+// that back into the declared type.
 //
 // A `for...of` writes an element of the iterable into its loop variable, which for_of_variable
 // recorded on the declarator, so the write is read from there.
@@ -228,21 +353,70 @@ written_type :: proc(
 		if declares_reference(c, id, reference) {
 			return recorded_type(c, v.init), true
 		}
+		if declares_root(c, id, reference) {
+			return ERROR, true
+		}
 	case ast.Assign:
 		if same_reference(c, v.target, reference) {
 			return recorded_type(c, id), true // the assignment holds what the target now has
+		}
+		if writes_prefix_of(c, v.target, reference) {
+			return ERROR, true
 		}
 	case ast.Update:
 		if same_reference(c, v.operand, reference) {
 			return NUMBER, true // `++` and `--` always leave a number behind
 		}
+		if writes_prefix_of(c, v.operand, reference) {
+			return ERROR, true
+		}
 	case ast.For_Of:
-		if declarator := loop_declarator(c, v.declaration);
-		   declares_reference(c, declarator, reference) {
+		declarator := loop_declarator(c, v.declaration)
+		if declares_reference(c, declarator, reference) {
 			return recorded_type(c, declarator), true
+		}
+		if declares_root(c, declarator, reference) {
+			return ERROR, true
 		}
 	}
 	return ERROR, false
+}
+
+// writes_prefix_of reports whether a write lands on a place the reference is read through: `b` and
+// `b.v` are both prefixes of `b.v.w`. The reference itself is not one of them, since its callers
+// have already asked about that.
+@(private)
+writes_prefix_of :: proc(c: ^Checker, target, reference: ast.Node_ID) -> bool {
+	for object := object_of(c, reference); object != ast.NO_NODE; object = object_of(c, object) {
+		if same_reference(c, target, object) {
+			return true
+		}
+	}
+	return false
+}
+
+// object_of is the place a reference is read through: `o.a` of `o.a[0]`, and nothing for a name.
+@(private)
+object_of :: proc(c: ^Checker, id: ast.Node_ID) -> ast.Node_ID {
+	unwrapped := unwrap_reference(c, id)
+	if unwrapped == ast.NO_NODE {
+		return ast.NO_NODE
+	}
+	#partial switch v in c.at.tree.nodes[unwrapped].variant {
+	case ast.Member:
+		return v.object
+	case ast.Index:
+		return v.object
+	}
+	return ast.NO_NODE
+}
+
+// declares_root reports whether a declaring node introduces the name a reference is built on, which
+// leaves what was known about a field of it worthless.
+@(private)
+declares_root :: proc(c: ^Checker, declaration, reference: ast.Node_ID) -> bool {
+	root := root_name(c, reference)
+	return root != reference && declares_reference(c, declaration, root)
 }
 
 // reduce_to_assigned is what a union holds right after a write: the members the written value could
@@ -412,27 +586,45 @@ switch_clause_type :: proc(
 ) -> Type_ID {
 	statement := c.at.tree.nodes[node.statement].variant.(ast.Switch)
 	if node.clause_start == node.clause_end {
-		answer := before
-		for id in statement.cases {
-			if unit, ok := case_unit(c, id); ok {
-				answer = narrow_by_place(c, answer, statement.value, unit, false, reference)
-			}
-		}
-		return answer
+		return unmatched_type(c, statement, reference, before)
 	}
 
 	count := int(node.clause_end - node.clause_start)
-	parts := make([dynamic]Type_ID, 0, count, context.temp_allocator)
+	parts := make([dynamic]Type_ID, 0, count + 1, context.temp_allocator)
 	for index in node.clause_start ..< node.clause_end {
 		unit, ok := case_unit(c, statement.cases[index])
-		if !ok {
-			// A `default` matches whatever the other cases left, and a case value that is not one
-			// value picks out no member.
+		if ok {
+			append(&parts, narrow_by_place(c, before, statement.value, unit, true, reference))
+			continue
+		}
+		if !is_default(c, statement.cases[index]) {
+			// A case value that is not one value picks out no member, so the clause can be entered
+			// with anything the subject held.
 			return before
 		}
-		append(&parts, narrow_by_place(c, before, statement.value, unit, true, reference))
+		append(&parts, unmatched_type(c, statement, reference, before))
 	}
 	return union_type(&c.table, parts[:])
+}
+
+// unmatched_type is what a place can still hold where no case of a `switch` matched: what it held
+// before, with every unit case of the whole statement ruled out. It is both the path bind draws for
+// "nothing matched" and what a `default` leaves, which is what makes `const x: never = s` in a
+// `default` the exhaustiveness check TypeScript users write.
+@(private)
+unmatched_type :: proc(
+	c: ^Checker,
+	statement: ast.Switch,
+	reference: ast.Node_ID,
+	before: Type_ID,
+) -> Type_ID {
+	answer := before
+	for id in statement.cases {
+		if unit, ok := case_unit(c, id); ok {
+			answer = narrow_by_place(c, answer, statement.value, unit, false, reference)
+		}
+	}
+	return answer
 }
 
 // case_unit is the one value a case matches, if it has one. A `default` has no value at all.
@@ -444,6 +636,128 @@ case_unit :: proc(c: ^Checker, id: ast.Node_ID) -> (unit: Type_ID, ok: bool) {
 	}
 	unit = unit_type(c, recorded_type(c, clause.value))
 	return unit, unit != ERROR
+}
+
+// is_default reports whether a clause is the `default` one, which has no value to match against.
+@(private)
+is_default :: proc(c: ^Checker, id: ast.Node_ID) -> bool {
+	return c.at.tree.nodes[id].variant.(ast.Case).value == ast.NO_NODE
+}
+
+// Reachability.
+
+// switch_exhausted reports whether the cases of a `switch` cover every value its subject can hold.
+// Both the subject and the place the subject tests are asked: `switch (s.kind)` rules out members
+// of `s` rather than values of `s.kind`, and either one running out means no value is left.
+//
+// A subject check has not typed yet reads the error type and is not exhaustive, which is the wider
+// and safer answer.
+@(private)
+switch_exhausted :: proc(c: ^Checker, node: bind.Flow_Switch_Clause) -> bool {
+	statement := c.at.tree.nodes[node.statement].variant.(ast.Switch)
+	if nothing_left(c, statement, statement.value) {
+		return true
+	}
+	return nothing_left(c, statement, tested_place(c, statement.value))
+}
+
+// nothing_left reports whether the cases of a `switch` rule out every value one place can hold.
+@(private)
+nothing_left :: proc(c: ^Checker, statement: ast.Switch, place: ast.Node_ID) -> bool {
+	before := recorded_type(c, place)
+	if before == ERROR {
+		return false
+	}
+	return unmatched_type(c, statement, place, before) == NEVER
+}
+
+// tested_place is the place a subject reads: `x` of `typeof x`, `s` of `s.kind`. Those are the two
+// shapes narrow_by_place answers for besides the place itself.
+@(private)
+tested_place :: proc(c: ^Checker, id: ast.Node_ID) -> ast.Node_ID {
+	if id == ast.NO_NODE {
+		return ast.NO_NODE
+	}
+	#partial switch v in c.at.tree.nodes[id].variant {
+	case ast.Unary:
+		if v.op == .Typeof {
+			return v.operand
+		}
+	case ast.Member:
+		return v.object
+	}
+	return ast.NO_NODE
+}
+
+// reaches_start reports whether some path leads from the start of a function to flow. A call that
+// never returns ends a path, an exhausted `switch` closes the one bind draws for "nothing matched",
+// and a write to reference ends one as well when a reference is given.
+//
+// It is the question behind two rules: a function with a declared result that can end without a
+// `return`, and a `let` read before anything gave it a value. The walk is iterative, because a
+// function body is as deep as the program is long.
+@(private)
+reaches_start :: proc(c: ^Checker, flow: bind.Flow_ID, reference := ast.NO_NODE) -> bool {
+	if flow == bind.UNREACHABLE {
+		return false
+	}
+
+	seen := make([]bool, len(c.at.bound.flow), context.temp_allocator)
+	work := make([dynamic]bind.Flow_ID, 0, 16, context.temp_allocator)
+	seen[flow] = true
+	append(&work, flow)
+
+	for len(work) > 0 {
+		switch node in c.at.bound.flow[pop(&work)] {
+		case bind.Flow_Unreachable:
+			continue
+		case bind.Flow_Start:
+			if reference == ast.NO_NODE || node.outer == bind.UNREACHABLE {
+				return true
+			}
+			// An arrow runs later than the point it was made at, so what matters for a variable it
+			// names is whether that variable had a value there.
+			walk_back(&work, seen, node.outer)
+		case bind.Flow_Branch:
+			for antecedent in node.antecedents {
+				walk_back(&work, seen, antecedent)
+			}
+		case bind.Flow_Loop:
+			for antecedent in node.antecedents {
+				walk_back(&work, seen, antecedent)
+			}
+		case bind.Flow_Assignment:
+			if reference != ast.NO_NODE {
+				if _, wrote := written_type(c, node.node, reference); wrote {
+					continue // from here on the variable has a value
+				}
+			}
+			walk_back(&work, seen, node.antecedent)
+		case bind.Flow_Condition:
+			walk_back(&work, seen, node.antecedent)
+		case bind.Flow_Switch_Clause:
+			if node.clause_start == node.clause_end && switch_exhausted(c, node) {
+				continue
+			}
+			walk_back(&work, seen, node.antecedent)
+		case bind.Flow_Call:
+			if recorded_type(c, node.call) == NEVER {
+				continue // the callee never returns
+			}
+			walk_back(&work, seen, node.antecedent)
+		}
+	}
+	return false
+}
+
+// walk_back puts one antecedent on the work list, once.
+@(private)
+walk_back :: proc(work: ^[dynamic]bind.Flow_ID, seen: []bool, flow: bind.Flow_ID) {
+	if flow == bind.UNREACHABLE || seen[flow] {
+		return
+	}
+	seen[flow] = true
+	append(work, flow)
 }
 
 // Filters over the members of a union.
@@ -469,6 +783,9 @@ narrow_by_unit :: proc(c: ^Checker, id: Type_ID, unit: Type_ID, equals: bool) ->
 // discriminated union of requirements 2.2: `s.kind === "circle"` picks the member whose `kind` is
 // written `"circle"`. A member with no such field is left alone, since the test says nothing about
 // it.
+//
+// The field is worth what a read of it is worth, so `kind?: "a"` is compared as `"a" | undefined`
+// and survives `s.kind === undefined`.
 @(private)
 narrow_by_discriminant :: proc(
 	c: ^Checker,
@@ -483,7 +800,8 @@ narrow_by_discriminant :: proc(
 		field, found := field_of(c, member, name)
 		keep := true
 		if found {
-			keep = comparable(c, field.type, unit) if equals else field.type != unit
+			type := field_read_type(c, field)
+			keep = comparable(c, type, unit) if equals else type != unit
 		}
 		if keep {
 			append(&kept, member)
