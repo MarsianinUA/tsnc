@@ -102,9 +102,9 @@ lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 			lower_statement(s, statement)
 		}
 	case ast.Expr_Stmt:
-		lower_expression(s, v.expr)
+		lower_effect(s, v.expr)
 		if s.typed.node_types[v.expr] == check.NEVER && !terminated(s) {
-			// The call does not come back: process.exit is the only one in this slice.
+			// The expression does not come back: process.exit, or a function that never returns.
 			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 		}
 	case ast.Var_Decl:
@@ -325,7 +325,7 @@ close_latch :: proc(
 		return
 	}
 	if update != ast.NO_NODE {
-		lower_expression(s, update)
+		lower_effect(s, update)
 	}
 	back := here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = blocks.header}, span)
@@ -344,7 +344,7 @@ lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.S
 		if _, is_declaration := s.tree.nodes[node.init].variant.(ast.Var_Decl); is_declaration {
 			lower_statement(s, node.init)
 		} else {
-			lower_expression(s, node.init)
+			lower_effect(s, node.init)
 		}
 	}
 

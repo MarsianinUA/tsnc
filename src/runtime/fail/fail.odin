@@ -81,10 +81,11 @@ error_name :: proc(error: abi.Runtime_Error) -> string {
 
 @(private, rodata)
 NAMES := [abi.Runtime_Error]string {
-	.Index_Out_Of_Range = "index out of range",
-	.Index_Not_Integer  = "index is not an integer",
-	.Non_Null_Assertion = "non-null assertion failed",
-	.Type_Assertion     = "type assertion failed",
-	.Out_Of_Memory      = "out of memory",
-	.Internal           = "internal error",
+	.Index_Out_Of_Range    = "index out of range",
+	.Index_Not_Integer     = "index is not an integer",
+	.Non_Null_Assertion    = "non-null assertion failed",
+	.Type_Assertion        = "type assertion failed",
+	.Out_Of_Memory         = "out of memory",
+	.Internal              = "internal error",
+	.Exit_Code_Not_Integer = "process.exit code is not an integer",
 }

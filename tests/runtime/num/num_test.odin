@@ -321,19 +321,45 @@ max_and_min_answer_nan_and_order_the_two_zeros :: proc(t: ^testing.T) {
 	testing.expect(t, same(num.min(-INF, INF), -INF))
 }
 
-// process.exit(code): an integer the OS keeps the low bits of, and zero for anything that is not a
-// finite number.
+// process.exit(code) as Node 24 takes it: an integer reduced by ToInt32, and a RangeError, which is
+// `ok = false`, for anything else.
 @(test)
-exit_code_keeps_the_low_bits :: proc(t: ^testing.T) {
-	testing.expect_value(t, num.exit_code(0), 0)
-	testing.expect_value(t, num.exit_code(1), 1)
-	testing.expect_value(t, num.exit_code(255), 255)
-	testing.expect_value(t, num.exit_code(3.9), 3)
-	testing.expect_value(t, num.exit_code(-1), -1)
-	testing.expect_value(t, num.exit_code(NAN), 0)
-	testing.expect_value(t, num.exit_code(INF), 0)
-	testing.expect_value(t, num.exit_code(-INF), 0)
-	testing.expect_value(t, num.exit_code(1e30), 0)
+exit_code_is_to_int32_of_an_integer :: proc(t: ^testing.T) {
+	Case :: struct {
+		code: f64,
+		exit: int,
+		ok:   bool,
+	}
+	cases := [?]Case {
+		{0, 0, true},
+		{1, 1, true},
+		{255, 255, true},
+		{256, 256, true},
+		{-1, -1, true},
+		{4294967296 + 73, 73, true},
+		{4294967299, 3, true},
+		{-2147483649, 2147483647, true},
+		{2147483648, -2147483648, true},
+		{9007199254740992, 0, true},
+		{NAN, 0, false},
+		{INF, 0, false},
+		{-INF, 0, false},
+		{1.9, 0, false},
+		{99.5, 0, false},
+	}
+	for c in cases {
+		exit, ok := num.exit_code(c.code)
+		testing.expectf(
+			t,
+			exit == c.exit && ok == c.ok,
+			"exit_code(%v) = %v, %v; want %v, %v",
+			c.code,
+			exit,
+			ok,
+			c.exit,
+			c.ok,
+		)
+	}
 }
 
 // Both conversions write into the caller's buffer, and a test wants the text to outlive the call.

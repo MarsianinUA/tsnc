@@ -65,11 +65,16 @@ min :: proc "contextless" (a, b: f64) -> f64 {
 	return a if a < b else b
 }
 
-// exit_code turns the argument of process.exit into the code the process ends with. Node coerces it
-// to an integer and the OS keeps only its low bits; anything that is not a finite number is 0.
-exit_code :: proc "contextless" (code: f64) -> int {
-	if !(code > -2147483649.0 && code < 2147483648.0) {
-		return 0
+// exit_code turns the argument of process.exit into the code the process ends with, as Node 24
+// does. A code that is not an integer, NaN and the infinities among them, is a RangeError there and
+// `ok = false` here. An integer is reduced by ToInt32, so 4294967299 exits with 3; what the OS then
+// keeps of the result is its own business.
+exit_code :: proc "contextless" (code: f64) -> (exit: int, ok: bool) {
+	if math.is_inf(code) || code != math.trunc(code) {
+		return 0, false
 	}
-	return int(i32(code))
+	// The remainder of an integer by 2^32 is exact, and it lies strictly between -2^32 and 2^32,
+	// so i64 holds it and u32 keeps its low 32 bits, the way ToInt32 wraps a negative one.
+	wrapped := math.mod(code, 4294967296)
+	return int(i32(u32(i64(wrapped)))), true
 }

@@ -1,5 +1,7 @@
 package lower
 
+import "core:slice"
+
 import "../ast"
 import "../bind"
 import "../check"
@@ -10,14 +12,55 @@ import "../source"
 /*
 Expressions. Every procedure here answers the value the expression produces, or NO_VALUE for one
 this build cannot compile. That poison travels: whatever reads it answers poison as well and says
-nothing, so a construct is reported once, where it stands, and not again at every use of it.
+nothing, so a construct is reported once, where it stands, and not again at every use of it. An
+expression that has no value, such as console.log or process.exit, answers NO_VALUE too, and
+lower_expression tells the two apart by the type check gave the node.
 
 Short-circuit operators, the ternary and the two expanded lib names open blocks of their own and
 come back together in a phi, which is also where the locals of the two sides are reconciled.
 */
 
 // lower_expression is the value of an expression, already of the IR type its node was typed with.
+//
+// It is also the net under poison. An expression check typed with a value that answers NO_VALUE
+// while nothing has been reported yet swallowed a construct somewhere below it, and the build
+// would succeed with a wrong program; naming the innermost such expression fails it instead. The
+// test on the whole list is sound because every declaration a body could read was declared, and
+// refused if it had to be, before the first body was built.
 lower_expression :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
+	value := lower_node(s, id)
+	if value != ir.NO_VALUE || len(s.low.diagnostics) > 0 {
+		return value
+	}
+	type, ok := ir_type(s.types, s.typed.node_types[id])
+	if ok && type != ir.VOID {
+		return later(s, s.tree.nodes[id].span, "this expression")
+	}
+	return ir.NO_VALUE
+}
+
+// lower_effect lowers an expression whose value is dropped, as a statement or the init and update
+// of a `for` do. A ternary and `&&` or `||` then join no value, so their two sides need not share a
+// representation: `debug && console.log(x);` is a branch and nothing more.
+@(private)
+lower_effect :: proc(s: ^Func_State, id: ast.Node_ID) {
+	#partial switch v in s.tree.nodes[id].variant {
+	case ast.Binary:
+		#partial switch v.op {
+		case .And, .Or, .Coalesce:
+			lower_logical(s, id, v, ir.VOID)
+			return
+		}
+	case ast.Conditional:
+		lower_conditional(s, id, v, ir.VOID)
+		return
+	}
+	lower_expression(s, id)
+}
+
+// lower_node is lower_expression without the net: the one switch over the kinds of expression.
+@(private)
+lower_node :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	#partial switch v in s.tree.nodes[id].variant {
 	case ast.Number_Literal:
@@ -36,11 +79,15 @@ lower_expression :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	case ast.Update:
 		return lower_update(s, id, v)
 	case ast.Binary:
+		#partial switch v.op {
+		case .And, .Or, .Coalesce:
+			return lower_logical(s, id, v, node_type(s, id))
+		}
 		return lower_binary(s, id, v)
 	case ast.Assign:
 		return lower_assign(s, id, v)
 	case ast.Conditional:
-		return lower_conditional(s, id, v)
+		return lower_conditional(s, id, v, node_type(s, id))
 	case ast.Call:
 		return lower_call(s, id, v)
 	case ast.Member:
@@ -104,12 +151,20 @@ coerce :: proc(
 	if target == ir.TAGGED && boxable(have) {
 		return ir.emit(&s.fb, ir.TAGGED, ir.Box{value = value}, span)
 	}
+	if have == ir.VOID {
+		// The call of a void function evaluates to undefined, which a tagged value can hold. Any
+		// other place check lets a VOID value go is the call of a never function, which does not
+		// come back, so nothing reads what it would have converted to.
+		if target == ir.TAGGED {
+			return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
+		}
+		return ir.NO_VALUE
+	}
 	if have == ir.TAGGED {
 		// Reading a statically typed value back out of a tagged one is what narrowing compiles to.
 		return later(s, span, "narrowing a union")
 	}
-	// Anything else is two types check would not have let meet.
-	return ir.NO_VALUE
+	return later(s, span, "this conversion")
 }
 
 @(private)
@@ -308,29 +363,19 @@ unary_number :: proc(
 // tag at run time, and reading it is the tag test of milestone 5.
 @(private)
 lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
-	word := ""
-	switch s.typed.node_types[operand] {
-	case check.UNDEFINED:
-		word = "undefined"
-	case check.NULL:
-		word = "object"
-	case:
-		#partial switch node_type(s, operand).kind {
-		case .F64:
-			word = "number"
-		case .Bool:
-			word = "boolean"
-		case .Str:
-			word = "string"
-		case .Closure:
-			word = "function"
-		}
-	}
+	word := typeof_word(s, operand)
 	if word == "" {
+		type := s.typed.node_types[operand]
+		if _, ok := ir_type(s.types, type); !ok {
+			return later(s, span, construct_text(s.types, type))
+		}
 		return later(s, span, "`typeof` of a union")
 	}
-	// The operand of a typeof still runs: it may call something.
-	lower_expression(s, operand)
+	// The operand of a typeof still runs: it may call something. Reading a name runs nothing, and
+	// lowering a name that holds a function would report a function value.
+	if _, is_ident := s.tree.nodes[operand].variant.(ast.Ident); !is_ident {
+		lower_expression(s, operand)
+	}
 	return ir.emit(
 		&s.fb,
 		ir.STR,
@@ -339,14 +384,37 @@ lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) ->
 	)
 }
 
+// typeof_word is the word `typeof` answers for the static type of its operand, or "" when only the
+// tag of a tagged value could tell.
+@(private)
+typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
+	type := s.typed.node_types[operand]
+	switch type {
+	case check.UNDEFINED:
+		return "undefined"
+	case check.NULL:
+		return "object"
+	}
+	#partial switch _ in s.types[type] {
+	case check.Function, check.Overload:
+		return "function"
+	}
+	#partial switch node_type(s, operand).kind {
+	case .F64:
+		return "number"
+	case .Bool:
+		return "boolean"
+	case .Str:
+		return "string"
+	}
+	return ""
+}
+
+// lower_binary is an arithmetic operator or a comparison. `&&`, `||` and `??` branch, and are
+// lower_logical.
 @(private)
 lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	#partial switch node.op {
-	case .And, .Or, .Coalesce:
-		return lower_logical(s, id, node)
-	}
-
 	left := lower_expression(s, node.left)
 	right := lower_expression(s, node.right)
 	if left == ir.NO_VALUE || right == ir.NO_VALUE {
@@ -364,7 +432,7 @@ lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Va
 		if node.op == .Add && (value_type(s, left) == ir.STR || value_type(s, right) == ir.STR) {
 			return later(s, span, "joining strings")
 		}
-		return operand_not_lowered(s, left, span)
+		return operands_not_lowered(s, left, right, span)
 	}
 	return ir.emit(&s.fb, ir.F64, ir.Binary{op = op, left = left, right = right}, span)
 }
@@ -399,7 +467,8 @@ lower_compare :: proc(
 }
 
 // operand_not_lowered names why an arithmetic operand is not a number: a tagged value narrowing has
-// not opened yet, or a string, whose operations are the runtime of milestone 5.
+// not opened yet, or a string, whose operations are the runtime of milestone 5. It always reports,
+// since an operation that goes on without its operand is a wrong program.
 @(private)
 operand_not_lowered :: proc(
 	s: ^Func_State,
@@ -412,16 +481,34 @@ operand_not_lowered :: proc(
 	case .Str:
 		return later(s, span, "string operations")
 	}
-	return ir.NO_VALUE
+	return later(s, span, "this operand")
+}
+
+// operands_not_lowered is operand_not_lowered for an operator with two sides: it names the side that
+// is not a number, the left one when neither is.
+@(private)
+operands_not_lowered :: proc(
+	s: ^Func_State,
+	left, right: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value_type(s, left) != ir.F64 {
+		return operand_not_lowered(s, left, span)
+	}
+	return operand_not_lowered(s, right, span)
 }
 
 // lower_logical is `&&`, `||` and `??`. The result is one of the two sides, not a boolean, and the
-// side that does not run must not be evaluated, so each opens a block of its own.
+// side that does not run must not be evaluated, so each opens a block of its own. A result of VOID
+// means nobody reads the value, and the two sides meet without a phi.
 @(private)
-lower_logical :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Value_ID {
+lower_logical :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Binary,
+	result: ir.Type,
+) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	result := node_type(s, id)
-
 	if node.op == .Coalesce {
 		return lower_coalesce(s, node, result, span)
 	}
@@ -442,16 +529,18 @@ lower_logical :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.V
 	}
 	ir.emit(&s.fb, ir.VOID, branch, span)
 
+	edges := make([dynamic]Edge, 0, 2, context.temp_allocator)
+	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
+	append(&edges, short)
+	append(&values, left)
+
 	ir.use_block(&s.fb, other)
 	copy(s.locals, short.values)
-	right := coerce(s, lower_expression(s, node.right), result, span)
-	if right == ir.NO_VALUE {
-		return ir.NO_VALUE
+	if edge, value, comes_back := lower_arm(s, node.right, join, result, span); comes_back {
+		append(&edges, edge)
+		append(&values, value)
 	}
-	long := here(s)
-	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
-
-	return join_values(s, join, {short, long}, {left, right}, result, span)
+	return join_values(s, join, edges[:], values[:], result, span)
 }
 
 // lower_coalesce is `??`. In this slice the left side is either never nullish, and the right one
@@ -475,11 +564,16 @@ lower_coalesce :: proc(
 	return coerce(s, left, result, span)
 }
 
-// lower_conditional is the ternary: one side runs, and the two meet in a phi.
+// lower_conditional is the ternary: one side runs, and the two meet in a phi. A result of VOID
+// means nobody reads the value, and the two sides meet without one.
 @(private)
-lower_conditional :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Conditional) -> ir.Value_ID {
+lower_conditional :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Conditional,
+	result: ir.Type,
+) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	result := node_type(s, id)
 	test := lower_condition(s, node.condition)
 	if test == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -496,28 +590,58 @@ lower_conditional :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Conditional
 	}
 	ir.emit(&s.fb, ir.VOID, branch, span)
 
+	edges := make([dynamic]Edge, 0, 2, context.temp_allocator)
+	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
+
 	ir.use_block(&s.fb, then_block)
 	copy(s.locals, entering.values)
-	yes := coerce(s, lower_expression(s, node.then_value), result, span)
-	yes_edge := here(s)
-	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	if edge, value, comes_back := lower_arm(s, node.then_value, join, result, span); comes_back {
+		append(&edges, edge)
+		append(&values, value)
+	}
 
 	ir.use_block(&s.fb, else_block)
 	copy(s.locals, entering.values)
-	no := coerce(s, lower_expression(s, node.else_value), result, span)
-	no_edge := here(s)
-	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
-
-	if yes == ir.NO_VALUE || no == ir.NO_VALUE {
-		open_join(s, join, {yes_edge, no_edge}, span)
-		return ir.NO_VALUE
+	if edge, value, comes_back := lower_arm(s, node.else_value, join, result, span); comes_back {
+		append(&edges, edge)
+		append(&values, value)
 	}
-	return join_values(s, join, {yes_edge, no_edge}, {yes, no}, result, span)
+	return join_values(s, join, edges[:], values[:], result, span)
+}
+
+// lower_arm builds one side of a ternary, or the right side of `&&` and `||`, in the block already
+// open for it. An arm check typed never does not come back: process.exit or a function that never
+// returns. Its block ends unreachable and it is no edge of the join, so the value of the whole
+// expression is what the other side brought.
+@(private)
+lower_arm :: proc(
+	s: ^Func_State,
+	arm: ast.Node_ID,
+	join: ir.Block_ID,
+	result: ir.Type,
+	span: source.Span,
+) -> (
+	edge: Edge,
+	value: ir.Value_ID,
+	comes_back: bool,
+) {
+	value = lower_expression(s, arm)
+	if s.typed.node_types[arm] == check.NEVER {
+		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
+		return {}, ir.NO_VALUE, false
+	}
+	value = coerce(s, value, result, span)
+	edge = here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	return edge, value, true
 }
 
 // join_values opens a join and adds the phi of the value each edge brought, after the phis that
 // reconcile the locals. Every phi of a block stands before its other instructions, which is why
 // both are built here and not by the caller.
+//
+// No phi is built for a VOID type, a value nobody reads, nor when an edge brought poison, which
+// makes the whole value poison. When no edge comes back at all, the expression does not either.
 @(private)
 join_values :: proc(
 	s: ^Func_State,
@@ -528,6 +652,12 @@ join_values :: proc(
 	span: source.Span,
 ) -> ir.Value_ID {
 	if !open_join(s, block, edges, span) {
+		// The statement around the expression may still emit, a `return` or the rest of a
+		// console line. It lands in a block nothing reaches, as the statements after a return do.
+		ir.use_block(&s.fb, ir.add_block(&s.fb))
+		return ir.NO_VALUE
+	}
+	if type == ir.VOID || slice.contains(values, ir.NO_VALUE) {
 		return ir.NO_VALUE
 	}
 	if len(edges) == 1 {
@@ -587,7 +717,7 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 		if node.op == .Add && value_type(s, before) == ir.STR {
 			return later(s, span, "joining strings")
 		}
-		return operand_not_lowered(s, before, span)
+		return operands_not_lowered(s, before, right, span)
 	}
 	op, ok := binary_op(assign_binary(node.op))
 	if !ok {

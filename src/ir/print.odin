@@ -664,12 +664,13 @@ CELL_KIND_TEXT := [abi.Cell_Kind]string {
 
 @(private, rodata)
 RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
-	.Index_Out_Of_Range = "index_out_of_range",
-	.Index_Not_Integer  = "index_not_integer",
-	.Non_Null_Assertion = "non_null_assertion",
-	.Type_Assertion     = "type_assertion",
-	.Out_Of_Memory      = "out_of_memory",
-	.Internal           = "internal",
+	.Index_Out_Of_Range    = "index_out_of_range",
+	.Index_Not_Integer     = "index_not_integer",
+	.Non_Null_Assertion    = "non_null_assertion",
+	.Type_Assertion        = "type_assertion",
+	.Out_Of_Memory         = "out_of_memory",
+	.Internal              = "internal",
+	.Exit_Code_Not_Integer = "exit_code_not_integer",
 }
 
 @(private, rodata)

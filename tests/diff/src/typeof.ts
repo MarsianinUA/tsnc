@@ -21,3 +21,11 @@ console.log(typeof 1, typeof "text", typeof true);
 console.log(typeof nothing, typeof empty);
 console.log(ofNumber(42), ofString("text"), ofBoolean(false));
 console.log(typeof NaN, typeof Infinity);
+
+// A function has no value tsnc can hold yet, but its type already names the word, so reading the
+// name is all `typeof` needs.
+function fact(n: number): number {
+  return n <= 1 ? 1 : n * fact(n - 1);
+}
+
+console.log(typeof fact, fact(5));

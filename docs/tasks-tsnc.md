@@ -304,7 +304,7 @@ Done: tests, including a call to a stub comparator through the calling conventio
 
 ### [ ] T5.6 Full `console` and `process`
 
-What: Node format for objects and arrays in simple cases (`[ 1, 2, 3 ]`, `{ a: 1, b: 'x' }`) through type tables with field names, nesting; `console.error`; `process.argv` as an array of strings from the OS arguments (UTF-8 to UTF-16); `process.exit`.
+What: Node format for objects and arrays in simple cases (`[ 1, 2, 3 ]`, `{ a: 1, b: 'x' }`) through type tables with field names, nesting; `console.error`; `process.argv` as an array of strings from the OS arguments (UTF-8 to UTF-16); `process.exit`. Two leftovers of the milestone 4 review belong here. A `console.log` of N arguments is 2N unbuffered writes (`src/runtime/console/console.odin`), so a loop that prints is several times slower than Node: buffer one statement without adding runtime state. And `process.argv` must come from `GetCommandLineW` on Windows, because Odin's `os.args` is the ANSI `argv` and turns a non-ASCII argument into code page bytes, which `command_line` in `src/main.odin` already works around for the compiler through `os.current_process_info`.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `console`; requirements §3.9, §2.2 (standard library), §13 (Node format risk).
 After: T5.5.
 Done: output tests against Node values on a set of simple values.

@@ -270,6 +270,15 @@ typeof_folds_to_the_word_for_a_static_type :: proc(t: ^testing.T) {
 }
 
 @(test)
+typeof_a_function_is_the_word_function :: proc(t: ^testing.T) {
+	// A function value is milestone 5, but the type of the name already says what `typeof`
+	// answers, and reading the name runs nothing.
+	result := lower_text(t, "function one(): number {\n\treturn 1;\n}\nconsole.log(typeof one);\n")
+	words := pool_words(result.output)
+	testing.expectf(t, slice.contains(words, "function"), "the pool has no function: %v", words)
+}
+
+@(test)
 a_template_with_no_substitution_is_a_string_literal :: proc(t: ^testing.T) {
 	// lower_text answers only for a program lower said nothing about, so reaching the pool at all
 	// means the template compiled. parse cooks a template into its parts, so one that substitutes
@@ -346,6 +355,19 @@ a_union_is_reported_where_it_is_used :: proc(t: ^testing.T) {
 	)
 	testing.expect(t, len(result.output.globals) == 1)
 	testing.expect(t, result.output.globals[0].type == ir.TAGGED)
+}
+
+@(test)
+a_union_on_the_right_of_arithmetic_is_reported :: proc(t: ^testing.T) {
+	// A number on the left used to hide the operand on the right: `n + a` compiled with a tagged
+	// operand and crashed at run time, and `n -= a` left n as it was.
+	expect_later(
+		t,
+		"function f(a: any, n: number): number {\nreturn n + a;\n}\n" +
+		"function g(a: any, n: number): number {\nreturn n * a;\n}\n" +
+		"function h(a: any, n: number): number {\nn -= a;\nreturn n;\n}\n",
+		{{.Not_Lowered, 2, 8}, {.Not_Lowered, 5, 8}, {.Not_Lowered, 8, 1}},
+	)
 }
 
 @(private = "file")

@@ -14,7 +14,7 @@ main :: proc() {
 		target       = target.HOST,
 		jobs         = os.get_processor_core_count(),
 	}
-	flags.parse_or_exit(&options, os.args, .Odin)
+	flags.parse_or_exit(&options, command_line(), .Odin)
 
 	// codegen explains an LLVM failure through context.logger, and the default logger drops it. A
 	// file logger on stderr rather than a console logger: the console logger sends anything below
@@ -42,4 +42,19 @@ main :: proc() {
 	case .run:
 		os.exit(run(options))
 	}
+}
+
+// command_line is the arguments tsnc was started with, in UTF-8. os.args is the narrow argv of the C
+// runtime, which Windows fills in the ANSI code page, so a path with Cyrillic letters in it named no
+// file. core:os reads the wide command line for a process info instead, and only when asked for both
+// fields at once. The arguments live as long as the process, like os.args.
+@(private = "file")
+command_line :: proc() -> []string {
+	when ODIN_OS == .Windows {
+		info, _ := os.current_process_info({.Command_Line, .Command_Args}, context.allocator)
+		if .Command_Args in info.fields {
+			return info.command_args
+		}
+	}
+	return os.args
 }

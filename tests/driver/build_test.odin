@@ -1,5 +1,6 @@
 package driver_tests
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -81,6 +82,68 @@ an_executable_is_built_and_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(stdout), "true\n")
 	testing.expect_value(t, string(stderr), "")
 	testing.expect_value(t, state.exit_code, 6)
+}
+
+// A path that is not ASCII goes through the whole pipeline: reading the source, LLVM writing the
+// object, the linker, the rename and the start of the program. main reads the command line of
+// Windows in UTF-8, and this is the rest of tsnc keeping up with it.
+@(test)
+a_path_that_is_not_ascii_builds_and_runs :: proc(t: ^testing.T) {
+	// Three Cyrillic letters, spelled as their UTF-8 bytes.
+	directory := out_path("driver-\xd0\xba\xd0\xb8\xd1\x80")
+	if !copy_project(t, "loops", {"main.ts"}, directory) {
+		return
+	}
+	suffix := target.SPECS[target.HOST].executable_suffix
+	options := driver.Options {
+		command = .build,
+		input   = fmt.tprintf("%s/main.ts", directory),
+		output  = fmt.tprintf("%s/main%s", directory, suffix),
+		target  = target.HOST,
+	}
+	built := build_project(options)
+	defer driver.destroy(&built.report.check)
+	if !expect_built(t, built) {
+		return
+	}
+
+	state, stdout, stderr, run_err := os.process_exec(
+		{command = {built.report.output}},
+		context.allocator,
+	)
+	defer delete(stdout)
+	defer delete(stderr)
+	if !testing.expectf(t, run_err == nil, "run %s: %v", built.report.output, run_err) {
+		return
+	}
+	testing.expect_value(t, string(stdout), "true\n")
+	testing.expect_value(t, state.exit_code, 6)
+}
+
+// One program builds to one file, byte for byte, which the determinism test of T6.2 stands on. The
+// executable used to carry the name of the temporary file it was linked as, process id and all: in
+// the export table on Windows, and in the code signature the linker puts on an arm64 program on
+// macOS. Both builds here run in one process and share that id, so the temporary name is looked for
+// directly, and the second build goes to another output, since the program is linked under one name
+// wherever it goes.
+@(test)
+two_builds_of_one_program_are_identical :: proc(t: ^testing.T) {
+	options := build_options("loops", "main.ts", "driver-twice.exe")
+	first := build_project(options)
+	defer driver.destroy(&first.report.check)
+	if !expect_built(t, first) {
+		return
+	}
+	before := read_artifact(t, options.output)
+	testing.expect(t, !strings.contains(before, ".tmp"), "the executable names its temporary file")
+
+	elsewhere := build_options("loops", "main.ts", "driver-elsewhere.exe")
+	second := build_project(elsewhere)
+	defer driver.destroy(&second.report.check)
+	if !expect_built(t, second) {
+		return
+	}
+	testing.expect(t, read_artifact(t, elsewhere.output) == before, "the two builds differ")
 }
 
 // driver.run itself. The fixture prints nothing, so inherited stdio leaves the test log alone and
@@ -198,6 +261,69 @@ a_missing_output_directory_is_reported :: proc(t: ^testing.T) {
 	testing.expectf(t, !os.exists(options.output), "%s was written", options.output)
 }
 
+// -out: is taken as written, so it can name a file of the program itself, and a build that went
+// ahead would leave an executable where the source was. The build compares files rather than
+// names: a `..` in the path, and on Windows another case, still name the entry file. It works on a
+// copy of the fixture, so that a regression costs a scratch file and not the repository.
+@(test)
+the_output_is_never_the_entry_file :: proc(t: ^testing.T) {
+	directory := out_path("driver-source")
+	if !copy_project(t, "loops", {"main.ts"}, directory) {
+		return
+	}
+	entry := fmt.tprintf("%s/main.ts", directory)
+	spellings := make([dynamic]string, context.temp_allocator)
+	append(&spellings, entry)
+	append(&spellings, fmt.tprintf("%s/../%s/main.ts", directory, os.base(directory)))
+	when ODIN_OS == .Windows {
+		append(&spellings, strings.to_upper(entry, context.temp_allocator))
+	}
+
+	before := read_artifact(t, entry)
+	for output in spellings {
+		options := driver.Options {
+			command = .build,
+			input   = entry,
+			output  = output,
+			target  = target.HOST,
+		}
+		built := build_project(options)
+		defer driver.destroy(&built.report.check)
+		testing.expectf(
+			t,
+			built.err.kind == .Output_Is_Source,
+			"-out:%s: %v",
+			output,
+			built.err.kind,
+		)
+	}
+	testing.expect(t, read_artifact(t, entry) == before, "the entry file changed")
+	expect_no_leftovers(t, entry)
+}
+
+@(test)
+the_output_is_never_an_imported_file :: proc(t: ^testing.T) {
+	directory := out_path("driver-source-import")
+	if !copy_project(t, "clean", {"main.ts", "util.ts"}, directory) {
+		return
+	}
+	imported := fmt.tprintf("%s/util.ts", directory)
+	before := read_artifact(t, imported)
+
+	options := driver.Options {
+		command = .build,
+		input   = fmt.tprintf("%s/main.ts", directory),
+		output  = imported,
+		target  = target.HOST,
+	}
+	built := build_project(options)
+	defer driver.destroy(&built.report.check)
+	testing.expect_value(t, built.err.kind, driver.Error_Kind.Output_Is_Source)
+	testing.expectf(t, strings.has_suffix(built.err.detail, "util.ts"), "%q", built.err.detail)
+	testing.expect(t, read_artifact(t, imported) == before, "the imported file changed")
+	expect_no_leftovers(t, imported)
+}
+
 // Without -out: the name comes from the entry file's stem and the artifact, in the current
 // directory. The fixture is named for this test alone, so that the three files it leaves in the
 // working directory for a moment are recognisably its own; they are removed as it goes.
@@ -229,6 +355,31 @@ the_default_output_is_named_after_the_entry_file :: proc(t: ^testing.T) {
 	}
 }
 
+// copy_project writes a copy of some files of a fixture into directory, creating it, for a test
+// whose build must not touch the fixture itself.
+@(private = "file")
+copy_project :: proc(
+	t: ^testing.T,
+	project: string,
+	names: []string,
+	directory: string,
+	loc := #caller_location,
+) -> bool {
+	make_err := os.make_directory_all(directory)
+	if !testing.expectf(t, make_err == nil, "make %s: %v", directory, make_err, loc = loc) {
+		return false
+	}
+	for name in names {
+		text := read_artifact(t, fmt.tprintf("%s%s/%s", PROJECTS, project, name), loc)
+		path := fmt.tprintf("%s/%s", directory, name)
+		write_err := os.write_entire_file(path, text)
+		if !testing.expectf(t, write_err == nil, "write %s: %v", path, write_err, loc = loc) {
+			return false
+		}
+	}
+	return true
+}
+
 // read_artifact answers what a build wrote, and an empty string with a message when it wrote
 // nothing a test can read.
 @(private = "file")
@@ -240,13 +391,13 @@ read_artifact :: proc(t: ^testing.T, path: string, loc := #caller_location) -> s
 	return string(text)
 }
 
-// expect_no_leftovers checks that the build left nothing beside its artifact: the temporary file
-// it wrote before the rename, and the object file an executable passes through, both carry the
-// artifact's name and a process id.
+// expect_no_leftovers checks that the build left nothing beside its artifact: the temporary
+// directory it wrote the artifact and the object file into carries the artifact's name and a
+// process id.
 //
 // It walks the directory rather than reading it whole. Every test here writes into the one
 // directory beside the test executable and the runner runs them on a thread pool, so another test's
-// build renames its own `<output>.<pid>.tmp` into place while this walk is going. That entry is
+// build removes its own `<output>.<pid>.tmp` directory while this walk is going. That entry is
 // gone by the time the walk stats it, and read_all_directory_by_path turns the one missing entry
 // into a failure of the whole read: on the arm64 CI runner it read as "dist: Not_Exist", as though
 // the directory itself were missing. An entry that vanishes is never the one being checked, since
