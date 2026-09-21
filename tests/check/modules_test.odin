@@ -122,7 +122,7 @@ a_name_the_other_module_does_not_export_is_reported :: proc(t: ^testing.T) {
 		},
 		[]File_Error{{MAIN, .Unknown_Export, 1, 10}},
 	)
-	// A name the other module declares but does not export is not exported.
+	// Declaring the name in the other module is not enough: without `export` the answer is the same.
 	expect_program_errors(
 		t,
 		[]string{`import { hidden } from "./m2.ts";`, `const hidden = 1;`},

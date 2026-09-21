@@ -26,8 +26,7 @@ Built :: struct {
 	diagnostics: []diag.Diagnostic,
 }
 
-// build_graph runs program.build over a described graph. Everything lives in the temp allocator,
-// so a test frees nothing.
+// build_graph keeps everything in the temp allocator, so a test frees nothing.
 build_graph :: proc(modules: []Module) -> Built {
 	count := len(modules)
 	files := make([]source.File, count, context.temp_allocator)
@@ -58,7 +57,7 @@ request_span :: proc(importer, position: int) -> source.Span {
 	return {file = source.File_ID(importer), start = start, end = start + 4}
 }
 
-// order_names is the initialization order by module name, which is what a failing test should read
+// order_names answers names rather than File_ID values, which is what a failing test should read
 // like.
 order_names :: proc(b: Built) -> []string {
 	names := make([]string, len(b.program.init_order), context.temp_allocator)
@@ -68,7 +67,6 @@ order_names :: proc(b: Built) -> []string {
 	return names
 }
 
-// cycle_names is the modules of one ring by name.
 cycle_names :: proc(b: Built, cycle: int) -> []string {
 	modules := b.program.cycles[cycle].modules
 	names := make([]string, len(modules), context.temp_allocator)
@@ -78,7 +76,6 @@ cycle_names :: proc(b: Built, cycle: int) -> []string {
 	return names
 }
 
-// expect_no_cycles is the answer a program without rings must give: no groups and no diagnostics.
 expect_no_cycles :: proc(t: ^testing.T, b: Built, loc := #caller_location) {
 	testing.expectf(t, len(b.program.cycles) == 0, "cycles %v", b.program.cycles, loc = loc)
 	testing.expectf(t, len(b.diagnostics) == 0, "diagnostics %v", b.diagnostics, loc = loc)

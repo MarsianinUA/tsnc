@@ -94,8 +94,8 @@ KITS_KEY :: `SOFTWARE\Microsoft\Windows Kits\Installed Roots`
 @(private)
 KITS_VALUE :: "KitsRoot10"
 
-// kits_root reads the Windows 10 SDK root from the registry. The installer writes it into the
-// 32-bit view.
+// kits_root opens the 32-bit view of the registry, because that is where the installer writes the
+// Windows 10 SDK root.
 @(private)
 kits_root :: proc() -> (root: string, found: bool) {
 	key: win32.HKEY

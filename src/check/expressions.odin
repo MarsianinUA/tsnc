@@ -6,9 +6,9 @@ import "../ast"
 import "../bind"
 import "../source"
 
-// check_expression is the type of one expression. It is the exhaustive switch over the shapes of
-// ast: a statement or a piece of type syntax reaching it has no value and answers with the error
-// type, which is what `for (i = 0; ...)` needs, since a `for` header holds either.
+// check_expression is the exhaustive switch over the shapes of ast: a statement or a piece of type
+// syntax reaching it has no value and answers with the error type, which is what
+// `for (i = 0; ...)` needs, since a `for` header holds either.
 //
 // expected is the type the expression is going into, which requirements 5 calls contextual typing:
 // it gives an arrow parameter its type, keeps a literal field from widening, and tells an empty
@@ -120,9 +120,9 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 
 // Names.
 
-// check_ident is the type of a use of a name. It answers twice, as the other two reads of a place
-// do: with the type the name was declared with, and with the type it holds here, which
-// narrow_reference works out from the flow graph.
+// check_ident answers twice, as the other two reads of a place do: with the type the name was
+// declared with, and with the type it holds here, which narrow_reference works out from the flow
+// graph.
 //
 // `undefined` is a name in the grammar rather than a literal, and no file declares it, so check
 // answers for it itself. A name another module declares goes to imported_name, which follows the
@@ -178,9 +178,9 @@ check_assigned :: proc(c: ^Checker, id: ast.Node_ID) {
 	report(c, .Used_Before_Assigned, span_of(c, id), c.at.bound.symbols[symbol].name.text)
 }
 
-// starts_empty reports whether a binding holds no value until something writes one: a `let` written
-// with a type, with no initializer, whose type does not admit `undefined`. A variable that admits it
-// simply starts as `undefined`, and a `for...of` variable has no type of its own to write.
+// starts_empty asks for a type that does not admit `undefined`, because a variable that admits it
+// simply starts as `undefined`. A `for...of` variable has no type of its own to write, so it never
+// starts empty.
 @(private)
 starts_empty :: proc(c: ^Checker, ref: Symbol_Ref) -> bool {
 	symbol := c.program.bound[ref.file].symbols[ref.symbol]
@@ -229,8 +229,8 @@ check_unary :: proc(c: ^Checker, node: ast.Unary) -> Type_ID {
 	return ERROR
 }
 
-// check_update types `x++` and `--x`. They are assignments, so they need a number and a binding
-// that is allowed to take another value.
+// check_update treats `x++` and `--x` as assignments, so they need a number and a binding that is
+// allowed to take another value.
 @(private)
 check_update :: proc(c: ^Checker, node: ast.Update) -> Type_ID {
 	operand := check_expression(c, node.operand)
@@ -293,8 +293,8 @@ check_binary :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Binary) -> Type_ID 
 	return ERROR
 }
 
-// add_result is the type `+` gives. It is the one operator that works on two kinds of value: it
-// adds two numbers, or joins a string to anything.
+// add_result stands apart because `+` is the one operator that works on two kinds of value: it adds
+// two numbers, or joins a string to anything.
 @(private)
 add_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) -> Type_ID {
 	if left == ERROR || right == ERROR {
@@ -313,9 +313,9 @@ add_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) -> Type
 	return ERROR
 }
 
-// arithmetic_result is the type every other arithmetic and bitwise operator gives. A bitwise one
-// answers `number` as well: requirements 3.1 puts the conversion to int32 in the semantics, not in
-// the type. spans holds where each operand stands, so the message points at the one that is wrong.
+// arithmetic_result answers `number` for a bitwise operator as well: requirements 3.1 puts the
+// conversion to int32 in the semantics, not in the type. spans holds where each operand stands, so
+// the message points at the one that is wrong.
 @(private)
 arithmetic_result :: proc(
 	c: ^Checker,
@@ -334,8 +334,6 @@ arithmetic_result :: proc(
 	return NUMBER if ok else ERROR
 }
 
-// order_result is the type `<`, `<=`, `>` and `>=` give: two numbers or two strings compare, and
-// nothing else does.
 @(private)
 order_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) -> Type_ID {
 	if left == ERROR || right == ERROR || left == ANY || right == ANY {
@@ -365,8 +363,8 @@ equality_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) ->
 	return ERROR
 }
 
-// typeof_type is what `typeof x` gives: the answers the operator can produce, as TypeScript
-// declares them. v1 has neither `symbol` nor `bigint`, so those two answers are left out.
+// typeof_type leaves out two of the answers TypeScript declares for `typeof`: v1 has neither
+// `symbol` nor `bigint`.
 @(private)
 typeof_type :: proc(c: ^Checker) -> Type_ID {
 	answers: [len(TYPEOF_ANSWERS)]Type_ID
@@ -381,12 +379,12 @@ TYPEOF_ANSWERS := [?]string{"boolean", "function", "number", "object", "string",
 
 // Objects and arrays.
 
-// check_object_literal is the type of `{ a: 1, b: "x" }`. A literal written where an object type is
-// expected is checked against that type and takes it as its own: a field the type does not declare
-// is a mistake, a field the literal leaves out is one unless the type wrote it `x?: T`, and T5.7
-// puts `undefined` in the slot of the one left out. TypeScript calls a literal read this way fresh,
-// and it is what keeps the exact-type rule of requirements 3.3 from rejecting
-// `const p: Opts = { x: 1 }` while two named types still need the same set of fields.
+// check_object_literal checks a literal written where an object type is expected against that type,
+// and the literal takes it as its own: a field the type does not declare is a mistake, a field the
+// literal leaves out is one unless the type wrote it `x?: T`, and T5.7 puts `undefined` in the slot
+// of the one left out. TypeScript calls a literal read this way fresh, and it is what keeps the
+// exact-type rule of requirements 3.3 from rejecting `const p: Opts = { x: 1 }` while two named
+// types still need the same set of fields.
 //
 // With no context the literal makes its own type and widens every field, because a field can take
 // another value of its kind later.
@@ -483,10 +481,10 @@ tag_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	return ERROR
 }
 
-// check_array_literal is the type of `[1, 2, 3]`. Requirements 5 takes an array's element type from
-// its literal, so with no context it is the canonical union of the widened element types. An empty
-// literal has nothing to take it from and says so rather than guessing, since guessing would push
-// the mistake into the first `push`.
+// check_array_literal follows requirements 5, which takes an array's element type from its literal,
+// so with no context it is the canonical union of the widened element types. An empty literal has
+// nothing to take it from and says so rather than guessing, since guessing would push the mistake
+// into the first `push`.
 @(private)
 check_array_literal :: proc(
 	c: ^Checker,
@@ -516,9 +514,8 @@ check_array_literal :: proc(
 	return array_type(&c.table, union_type(&c.table, elements[:]))
 }
 
-// check_member is the type of `x.name`. The fields come from the apparent type: an object's own, and
-// for a string, a number or an array the members the lib file declares for it. `m.name`, where m is
-// an `import * as m`, is no field read at all: it names a declaration of the other module.
+// check_member takes the fields from the apparent type. `m.name`, where m is an `import * as m`, is
+// no field read at all: it names a declaration of the other module.
 @(private)
 check_member :: proc(
 	c: ^Checker,
@@ -551,9 +548,9 @@ check_member :: proc(
 	return declared, narrow_reference(c, id, declared)
 }
 
-// check_index is the type of `x[i]`. The lib file has no index signatures, so the checker knows by
-// itself that an array gives its element and a string gives a string. Reading out of range is a
-// runtime check of requirements 3.8 and not a `T | undefined`, so the type is the element itself.
+// check_index knows by itself that an array gives its element and a string gives a string, because
+// the lib file has no index signatures. Reading out of range is a runtime check of requirements 3.8
+// and not a `T | undefined`, so the type is the element itself.
 @(private)
 check_index :: proc(
 	c: ^Checker,
@@ -583,9 +580,9 @@ check_index :: proc(
 
 // Assertions.
 
-// check_non_null is the type of `x!`. Requirements 3.8 makes it a runtime check and lower emits
-// one, so it has to be a check worth making: a value that can never be null or undefined is
-// reported rather than quietly accepted, which is where tsnc is stricter than tsc.
+// check_non_null follows requirements 3.8, which makes `x!` a runtime check, and lower emits one,
+// so it has to be a check worth making: a value that can never be null or undefined is reported
+// rather than quietly accepted, which is where tsnc is stricter than tsc.
 @(private)
 check_non_null :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Non_Null) -> Type_ID {
 	value := check_expression(c, node.expr)
@@ -599,7 +596,7 @@ check_non_null :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Non_Null) -> Type
 	return part_of(&c.table, value, .Not_Nullish)
 }
 
-// check_as is the type of `x as T`. Requirements 3.8 allows two conversions and no others: widening
+// check_as follows requirements 3.8, which allows `x as T` two conversions and no others: widening
 // a value to a type that covers it, and narrowing a union to a part of it, which lower turns into a
 // tag check. Neither `any` nor `unknown` may be the target at all, and that one rule is what makes
 // `as any` and `as unknown as T` impossible, rather than a rule that looks for the pair.
@@ -612,9 +609,8 @@ check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 		report(c, .Unsafe_Assertion, span_of(c, node.type), text_of(c, target))
 		return ERROR
 	}
-	// One of the two conversions has to be the whole of it: `as` may widen a value to a type that
-	// covers it, or narrow a union to a part of it, and nothing in between. That is narrower than
-	// comparable, which lets two unions through where they merely share a member.
+	// One of the two conversions has to be the whole of it, and nothing in between. That is
+	// narrower than comparable, which lets two unions through where they merely share a member.
 	if !fits(c, value, target) && !fits(c, target, value) {
 		report_types(c, .Unrelated_Assertion, span_of(c, node.expr), value, target)
 	}
@@ -623,11 +619,11 @@ check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 
 // Assignment.
 
-// check_target types the place an assignment writes to, and answers twice: with the type the place
-// holds here, which a compound assignment computes from, and with the type it was declared with,
-// which the new value has to fit. The two have to be told apart, or a narrowing would forbid the
-// write that ends it: inside `if (typeof x === "number")` every read of x is a number, while
-// `x = "a"` is still a legal write to a `string | number`.
+// check_target answers twice: with the type the place holds here, which a compound assignment
+// computes from, and with the type it was declared with, which the new value has to fit. The two
+// have to be told apart, or a narrowing would forbid the write that ends it: inside
+// `if (typeof x === "number")` every read of x is a number, while `x = "a"` is still a legal write
+// to a `string | number`.
 @(private)
 check_target :: proc(c: ^Checker, id: ast.Node_ID) -> (narrowed, declared: Type_ID) {
 	#partial switch v in c.at.tree.nodes[id].variant {
@@ -669,8 +665,8 @@ check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	return result
 }
 
-// compound_result is the value `x += y` and its kin work out before the assignment: they mean
-// `x = x <op> y`, so each one answers the way its operator does.
+// compound_result answers the way the operator does, because `x += y` and its kin mean
+// `x = x <op> y`.
 @(private)
 compound_result :: proc(c: ^Checker, node: ast.Assign, target, value: Type_ID) -> Type_ID {
 	target_span, value_span := span_of(c, node.target), span_of(c, node.value)
@@ -703,9 +699,9 @@ compound_result :: proc(c: ^Checker, node: ast.Assign, target, value: Type_ID) -
 	return ERROR
 }
 
-// check_mutable reports a write to a place that cannot take another value, and answers whether the
-// write may go ahead. parse has already rejected a target that is no place to write to at all, and
-// check_assign has typed the target, so the type of the object a field belongs to is recorded.
+// check_mutable reports the write itself and answers whether it may go ahead. parse has already
+// rejected a target that is no place to write to at all, and the caller has typed the target, so
+// the type of the object a field belongs to is recorded.
 //
 // An element of an array is always writable: requirements 3.8 makes `arr[i] = x` grow the array at
 // its end and fail past it, which is a runtime check and not a type rule.
@@ -749,9 +745,8 @@ check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
 
 // Calls and arrows.
 
-// check_call is the type a call gives back. A member declared more than once offers several
-// signatures, and the call takes the first whose arity fits, which is what src/lib/lib.d.ts says its
-// two `reduce` declarations rely on. check_signature_call then checks the arguments against it.
+// check_call takes the first signature whose arity fits where a member declared more than once
+// offers several, which is what src/lib/lib.d.ts says its two `reduce` declarations rely on.
 @(private)
 check_call :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Call) -> Type_ID {
 	callee := check_expression(c, node.callee)
@@ -803,9 +798,8 @@ arity_fits :: proc(function: Function, count: int) -> bool {
 	return function.variadic || count <= len(function.params)
 }
 
-// parameter_at is the type the argument in that position is checked against. An argument that lands
-// on a rest parameter is checked against the element type of `...xs: T[]`, which is what makes
-// `console.log(1, "a")` and `Math.max(1, 2, 3)` work.
+// parameter_at checks an argument that lands on a rest parameter against the element type of
+// `...xs: T[]`, which is what makes `console.log(1, "a")` and `Math.max(1, 2, 3)` work.
 @(private)
 parameter_at :: proc(c: ^Checker, function: Function, index: int) -> Type_ID {
 	last := len(function.params) - 1
@@ -826,9 +820,8 @@ parameter_at :: proc(c: ^Checker, function: Function, index: int) -> Type_ID {
 	return union_of(c, declared, UNDEFINED)
 }
 
-// check_arrow types an arrow, which is a value with a signature of its own. Requirements 5 gives a
-// parameter with no annotation its type from the signature the arrow is going into, so
-// `arr.map(x => x * 2)` needs no `x: number`.
+// check_arrow follows requirements 5, which gives a parameter with no annotation its type from the
+// signature the arrow is going into, so `arr.map(x => x * 2)` needs no `x: number`.
 //
 // The result is taken from the context too, where the context asks for one that holds no type
 // variable and the body delivers it. A type variable is exactly what a call reads back out of the
@@ -873,9 +866,6 @@ check_arrow :: proc(
 	return function_type(&c.table, params, result, required, variadic)
 }
 
-// contextual_result is the result an arrow's body may be typed against: the one the context asks
-// for, where the context is a signature whose result is known and holds no type variable anywhere
-// inside it.
 @(private)
 contextual_result :: proc(c: ^Checker, contextual: Maybe(Function)) -> Type_ID {
 	signature, has_signature := contextual.?
@@ -901,9 +891,9 @@ returns_fit :: proc(c: ^Checker, body: ast.Node_ID, returns: []Type_ID, result: 
 	return !falls_through(c, body) || fits(c, UNDEFINED, result)
 }
 
-// has_type_var reports whether a type holds a type variable anywhere inside it. A named object is
-// settled by its arguments: `Array<U>` holds `U` there, and a field of it holds nothing the
-// arguments do not, while asking the fields would not end for an interface that names itself.
+// has_type_var settles a named object by its arguments: `Array<U>` holds `U` there, and a field of
+// it holds nothing the arguments do not, while asking the fields would not end for an interface
+// that names itself.
 @(private)
 has_type_var :: proc(c: ^Checker, id: Type_ID) -> bool {
 	switch v in c.table.types[id] {
@@ -958,10 +948,9 @@ Shape :: enum u8 {
 	Function,
 }
 
-// context_of is the part of an expected type an expression can read. An optional parameter and a
-// variable written `T | undefined` are unions, and a literal going into one has to look through it
-// the way an object literal already does: the answer is the type itself where it has the shape, the
-// one member of a union that has it, and the error type where none or several do.
+// context_of looks through a union: an optional parameter and a variable written `T | undefined`
+// are unions, and a literal going into one has to look through it the way an object literal already
+// does. The answer is the error type where no member has the shape, or several do.
 @(private)
 context_of :: proc(c: ^Checker, expected: Type_ID, shape: Shape) -> Type_ID {
 	if has_shape(c, expected, shape) {

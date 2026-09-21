@@ -1,7 +1,7 @@
 package diag
 
-// Code names one kind of compile error. Its number, text and hint live in REGISTRY; the package
-// doc has the numbering and wording rules.
+// Code keeps its number, text and hint in REGISTRY; the package doc has the numbering and wording
+// rules.
 Code :: enum u16 {
 	// T1xxx: syntax. tokenize (T2.4) and parse (T2.5) report these, and bind (T2.7) the three jumps,
 	// which need to know what encloses them.

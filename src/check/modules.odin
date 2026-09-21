@@ -41,14 +41,13 @@ Import_Error :: enum u8 {
 
 // Statements.
 
-// check_import resolves the specifiers of `import { a, b as c } from "./m"`.
 @(private)
 check_import :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Import_Named) {
 	check_specifiers(c, id, node.specifiers)
 }
 
-// check_export resolves the specifiers of a re-export, `export { a } from "./m"`. An export list
-// without `from` names this module's own declarations, and bind has already checked those.
+// check_export skips an export list without `from`: it names this module's own declarations, and
+// bind has already checked those.
 @(private)
 check_export :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Export_Named) {
 	if node.path == ast.NO_NODE {
@@ -57,9 +56,9 @@ check_export :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Export_Named) {
 	check_specifiers(c, id, node.specifiers)
 }
 
-// check_specifiers reports every name of one list that the module it names does not have. Which half
-// of a name a use needs is the use's question: a list may name a type, a value or both, and
-// `import type` narrows what the uses may do rather than what may be named.
+// check_specifiers asks only whether the module has the name at all. Which half of a name a use
+// needs is the use's question: a list may name a type, a value or both, and `import type` narrows
+// what the uses may do rather than what may be named.
 @(private)
 check_specifiers :: proc(c: ^Checker, request: ast.Node_ID, specifiers: []ast.Node_ID) {
 	module, ok := module_of_request(c, c.at.file, request)
@@ -77,9 +76,8 @@ check_specifiers :: proc(c: ^Checker, request: ast.Node_ID, specifiers: []ast.No
 
 // Uses.
 
-// imported_name is the type of a use of a name another module declares, and the symbol that use
-// stands for. A failure the import statement already reported says nothing more here: the error type
-// is assignable in both directions, so nothing cascades from it.
+// imported_name says nothing more about a failure the import statement already reported: the error
+// type is assignable in both directions, so nothing cascades from it.
 @(private)
 imported_name :: proc(
 	c: ^Checker,
@@ -127,8 +125,8 @@ namespace_of :: proc(c: ^Checker, id: ast.Node_ID) -> (ref: Symbol_Ref, ok: bool
 	return named, true
 }
 
-// namespace_member is the type of `m.x`, where m is an `import * as m`. The export's own symbol goes
-// into the tables, so the read is a read of that declaration and not of a field of anything.
+// namespace_member puts the export's own symbol into the tables, so `m.x` is a read of that
+// declaration and not of a field of anything.
 @(private)
 namespace_member :: proc(
 	c: ^Checker,
@@ -149,7 +147,6 @@ namespace_member :: proc(
 	return declared, narrow_reference(c, id, declared)
 }
 
-// namespace_type is the type `m.Point` stands for.
 @(private)
 namespace_type :: proc(
 	c: ^Checker,
@@ -177,8 +174,8 @@ namespace_type :: proc(
 	return named_type(c, target, args, node.name)
 }
 
-// namespace_export is the export a name after a module stands for. Unlike a specifier, this is the
-// only place the name is written, so this is where it is reported.
+// namespace_export reports a bad name itself: unlike a specifier, this is the only place the name
+// is written.
 @(private)
 namespace_export :: proc(
 	c: ^Checker,
@@ -212,8 +209,7 @@ namespace_export :: proc(
 
 // Resolution.
 
-// resolved_import is the declaration an alias symbol stands for, following any number of re-exports.
-// It reports nothing: every caller knows which of its own spans a failure belongs on.
+// resolved_import reports nothing: every caller knows which of its own spans a failure belongs on.
 @(private)
 resolved_import :: proc(
 	c: ^Checker,
@@ -227,8 +223,6 @@ resolved_import :: proc(
 	return follow_alias(c, ref, meaning, &seen)
 }
 
-// exported_symbol is the declaration a module exports under name, following any number of
-// re-exports.
 @(private)
 exported_symbol :: proc(
 	c: ^Checker,
@@ -243,7 +237,6 @@ exported_symbol :: proc(
 	return follow_export(c, module, name, meaning, &seen)
 }
 
-// follow_export is one step out of a module: the name it exports, or the alias behind that name.
 @(private)
 follow_export :: proc(
 	c: ^Checker,
@@ -288,9 +281,9 @@ missing_meaning :: proc(
 	return .Not_A_Value if meaning == .Value else .Not_A_Type
 }
 
-// follow_alias is one step through an alias, into the module its request named. seen holds the
-// aliases the walk has been through: modules that re-export each other in a ring declare the name
-// nowhere, so the walk answers that the name is not exported rather than going round again.
+// follow_alias keeps in seen the aliases the walk has been through: modules that re-export each
+// other in a ring declare the name nowhere, so the walk answers that the name is not exported
+// rather than going round again.
 @(private)
 follow_alias :: proc(
 	c: ^Checker,
@@ -329,8 +322,8 @@ follow_alias :: proc(
 
 // The module graph.
 
-// module_of_request is the file one import or re-export named. program drew an edge for every
-// request it could resolve, so a request with no edge is one driver has already reported.
+// module_of_request fails only for a request driver has already reported: program drew an edge for
+// every request it could resolve.
 @(private)
 module_of_request :: proc(
 	c: ^Checker,
@@ -348,7 +341,6 @@ module_of_request :: proc(
 	return 0, false
 }
 
-// module_of_alias is the file an alias symbol came from, and the request that named it.
 @(private)
 module_of_alias :: proc(
 	c: ^Checker,

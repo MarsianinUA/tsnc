@@ -25,8 +25,8 @@ import "../diag"
 import "../program"
 import "../source"
 
-// BOM is a UTF-8 byte order mark. Editors on Windows still write one, and every phase after this
-// counts bytes from the start of the text, so it has to go before the file becomes a source.File.
+// BOM has to go before the file becomes a source.File: editors on Windows still write one, and
+// every phase after this counts bytes from the start of the text.
 BOM :: "\xef\xbb\xbf"
 
 // Failure is why a module could not be read, kept so that a module imported from several files is
@@ -36,8 +36,6 @@ Failure :: struct {
 	detail: string,
 }
 
-// Request is one module request of one file, read out of the tree before anything is looked for on
-// disk.
 Request :: struct {
 	file:      source.File_ID, // the module the request is written in
 	node:      ast.Node_ID, // the Import_Named, Import_Namespace or Export_Named
@@ -46,7 +44,7 @@ Request :: struct {
 	type_only: bool, // `import type`: the module is never loaded for it
 }
 
-// Closure is the state of one import walk. It lives only inside check_only.
+// Closure lives only inside check_only.
 Closure :: struct {
 	memory:      ^Build_Memory,
 	arena:       runtime.Allocator, // memory.arena, where everything below is allocated
@@ -60,8 +58,7 @@ Closure :: struct {
 	diagnostics: [dynamic]diag.Diagnostic, // driver's own, merged with the phases' in check_only
 }
 
-// add_file gives text the next File_ID and queues its parse and bind task. absolute is empty for
-// the embedded lib, which no path resolves to.
+// add_file takes an empty absolute for the embedded lib, which no path resolves to.
 add_file :: proc(c: ^Closure, display, absolute, text: string) -> source.File_ID {
 	id := source.File_ID(len(c.files))
 	append(&c.files, source.make_file(display, text, c.arena))
@@ -81,8 +78,8 @@ add_file :: proc(c: ^Closure, display, absolute, text: string) -> source.File_ID
 	return id
 }
 
-// add_entry reads the file the command line named and makes it File_ID 1. It is the one read whose
-// failure has no place in any source text, so it comes back as a Driver_Error.
+// add_entry is the one read whose failure has no place in any source text, so it comes back as a
+// Driver_Error.
 add_entry :: proc(c: ^Closure, input: string) -> Driver_Error {
 	data, read_err := os.read_entire_file(input, c.arena)
 	if read_err != nil {
@@ -105,7 +102,6 @@ add_entry :: proc(c: ^Closure, input: string) -> Driver_Error {
 	return {}
 }
 
-// follow_requests resolves every import and re-export of one file, in source order.
 follow_requests :: proc(c: ^Closure, id: source.File_ID) {
 	if c.absolute[id] == "" {
 		return // the embedded lib: it imports nothing and has no directory to resolve against
@@ -120,8 +116,7 @@ follow_requests :: proc(c: ^Closure, id: source.File_ID) {
 	}
 }
 
-// read_request reads one request out of the tree: the module it names, where that name is written
-// and whether it asks for types alone. ok is false when parse left no string literal there.
+// read_request answers false when parse left no string literal where the specifier goes.
 read_request :: proc(
 	tree: ^ast.File_AST,
 	file: source.File_ID,
@@ -158,8 +153,7 @@ read_request :: proc(
 	return request, true
 }
 
-// resolve_request turns one specifier into a file, or into the diagnostic that says why it is not
-// one. Every request is reported on its own: two imports of the same missing module are two
+// resolve_request reports every request on its own: two imports of the same missing module are two
 // mistakes in two places, and a reader fixing them wants to see both.
 resolve_request :: proc(c: ^Closure, request: Request) {
 	specifier := request.specifier
@@ -216,9 +210,8 @@ resolve_request :: proc(c: ^Closure, request: Request) {
 	record_edge(c, request, id)
 }
 
-// record_edge remembers which module a request named. A request that resolved to nothing records
-// no edge: a file that is not in the program is not a node of its graph, and driver has already
-// reported why it is missing.
+// record_edge is never called for a request that resolved to nothing: a file that is not in the
+// program is not a node of its graph, and driver has already reported why it is missing.
 record_edge :: proc(c: ^Closure, request: Request, module: source.File_ID) {
 	append(
 		&c.edges[request.file],
@@ -231,8 +224,8 @@ record_edge :: proc(c: ^Closure, request: Request, module: source.File_ID) {
 	)
 }
 
-// report records one of driver's own diagnostics. Arguments past diag.MAX_ARGS cannot appear in a
-// registry text, so there is nowhere to put them.
+// report drops arguments past diag.MAX_ARGS: they cannot appear in a registry text, so there is
+// nowhere to put them.
 report :: proc(c: ^Closure, code: diag.Code, span: source.Span, args: ..string) {
 	d := diag.Diagnostic {
 		code = code,
@@ -247,9 +240,8 @@ report :: proc(c: ^Closure, code: diag.Code, span: source.Span, args: ..string) 
 	append(&c.diagnostics, d)
 }
 
-// failure_text says why a file could not be read, in words a user can act on. A directory gets an
-// answer of its own, because each OS reports it under a different name. The text may sit in a
-// buffer the C library reuses, so a caller that keeps it copies it.
+// failure_text gives a directory an answer of its own, because each OS reports it under a different
+// name. The text may sit in a buffer the C library reuses, so a caller that keeps it copies it.
 failure_text :: proc(path: string, err: os.Error) -> string {
 	if os.is_dir(path) {
 		return "it is a directory"
@@ -257,14 +249,13 @@ failure_text :: proc(path: string, err: os.Error) -> string {
 	return os.error_string(err)
 }
 
-// is_relative says whether a specifier is one tsnc resolves at all. Everything else, a package
-// name, an absolute path or a URL, is out of scope for good.
+// is_relative covers all that tsnc resolves. Everything else, a package name, an absolute path or
+// a URL, is out of scope for good.
 is_relative :: proc(specifier: string) -> bool {
 	return strings.has_prefix(specifier, "./") || strings.has_prefix(specifier, "../")
 }
 
-// resolve_against joins name to the directory of base and folds away `.` and `..`. It never asks
-// the file system, so it works for a file that is not there.
+// resolve_against never asks the file system, so it works for a file that is not there.
 resolve_against :: proc(base, name: string, allocator: runtime.Allocator) -> string {
 	joined, join_err := os.join_path({os.dir(base), name}, allocator)
 	if join_err != nil {
@@ -298,7 +289,6 @@ key_of :: proc(absolute: string, allocator: runtime.Allocator) -> string {
 	}
 }
 
-// strip_bom drops a UTF-8 byte order mark, so that offset 0 is the first real character.
 strip_bom :: proc(text: string) -> string {
 	return strings.trim_prefix(text, BOM)
 }

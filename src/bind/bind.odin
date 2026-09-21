@@ -157,16 +157,16 @@ Import :: struct {
 	type_only: bool, // `import type { A }` or `import { type A }`: a type, never a value
 }
 
-// Export is one name this module exports. symbol is the local symbol, or the alias of a re-export,
-// and NO_SYMBOL when the module declares no such name, which bind reports.
+// Export.symbol is the local symbol, or the alias of a re-export, and NO_SYMBOL when the module
+// declares no such name, which bind reports.
 Export :: struct {
 	name:      ast.Name, // the name under which the module exports it
 	symbol:    Symbol_ID,
 	type_only: bool, // `export type { A }` or `export { type A }`
 }
 
-// Flow_Node is one point of the control flow graph. Every variant but Flow_Start and
-// Flow_Unreachable points backwards, to the flow it follows.
+// Flow_Node variants all point backwards, to the flow they follow, except Flow_Start and
+// Flow_Unreachable.
 Flow_Node :: union #no_nil {
 	Flow_Unreachable,
 	Flow_Start,
@@ -181,7 +181,6 @@ Flow_Node :: union #no_nil {
 // Flow_Unreachable is flow[UNREACHABLE] and nothing else.
 Flow_Unreachable :: struct {}
 
-// Flow_Start begins the graph of a function or of the module's top-level code.
 Flow_Start :: struct {
 	function: ast.Node_ID, // ast.Function_Decl, ast.Arrow, or ast.ROOT for the module
 	// Where an arrow is created, so that check keeps a narrowing inside it. UNREACHABLE for a
@@ -194,8 +193,7 @@ Flow_Branch :: struct {
 	antecedents: []Flow_ID,
 }
 
-// Flow_Loop is the head of a loop. antecedents[0] is the path that enters it, the rest come back
-// from the body.
+// Flow_Loop.antecedents[0] is the path that enters the loop; the rest come back from the body.
 Flow_Loop :: struct {
 	antecedents: []Flow_ID,
 }
@@ -208,7 +206,6 @@ Flow_Assignment :: struct {
 	antecedent: Flow_ID,
 }
 
-// Flow_Condition is the path a condition takes when it holds (assume_true) or when it does not.
 Flow_Condition :: struct {
 	condition:   ast.Node_ID,
 	kind:        Condition_Kind,
@@ -237,8 +234,7 @@ Flow_Call :: struct {
 	antecedent: Flow_ID,
 }
 
-// meanings is what a kind of symbol can be named as. An alias is both until check follows it into
-// the other module.
+// meanings answers both for an alias, until check follows it into the other module.
 meanings :: proc(kind: Symbol_Kind) -> Meanings {
 	switch kind {
 	case .Let, .Const, .Function, .Param:
@@ -251,16 +247,13 @@ meanings :: proc(kind: Symbol_Kind) -> Meanings {
 	return {}
 }
 
-// is_alias reports whether a symbol stands for a name of another module, which check follows
-// through Bound_File.imports.
+// is_alias marks the symbols check follows through Bound_File.imports.
 is_alias :: proc(kind: Symbol_Kind) -> bool {
 	return kind == .Import || kind == .Namespace_Import
 }
 
-// bind_file reads the tree of one file and returns its names, scopes, flow graph and module
-// tables, plus the diagnostics it found. It reports every problem it sees and always returns a
-// whole result. Everything the result holds comes from allocator; the texts stay borrowed from the
-// tree, which must outlive it.
+// bind_file reports every problem it sees and always returns a whole result. Everything the result
+// holds comes from allocator; the texts stay borrowed from the tree, which must outlive it.
 bind_file :: proc(
 	tree: ^ast.File_AST,
 	allocator := context.allocator,
@@ -302,9 +295,8 @@ bind_file :: proc(
 	return freeze(&b), b.diagnostics[:]
 }
 
-// lookup is the symbol that scope holds under name with that meaning, or NO_SYMBOL. It looks in
-// the one scope: check reads the lib file's MODULE_SCOPE with it, since a name no file declares is
-// a lib name.
+// lookup looks in the one scope: check reads the lib file's MODULE_SCOPE with it, since a name no
+// file declares is a lib name.
 lookup :: proc(bound: Bound_File, scope: Scope_ID, name: string, meaning: Meaning) -> Symbol_ID {
 	for id in bound.scopes[scope].symbols {
 		symbol := bound.symbols[id]
@@ -315,7 +307,6 @@ lookup :: proc(bound: Bound_File, scope: Scope_ID, name: string, meaning: Meanin
 	return NO_SYMBOL
 }
 
-// lookup_export is the export of this module under name with that meaning.
 lookup_export :: proc(
 	bound: Bound_File,
 	name: string,
@@ -332,7 +323,6 @@ lookup_export :: proc(
 	return {}, false
 }
 
-// import_of is what an alias symbol of kind .Import or .Namespace_Import stands for.
 import_of :: proc(bound: Bound_File, symbol: Symbol_ID) -> (record: Import, ok: bool) {
 	for entry in bound.imports {
 		if entry.symbol == symbol {
@@ -342,8 +332,6 @@ import_of :: proc(bound: Bound_File, symbol: Symbol_ID) -> (record: Import, ok: 
 	return {}, false
 }
 
-// export_meanings is what an export entry covers: a type-only export is a type, an alias is both
-// until check follows it, and everything else follows its symbol.
 @(private)
 export_meanings :: proc(symbols: []Symbol, entry: Export) -> Meanings {
 	if entry.type_only {
@@ -355,7 +343,6 @@ export_meanings :: proc(symbols: []Symbol, entry: Export) -> Meanings {
 	return meanings(symbols[entry.symbol].kind)
 }
 
-// Binder is the state of one bind_file call.
 @(private)
 Binder :: struct {
 	tree:             ^ast.File_AST,
@@ -381,10 +368,9 @@ Binder :: struct {
 	has_side_effects: bool,
 }
 
-// free_scratch gives back what only the binding needed: the scopes and labels under construction,
-// whose contents freeze has already copied into the result. The temporary allocator of an arena
-// keeps the pages until its owner resets them, so this returns memory only to an allocator that
-// frees, such as the tracking allocator of the tests.
+// free_scratch matters only to an allocator that frees, such as the tracking allocator of the
+// tests: the temporary allocator of an arena keeps its pages until its owner resets them. freeze
+// has already copied the scopes and labels into the result.
 @(private)
 free_scratch :: proc(b: ^Binder) {
 	for &scope in b.scopes {
@@ -399,7 +385,6 @@ free_scratch :: proc(b: ^Binder) {
 	delete(b.labels)
 }
 
-// freeze turns the binder's growing tables into the slices of the result.
 @(private)
 freeze :: proc(b: ^Binder) -> Bound_File {
 	scopes := make([]Scope, len(b.scopes), b.allocator)

@@ -21,7 +21,6 @@ import "core:os"
 import "../../abi"
 import "../num"
 
-// write_string writes the cell's UTF-16 units as UTF-8, with nothing after them.
 write_string :: proc(err: bool, text: ^abi.String_Cell) {
 	buf: [4096]byte
 	out: bufio.Writer
@@ -31,7 +30,6 @@ write_string :: proc(err: bool, text: ^abi.String_Cell) {
 	_ = bufio.writer_flush(&out)
 }
 
-// write_boolean writes `true` or `false`, the words TS prints for a boolean.
 write_boolean :: proc(err: bool, value: bool) {
 	_, _ = os.write_string(stream(err), "true" if value else "false")
 }
@@ -54,15 +52,14 @@ number_text :: proc(buf: []byte, value: f64) -> string {
 	return num.to_string(buf, value)
 }
 
-// write_line writes the cell's units and a newline. It serves the hello world of T1.6, which codegen
-// still builds by hand; T4.4 drops both.
+// write_line serves the hello world of T1.6, which codegen still builds by hand; T4.4 drops both.
 write_line :: proc(w: io.Writer, text: ^abi.String_Cell) -> io.Error {
 	io.write_string16(w, units(text)) or_return
 	return io.write_byte(w, '\n')
 }
 
-// log_string writes one line to stdout. The line goes out before the call returns, so lines on
-// stdout and stderr keep the order of the calls.
+// log_string sends the line out before the call returns, so lines on stdout and stderr keep the
+// order of the calls.
 log_string :: proc(text: ^abi.String_Cell) {
 	buf: [4096]byte
 	stdout: bufio.Writer

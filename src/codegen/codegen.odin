@@ -53,10 +53,10 @@ Error :: enum u8 {
 	Write_Failed, // the artifact could not be written to the path
 }
 
-// init_global_options registers the LLVM backends of every v1 target (x86-64 and AArch64) and sets
-// LLVM's command line options. -disable-lsr turns off loop strength reduction, which creates
+// init_global_options passes -disable-lsr to turn off loop strength reduction, which creates
 // pointers into the middle of objects that a conservative GC stack scan may miss (requirements 6).
-// Both are process-global: call it once, before any other thread uses LLVM.
+// The backends it registers and the options are process-global: call it once, before any other
+// thread uses LLVM.
 init_global_options :: proc "contextless" () {
 	llvm.LLVMInitializeX86TargetInfo()
 	llvm.LLVMInitializeX86Target()
@@ -72,9 +72,7 @@ init_global_options :: proc "contextless" () {
 	llvm.LLVMParseCommandLineOptions(len(args), &args[0], "")
 }
 
-// emit builds the module of the unit for the target, checks it with the LLVM verifier, runs the
-// pass pipeline of the level and writes the artifact to path. init_global_options must have run,
-// and the program must have passed ir.verify.
+// emit needs init_global_options to have run and the program to have passed ir.verify.
 @(require_results)
 emit :: proc(
 	program: ^ir.Program_IR,

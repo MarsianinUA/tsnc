@@ -19,8 +19,8 @@ Statements after a terminator get a block of their own, because the builder clos
 terminator and a `return` in the middle of one is ordinary TypeScript.
 */
 
-// build_module_init builds the top-level code of one module. It opens by writing the zero of its
-// type into every global of the module, which is the rule of the package doc.
+// build_module_init opens by writing the zero of its type into every global of the module, which
+// is the rule of the package doc.
 @(private)
 build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) {
 	span := module_span(low, file)
@@ -44,7 +44,6 @@ build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) 
 	ir.end_func(&s.fb)
 }
 
-// build_functions builds the body of every function declaration the module declared an IR row for.
 @(private)
 build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
@@ -66,8 +65,8 @@ build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	}
 }
 
-// close_body ends a body whose last statement was not a `return`. A function that promises a value
-// and can still reach its end is one check reports, so the IR here only has to stay well formed.
+// close_body only has to keep the IR well formed: a function that promises a value and can still
+// reach its end is one check reports.
 @(private)
 close_body :: proc(s: ^Func_State, span: source.Span) {
 	if terminated(s) {
@@ -84,8 +83,8 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 	}
 }
 
-// lower_statement builds one statement. A block the last terminator closed is replaced first, so
-// whatever follows a `return` still has somewhere to go.
+// lower_statement first replaces a block the last terminator closed, so whatever follows a
+// `return` still has somewhere to go.
 @(private)
 lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 	if id == ast.NO_NODE {
@@ -135,8 +134,8 @@ lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 	// statement, and a Bad node that parse already reported.
 }
 
-// lower_declarator writes the initial value of a binding. A binding with no initializer keeps the
-// zero it was given when its body opened.
+// lower_declarator leaves a binding with no initializer at the zero it was given when its body
+// opened.
 @(private)
 lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 	node := s.tree.nodes[id].variant.(ast.Declarator)
@@ -190,8 +189,8 @@ lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
 	ir.emit(&s.fb, ir.VOID, ir.Return{value = returned}, span)
 }
 
-// lower_jump is `break` and `continue`. bind has already reported one that leaves nothing, so a
-// missing frame here is a program that will not be built.
+// lower_jump ignores a missing frame: bind has already reported a `break` or `continue` that leaves
+// nothing, so the program will not be built.
 @(private)
 lower_jump :: proc(s: ^Func_State, frame: ^Loop_Frame, is_continue: bool, span: source.Span) {
 	if frame == nil {
@@ -207,9 +206,9 @@ lower_jump :: proc(s: ^Func_State, frame: ^Loop_Frame, is_continue: bool, span: 
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = frame.exit}, span)
 }
 
-// branch_condition is the boolean a statement branches on. A condition this build cannot compile
-// was reported already; a constant in its place keeps the shape of the program, so the statements
-// inside are still walked and everything wrong in them is still named.
+// branch_condition puts a constant in place of a condition this build cannot compile, which was
+// reported already: it keeps the shape of the program, so the statements inside are still walked
+// and everything wrong in them is still named.
 @(private)
 branch_condition :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	if id == ast.NO_NODE {
@@ -260,7 +259,6 @@ lower_if :: proc(s: ^Func_State, node: ast.If, span: source.Span) {
 	open_join(s, join, edges[:], span)
 }
 
-// Loop_Blocks are the four blocks every loop is built from.
 @(private)
 Loop_Blocks :: struct {
 	header: ir.Block_ID,
@@ -279,7 +277,6 @@ open_loop :: proc(s: ^Func_State) -> Loop_Blocks {
 	}
 }
 
-// enter_loop jumps into the header and gives it the phis of everything the loop writes.
 @(private)
 enter_loop :: proc(
 	s: ^Func_State,
@@ -292,8 +289,8 @@ enter_loop :: proc(
 	return open_header(s, blocks.header, assigned, from, span)
 }
 
-// open_latch joins the end of the body with every `continue`. It answers false when nothing reaches
-// the latch, which leaves the header with the one edge that entered it.
+// open_latch answers false when nothing reaches the latch, which leaves the header with the one
+// edge that entered it.
 @(private)
 open_latch :: proc(
 	s: ^Func_State,
@@ -310,7 +307,6 @@ open_latch :: proc(
 	return open_join(s, latch, edges[:], span)
 }
 
-// close_latch runs the update of a `for` and takes the back edge to the header.
 @(private)
 close_latch :: proc(
 	s: ^Func_State,
@@ -332,7 +328,6 @@ close_latch :: proc(
 	patch_header(s, phis, assigned, back)
 }
 
-// lower_while is a `for` with only a condition, which is what a `while` is.
 @(private)
 lower_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.While, span: source.Span) {
 	lower_for(s, id, ast.For{condition = node.condition, body = node.body}, span)
@@ -420,7 +415,6 @@ lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span
 	open_join(s, blocks.exit, exits[:], span)
 }
 
-// leave_loop opens the exit of a loop: the edge the condition took out of it, and every `break`.
 @(private)
 leave_loop :: proc(
 	s: ^Func_State,
@@ -504,8 +498,8 @@ lower_switch :: proc(s: ^Func_State, node: ast.Switch, span: source.Span) {
 	open_join(s, exit, exits[:], span)
 }
 
-// case_test compares the value of the switch with the value of one case. A subject this build
-// cannot compare was reported by the expression itself.
+// case_test stays quiet about a subject this build cannot compare: the expression itself reported
+// it.
 @(private)
 case_test :: proc(s: ^Func_State, subject: ir.Value_ID, value: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[value].span

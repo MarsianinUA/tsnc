@@ -35,8 +35,6 @@ lib_types :: proc(c: ^Checker) -> Lib_Types {
 	return c.lib
 }
 
-// type_ref_type is the type a name in a type position stands for: `Point`, `Array<number>`, `T`,
-// `m.Point`.
 @(private)
 type_ref_type :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Type_Ref) -> Type_ID {
 	// The arguments are written here, so they are read here, before the search moves to the file
@@ -79,9 +77,8 @@ type_ref_type :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Type_Ref) -> Type_
 	return named_type(c, ref, args[:], node.name)
 }
 
-// named_type is the type of a symbol used in a type position. It is a path of its own, and not
-// type_of_symbol: an interface may legally name itself, while a value whose type needs its own type
-// has no answer at all.
+// named_type is a path of its own, and not type_of_symbol: an interface may legally name itself,
+// while a value whose type needs its own type has no answer at all.
 @(private)
 named_type :: proc(c: ^Checker, ref: Symbol_Ref, args: []Type_ID, name: ast.Name) -> Type_ID {
 	symbol := c.program.bound[ref.file].symbols[ref.symbol]
@@ -111,9 +108,9 @@ named_type :: proc(c: ^Checker, ref: Symbol_Ref, args: []Type_ID, name: ast.Name
 	return ERROR
 }
 
-// interface_type is the object type of an interface, with args in force while its members are read.
-// The row is reserved before that, so a member that names the interface again finds it instead of
-// asking for it once more, which is what lets `interface Node { next: Node | undefined }` exist.
+// interface_type reserves the row before it reads the members, so a member that names the interface
+// again finds it instead of asking for it once more, which is what lets
+// `interface Node { next: Node | undefined }` exist.
 @(private)
 interface_type :: proc(
 	c: ^Checker,
@@ -148,9 +145,8 @@ interface_type :: proc(
 	return id
 }
 
-// alias_type is what a `type` alias stands for. An alias is transparent, as it is in TypeScript, so
-// one that names itself has nothing to stand for and is rejected; an interface is how a type that
-// holds itself is written.
+// alias_type rejects an alias that names itself: an alias is transparent, as it is in TypeScript,
+// so such a one has nothing to stand for; an interface is how a type that holds itself is written.
 //
 // The answer is cached by symbol where the alias takes no arguments, which also keeps a mistake
 // inside the alias from being reported once per use. The cache is the one type_of_symbol uses, and
@@ -218,7 +214,6 @@ type_param_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Ty
 
 // Type arguments.
 
-// Restore is what bind_type_params has to put back once a declaration has been read.
 @(private)
 Restore :: struct {
 	decl:  Decl_Ref,
@@ -299,10 +294,9 @@ type_argument_text :: proc(c: ^Checker, count: int) -> string {
 
 // Object types.
 
-// object_fields reads the members of an object type into fields in canonical order, which is by
-// name, as requirements 3.3 asks. A name declared more than once is an overload when every
-// declaration is a signature, which is how the lib file writes `reduce`; anywhere else it is a
-// mistake, and the first declaration stands.
+// object_fields puts the fields in canonical order, which is by name, as requirements 3.3 asks. A
+// name declared more than once is an overload when every declaration is a signature, which is how
+// the lib file writes `reduce`; anywhere else it is a mistake, and the first declaration stands.
 @(private)
 object_fields :: proc(c: ^Checker, members: []ast.Node_ID) -> []Field {
 	fields := make([dynamic]Field, 0, len(members), context.temp_allocator)
@@ -352,7 +346,6 @@ is_signature :: proc(c: ^Checker, id: Type_ID) -> bool {
 	return false
 }
 
-// joined_signatures is the overload of everything two members declare under one name.
 @(private)
 joined_signatures :: proc(c: ^Checker, a, b: Type_ID) -> Type_ID {
 	out := make([dynamic]Type_ID, 0, 4, context.temp_allocator)
@@ -361,8 +354,7 @@ joined_signatures :: proc(c: ^Checker, a, b: Type_ID) -> Type_ID {
 	return overload_type(&c.table, out[:])
 }
 
-// append_signatures puts every signature a type offers a call into out, in the order they were
-// declared. Anything that is not callable adds none.
+// append_signatures keeps the order the signatures were declared in.
 @(private)
 append_signatures :: proc(c: ^Checker, out: ^[dynamic]Type_ID, id: Type_ID) {
 	#partial switch v in c.table.types[id] {
@@ -419,7 +411,6 @@ lib_interface :: proc(c: ^Checker, id: bind.Symbol_ID, args: []Type_ID) -> Type_
 	return interface_type(c, ref, symbol, args, symbol.name)
 }
 
-// field_of is the field of that name in the apparent type of id.
 @(private)
 field_of :: proc(c: ^Checker, id: Type_ID, name: string) -> (field: Field, found: bool) {
 	if _, is_union := c.table.types[id].(Union); is_union {
@@ -541,8 +532,6 @@ object_tagged :: proc(c: ^Checker, object: Object, names: []string, tags: []Type
 	return true
 }
 
-// object_takes reports whether a literal with those field names could be an object of this type:
-// every name is a field, and every field the literal leaves out was written `x?: T`.
 @(private)
 object_takes :: proc(object: Object, names: []string) -> bool {
 	for name in names {
@@ -561,9 +550,9 @@ object_takes :: proc(object: Object, names: []string) -> bool {
 	return true
 }
 
-// report_assign_failure says why a value does not fit where it is going. Two object types differ by
+// report_assign_failure names the field instead of printing two shapes: two object types differ by
 // which fields they have far more often than by what a field holds, and requirements 3.3 makes the
-// set of fields the whole rule, so the message names the field instead of printing two shapes.
+// set of fields the whole rule.
 @(private)
 report_assign_failure :: proc(c: ^Checker, span: source.Span, value, target: Type_ID) {
 	value_object, value_is_object := c.table.types[value].(Object)

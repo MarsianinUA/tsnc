@@ -54,8 +54,8 @@ VOID :: Type_ID(Basic_Kind.Void)
 NULL :: Type_ID(Basic_Kind.Null)
 UNDEFINED :: Type_ID(Basic_Kind.Undefined)
 
-// Type is one TypeScript type. lower reads it as a value: the parameters and the result of a
-// function, the members of a union in canonical order, the fields of an object in canonical order.
+// Type is what lower reads as a value: the parameters and the result of a function, the members of
+// a union in canonical order, the fields of an object in canonical order.
 Type :: union #no_nil {
 	Basic_Kind, // a zero Type is Basic_Kind.Error, the type of a node that failed
 	Literal,
@@ -67,10 +67,10 @@ Type :: union #no_nil {
 	Overload,
 }
 
-// Basic_Kind is a type with no parts. The order is the first half of the canonical order of a
-// union, so it is also the order these are interned in. `void`, `null` and `undefined` come last
-// because that is where a union reads best and where TypeScript itself puts them: `string |
-// undefined`, not the other way round.
+// Basic_Kind lists the types with no parts in the first half of the canonical order of a union, so
+// it is also the order these are interned in. `void`, `null` and `undefined` come last because that
+// is where a union reads best and where TypeScript itself puts them: `string | undefined`, not the
+// other way round.
 Basic_Kind :: enum u8 {
 	Error,
 	Any,
@@ -100,8 +100,8 @@ Function :: struct {
 	type_params: []Type_ID,
 }
 
-// Param is one parameter of a function type. The name is borrowed from the tree and is printed in a
-// diagnostic; it takes no part in type identity.
+// Param borrows its name from the tree and prints it in a diagnostic; the name takes no part in
+// type identity.
 Param :: struct {
 	name: string,
 	type: Type_ID,
@@ -134,14 +134,14 @@ Object :: struct {
 	args:   []Type_ID, // the type arguments of decl; empty unless the declaration is generic
 }
 
-// Field is one field of an object type. `optional` is part of the field set and so takes part in
-// assignability, as requirements 3.3 says; `readonly` only rejects a write and is ignored when types
-// are compared, as it is in TypeScript.
+// Field counts `optional` as part of the field set, so it takes part in assignability, as
+// requirements 3.3 says; `readonly` only rejects a write and is ignored when types are compared, as
+// it is in TypeScript.
 Field :: struct {
 	name:     string,
 	type:     Type_ID,
-	optional: bool, // `x?: T`
-	readonly: bool, // `readonly x: T`
+	optional: bool,
+	readonly: bool,
 }
 
 // Array is `T[]`, which is the same type as `Array<T>`. Elements are unboxed (requirements 3.6), so
@@ -166,8 +166,8 @@ Overload :: struct {
 	signatures: []Type_ID,
 }
 
-// Table is the type universe of one check call. It is not part of the result: Check_Result carries
-// the frozen rows alone, because a caller reads types and never makes them.
+// Table is not part of the result: Check_Result carries the frozen rows alone, because a caller
+// reads types and never makes them.
 @(private)
 Table :: struct {
 	allocator: runtime.Allocator,
@@ -199,9 +199,8 @@ make_table :: proc(allocator: runtime.Allocator) -> Table {
 
 // Making types.
 
-// literal_type is the type of one literal value. A negative zero is folded into zero: parse reads
-// the minus of `-0` into the value, while TypeScript has one literal type for both and `-0 === 0`
-// at run time.
+// literal_type folds a negative zero into zero: parse reads the minus of `-0` into the value, while
+// TypeScript has one literal type for both and `-0 === 0` at run time.
 @(private)
 literal_type :: proc(table: ^Table, value: ast.Literal) -> Type_ID {
 	value := value
@@ -211,8 +210,7 @@ literal_type :: proc(table: ^Table, value: ast.Literal) -> Type_ID {
 	return intern(table, Literal{value = value})
 }
 
-// function_type is the type of a function, an arrow or a function type. params and type_params may be
-// scratch: intern copies what it keeps.
+// function_type takes params and type_params that may be scratch: intern copies what it keeps.
 @(private)
 function_type :: proc(
 	table: ^Table,
@@ -232,19 +230,16 @@ function_type :: proc(
 	return intern(table, function)
 }
 
-// array_type is `T[]`.
 @(private)
 array_type :: proc(table: ^Table, element: Type_ID) -> Type_ID {
 	return intern(table, Array{element = element})
 }
 
-// type_var_type is the type variable one type parameter of the lib file stands for.
 @(private)
 type_var_type :: proc(table: ^Table, name: string, decl: Decl_Ref) -> Type_ID {
 	return intern(table, Type_Var{name = name, decl = decl})
 }
 
-// overload_type is the type of a member declared more than once. One signature is that signature.
 @(private)
 overload_type :: proc(table: ^Table, signatures: []Type_ID) -> Type_ID {
 	if len(signatures) == 1 {
@@ -253,8 +248,8 @@ overload_type :: proc(table: ^Table, signatures: []Type_ID) -> Type_ID {
 	return intern(table, Overload{signatures = signatures})
 }
 
-// plain_object_type is an object type written in place, interned by its fields. fields must already
-// be in canonical order; intern copies what it keeps.
+// plain_object_type needs fields already in canonical order. They may be scratch: intern copies
+// what it keeps.
 @(private)
 plain_object_type :: proc(table: ^Table, fields: []Field) -> Type_ID {
 	return intern(table, Object{fields = fields})
@@ -289,7 +284,7 @@ reserve_object :: proc(
 	return id, true
 }
 
-// finish_object writes the members of a reserved row. fields may be scratch.
+// finish_object copies fields, so they may be scratch.
 @(private)
 finish_object :: proc(table: ^Table, id: Type_ID, fields: []Field) {
 	object := table.types[id].(Object)
@@ -372,9 +367,9 @@ has_boolean :: proc(table: ^Table, members: []Type_ID, want: bool) -> bool {
 	return false
 }
 
-// add_member puts one member into a union under construction, where the canonical order puts it. A
-// union has a handful of members at most, so inserting in place keeps this a plain loop and needs
-// no comparator that carries the table with it.
+// add_member inserts in place, where the canonical order puts the member. A union has a handful of
+// members at most, so that keeps this a plain loop and needs no comparator that carries the table
+// with it.
 @(private)
 add_member :: proc(table: ^Table, out: ^[dynamic]Type_ID, member: Type_ID) {
 	if nested, is_union := table.types[member].(Union); is_union {
@@ -400,9 +395,8 @@ add_member :: proc(table: ^Table, out: ^[dynamic]Type_ID, member: Type_ID) {
 	append(out, member)
 }
 
-// intern is the one way a type enters the table. The parts of `type` may be scratch: a type that is
-// already there is found by its key alone, and only a new one copies its parts into the table's
-// allocator.
+// intern takes a `type` whose parts may be scratch: a type that is already there is found by its
+// key alone, and only a new one copies its parts into the table's allocator.
 @(private)
 intern :: proc(table: ^Table, type: Type) -> Type_ID {
 	strings.builder_reset(&table.key)
@@ -468,11 +462,11 @@ clone_ids :: proc(ids: []Type_ID, allocator: runtime.Allocator) -> []Type_ID {
 	return owned
 }
 
-// write_key writes the key a type is interned under. It is built from the Type_ID values of the
-// parts, which are interned already, so it stays short and it always terminates: a type that names
-// itself does so through a named object, whose key is its declaration and not its members. A
-// parameter name and an interface name are left out, because neither is part of the type. The key is
-// internal: it is never printed and never ordered.
+// write_key builds the key from the Type_ID values of the parts, which are interned already, so it
+// stays short and it always terminates: a type that names itself does so through a named object,
+// whose key is its declaration and not its members. A parameter name and an interface name are left
+// out, because neither is part of the type. The key is internal: it is never printed and never
+// ordered.
 @(private)
 write_key :: proc(b: ^strings.Builder, type: Type) {
 	switch v in type {
@@ -734,7 +728,6 @@ compare_decls :: proc(a, b: Decl_Ref) -> int {
 
 // Reading types.
 
-// literal_base is the type a literal type is one value of.
 @(private)
 literal_base :: proc(value: ast.Literal) -> Type_ID {
 	switch _ in value {
@@ -782,9 +775,9 @@ Part :: enum u8 {
 	Nullish,
 }
 
-// part_of is what survives that test. Keeping only the surviving part is what makes
-// `name || "none"` a `string` where name is `string | undefined`: tsc types it the same way, and
-// the differential gate of T4.7 runs `tsc --strict` over every program first.
+// part_of keeps only the surviving part, which is what makes `name || "none"` a `string` where name
+// is `string | undefined`: tsc types it the same way, and the differential gate of T4.7 runs
+// `tsc --strict` over every program first.
 //
 // A member of a union that survives nothing comes back as `never`, and union_type then drops it,
 // which is how `string | undefined` loses its `undefined`.
@@ -855,7 +848,6 @@ is_falsy :: proc(value: ast.Literal) -> bool {
 @(private)
 Trail :: [dynamic][2]Type_ID
 
-// assignable reports whether a value of `source` may stand where `target` is expected.
 @(private)
 assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> bool {
 	if source == target {
@@ -1088,8 +1080,8 @@ write_type :: proc(b: ^strings.Builder, types: []Type, id: Type_ID) {
 	}
 }
 
-// write_object prints a named object as its name, the way tsc does, and one written in place as its
-// fields. A name is what keeps a message about a type that holds itself finite and short.
+// write_object prints a named object as its name, the way tsc does: a name is what keeps a message
+// about a type that holds itself finite and short.
 @(private)
 write_object :: proc(b: ^strings.Builder, types: []Type, object: Object) {
 	if object.name != "" {
@@ -1161,8 +1153,8 @@ write_function :: proc(b: ^strings.Builder, types: []Type, function: Function) {
 	write_type(b, types, function.result)
 }
 
-// write_number prints the value of a number literal type. strings.write_float drops the `+` that
-// strconv writes for a positive number, which no TypeScript type ever shows.
+// write_number goes through strings.write_float, which drops the `+` that strconv writes for a
+// positive number and no TypeScript type ever shows.
 //
 // Where this differs from the program it compiles: the ECMAScript `Number::toString` rules of
 // requirements 3.1, with their 1e21 and 1e-7 thresholds, live in the runtime, in `rt/num`. A

@@ -40,7 +40,6 @@ import "../source"
 // it reads the entry file.
 LIB :: source.File_ID(0)
 
-// Import_Edge is one module request that named a file of the program.
 Import_Edge :: struct {
 	// The ast.Import_Named, ast.Import_Namespace or ast.Export_Named in the importing file; the
 	// same node bind.Import.request names.
@@ -50,7 +49,6 @@ Import_Edge :: struct {
 	type_only: bool, // `import type`: erased, so it orders nothing at run time
 }
 
-// Cycle is a group of modules that import each other, so none of them loads before the rest.
 Cycle :: struct {
 	modules:     []source.File_ID, // two or more, in File_ID order
 	has_effects: bool, // one of them runs code as it loads, which is what makes the ring an error
@@ -65,9 +63,8 @@ Program :: struct {
 	cycles:     []Cycle, // in initialization order
 }
 
-// build draws the module graph and freezes it together with the tables it stands on. It borrows
-// all four inputs, which must be as long as each other and indexed by File_ID, and allocates only
-// the order, the rings and the diagnostics.
+// build borrows all four inputs, which must be as long as each other and indexed by File_ID, and
+// allocates only the order, the rings and the diagnostics.
 @(require_results)
 build :: proc(
 	files: []source.File,

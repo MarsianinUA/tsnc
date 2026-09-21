@@ -21,8 +21,8 @@ import "../bind"
 import "../diag"
 import "../source"
 
-// UNVISITED marks a module the search has not reached. Modules are numbered from zero as they are
-// discovered, so no module ever carries this number.
+// UNVISITED is free to be a marker: modules are numbered from zero as they are discovered, so no
+// module ever carries this number.
 UNVISITED :: i32(-1)
 
 // Frame is one module on the depth-first stack, with the edge of it to look at next.
@@ -31,9 +31,9 @@ Frame :: struct {
 	edge:   int,
 }
 
-// Search is the state of one walk of the graph. index and low are Tarjan's two numbers per module:
-// when they are equal the module is the root of a component. pending holds the modules of the
-// components still being built, and order and groups are the result.
+// Search keeps Tarjan's two numbers per module in index and low: when they are equal the module is
+// the root of a component. pending holds the modules of the components still being built, and order
+// and groups are the result.
 Search :: struct {
 	bound:     []bind.Bound_File,
 	imports:   [][]Import_Edge,
@@ -48,9 +48,8 @@ Search :: struct {
 	next:      i32,
 }
 
-// search_modules walks every module and hands back the initialization order and the rings. Roots
-// are taken in File_ID order and each module's edges in source order, so two runs of one program
-// give one answer.
+// search_modules takes roots in File_ID order and each module's edges in source order, so two runs
+// of one program give one answer.
 search_modules :: proc(
 	bound: []bind.Bound_File,
 	imports: [][]Import_Edge,
@@ -84,7 +83,6 @@ search_modules :: proc(
 	return s.order[:], s.groups[:]
 }
 
-// walk runs the search until the stack the last root opened is empty again.
 walk :: proc(s: ^Search) {
 	for len(s.work) > 0 {
 		top := len(s.work) - 1
@@ -125,7 +123,6 @@ follow :: proc(s: ^Search, module: source.File_ID, edge: Import_Edge) {
 	}
 }
 
-// discover numbers a module the search has just reached and puts it on both stacks.
 discover :: proc(s: ^Search, module: source.File_ID) {
 	s.index[module] = s.next
 	s.low[module] = s.next
@@ -163,10 +160,8 @@ close_component :: proc(s: ^Search, root: source.File_ID) {
 	resize(&s.pending, first)
 }
 
-// report_cycles turns every ring that runs code as it loads into one diagnostic. The message
-// stands on the import that closes the ring: of the ring's first module, the first request in
-// source order that points back into the ring. One ring is one mistake, so a ring of five modules
-// is one message and not five.
+// report_cycles treats one ring as one mistake, so a ring of five modules is one message and not
+// five. The message stands on the import that closes the ring, which closing_span finds.
 report_cycles :: proc(
 	files: []source.File,
 	cycles: []Cycle,

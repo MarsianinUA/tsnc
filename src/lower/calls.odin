@@ -21,7 +21,6 @@ export per kind of value rather than one that understands them all. Every argume
 before the first write, as Node does it.
 */
 
-// lower_call is a call expression.
 @(private)
 lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -56,8 +55,8 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 	return ir.NO_VALUE
 }
 
-// lower_method_call is a call with a dot in front of it: a name of the lib, or a member of an
-// object, which milestone 5 owns.
+// lower_method_call finds either a name of the lib or a member of an object, which milestone 5
+// owns.
 @(private)
 lower_method_call :: proc(
 	s: ^Func_State,
@@ -72,9 +71,8 @@ lower_method_call :: proc(
 	return lower_strategy(s, node, strategy, member.name.text, span)
 }
 
-// lower_direct_call calls a function of the program. The parameters of the IR function are the
-// types the body sees, so an argument the call leaves out takes the zero of its parameter, which
-// for an optional one is undefined.
+// lower_direct_call gives an argument the call leaves out the zero of its parameter, which for an
+// optional one is undefined: the parameters of the IR function are the types the body sees.
 @(private)
 lower_direct_call :: proc(
 	s: ^Func_State,
@@ -97,7 +95,6 @@ lower_direct_call :: proc(
 	return ir.emit(&s.fb, declared.result, ir.Call{func = func, args = args}, span)
 }
 
-// lower_strategy emits what the table says the lib name is.
 @(private)
 lower_strategy :: proc(
 	s: ^Func_State,
@@ -150,8 +147,7 @@ lower_strategy :: proc(
 	return later(s, span, name)
 }
 
-// number_args lowers exactly this many arguments, each a number. A call with the wrong count is one
-// check already reported.
+// number_args stays quiet about a call with the wrong count: check already reported it.
 @(private)
 number_args :: proc(s: ^Func_State, node: ast.Call, want: int) -> ([]ir.Value_ID, bool) {
 	if len(node.args) != want {
@@ -171,8 +167,6 @@ number_args :: proc(s: ^Func_State, node: ast.Call, want: int) -> ([]ir.Value_ID
 	return args, true
 }
 
-// lower_fold is Math.max and Math.min, which take any number of arguments. They fold two at a time,
-// left to right, and a call with none answers the identity of the fold.
 @(private)
 lower_fold :: proc(s: ^Func_State, node: ast.Call, fold: Fold, span: source.Span) -> ir.Value_ID {
 	if len(node.args) == 0 {
@@ -193,8 +187,7 @@ lower_fold :: proc(s: ^Func_State, node: ast.Call, fold: Fold, span: source.Span
 	return total
 }
 
-// lower_console writes one line: each argument by its type, a space between them, a newline at the
-// end. The value of the call is nothing, as the lib declares.
+// lower_console has no value to answer, as the lib declares.
 @(private)
 lower_console :: proc(
 	s: ^Func_State,
@@ -221,8 +214,7 @@ lower_console :: proc(
 	return ir.NO_VALUE
 }
 
-// write_argument writes one argument of a console statement, choosing the export by the type the
-// value already has. The caller evaluated the argument, so nothing here runs the program's code.
+// write_argument runs none of the program's code: the caller evaluated the argument already.
 @(private)
 write_argument :: proc(s: ^Func_State, err: bool, id: ast.Node_ID, value: ir.Value_ID) {
 	span := s.tree.nodes[id].span
@@ -255,8 +247,6 @@ write_argument :: proc(s: ^Func_State, err: bool, id: ast.Node_ID, value: ir.Val
 	ir.emit(&s.fb, ir.VOID, ir.Call_Runtime{export = export, args = {stream, value}}, span)
 }
 
-// write_text writes a piece the compiler chose itself: a separator, the line end, or the word a
-// null or an undefined prints as.
 @(private)
 write_text :: proc(s: ^Func_State, err: bool, text: string, span: source.Span) {
 	stream := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = err}, span)
@@ -269,8 +259,8 @@ write_text :: proc(s: ^Func_State, err: bool, text: string, span: source.Span) {
 	ir.emit(&s.fb, ir.VOID, call, span)
 }
 
-// lower_process_exit ends the process. The export never returns, and the statement that holds the
-// call closes its block with an unreachable terminator.
+// lower_process_exit emits no terminator of its own: the export never returns, and the statement
+// that holds the call closes its block with an unreachable terminator.
 @(private)
 lower_process_exit :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	code := ir.NO_VALUE

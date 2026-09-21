@@ -319,8 +319,8 @@ a_runtime_call_widens_its_boolean :: proc(t: ^testing.T) {
 	expect_text(t, text, wants)
 }
 
-// Every number function of the IR reaches LLVM. The table is the other half of the one in codegen:
-// an llvm intrinsic where LLVM 20 has one, a libm call otherwise.
+// The table is the other half of the one in codegen: an llvm intrinsic where LLVM 20 has one, a
+// libm call otherwise.
 @(test)
 every_number_function_reaches_llvm :: proc(t: ^testing.T) {
 	calls := [ir.Intrinsic_Op]string {

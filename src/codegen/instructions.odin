@@ -238,8 +238,6 @@ const_tagged :: proc(m: ^Module, tag: abi.Tag) -> llvm.LLVMValueRef {
 	return llvm.LLVMConstNamedStruct(m.types.tagged, &words[0], len(words))
 }
 
-// build_box widens a value into the two words of abi.Tagged. The tag comes from the IR type of the
-// value, and the payload word holds the bits of a double, a widened boolean or an address.
 @(private)
 build_box :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
 	tag: abi.Tag
@@ -275,7 +273,6 @@ build_box :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.L
 	return llvm.LLVMBuildInsertValue(m.builder, tagged, payload, 1, "")
 }
 
-// build_unbox reads the payload word as the type the instruction asks for.
 @(private)
 build_unbox :: proc(m: ^Module, payload: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
 	switch type.kind {
@@ -310,8 +307,8 @@ from_storage :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llv
 	return value
 }
 
-// unsupported keeps the mnemonic of the first instruction codegen cannot emit. build_func stops
-// there, and emit turns it into an error rather than a half built module.
+// unsupported keeps only the first mnemonic: build_func stops there, and emit turns it into an
+// error rather than a half built module.
 @(private)
 unsupported :: proc(m: ^Module, mnemonic: string) {
 	if m.unsupported == "" {

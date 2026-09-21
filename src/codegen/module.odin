@@ -29,14 +29,13 @@ import "../llvm"
 #assert(size_of(abi.Tag) == 8)
 #assert(offset_of(abi.Tagged, payload) == 8)
 
-// Function is a declared function: its type, which LLVMBuildCall2 needs, and the function itself.
+// Function keeps the signature next to the function because LLVMBuildCall2 needs it.
 @(private)
 Function :: struct {
 	signature: llvm.LLVMTypeRef,
 	function:  llvm.LLVMValueRef,
 }
 
-// Types are the LLVM types the translation uses everywhere, built once per module.
 @(private)
 Types :: struct {
 	void:   llvm.LLVMTypeRef,
@@ -50,8 +49,7 @@ Types :: struct {
 	tagged: llvm.LLVMTypeRef,
 }
 
-// Module is what one emit call builds: the LLVM handles, and one LLVM value per IR id. Everything
-// in it lives in the temp allocator of the call.
+// Module lives in the temp allocator of the emit call that builds it.
 @(private)
 Module :: struct {
 	ctx:          llvm.LLVMContextRef,
@@ -70,8 +68,6 @@ Module :: struct {
 	unsupported:  string, // the mnemonic of the first instruction codegen cannot emit yet
 }
 
-// build_module fills the module with the program data every function may reach and then with one
-// body per function of the unit.
 @(private)
 build_module :: proc(
 	ctx: llvm.LLVMContextRef,
@@ -160,9 +156,8 @@ storage_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
 	return value_type(m, type)
 }
 
-// declare_runtime declares every export of abi.RUNTIME_EXPORTS, so generated code calls the runtime
-// by the symbols and signatures the runtime exports. A diverging export is noreturn, so LLVM treats
-// the code after its call as unreachable.
+// declare_runtime marks a diverging export noreturn, so LLVM treats the code after its call as
+// unreachable.
 @(private)
 declare_runtime :: proc(
 	ctx: llvm.LLVMContextRef,
@@ -216,10 +211,10 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 	unreachable()
 }
 
-// declare_funcs declares every function of the program and answers the call target of each. Only
-// tsnc_main leaves the object file, because the runtime calls it; the rest of the unit is internal,
-// which in v1 - one unit holding the whole program - lets the optimizer see all of it. A function
-// outside the unit stays an external declaration, which is what v2 needs when a call crosses units.
+// declare_funcs lets only tsnc_main leave the object file, because the runtime calls it; the rest
+// of the unit is internal, which in v1 - one unit holding the whole program - lets the optimizer
+// see all of it. A function outside the unit stays an external declaration, which is what v2 needs
+// when a call crosses units.
 @(private)
 declare_funcs :: proc(m: ^Module, unit: ir.Unit) {
 	m.funcs = make([]Function, len(m.program.funcs), context.temp_allocator)
@@ -239,8 +234,8 @@ declare_funcs :: proc(m: ^Module, unit: ir.Unit) {
 	}
 }
 
-// func_signature is the LLVM type of an IR function. A function that captures takes its environment
-// ahead of the TypeScript parameters, which is the closure convention of abi.
+// func_signature puts the environment of a function that captures ahead of the TypeScript
+// parameters, which is the closure convention of abi.
 @(private)
 func_signature :: proc(m: ^Module, body: ir.Func) -> llvm.LLVMTypeRef {
 	first := 1 if body.env != ir.NO_LAYOUT else 0
@@ -275,9 +270,8 @@ add_globals :: proc(m: ^Module) {
 	}
 }
 
-// add_string_cells writes the string pool into read-only data, one abi.String_Cell per entry. The
-// units are emitted as the pool holds them: it keeps a lone surrogate that no UTF-8 round trip
-// would survive.
+// add_string_cells emits the units as the pool holds them: it keeps a lone surrogate that no UTF-8
+// round trip would survive.
 @(private)
 add_string_cells :: proc(m: ^Module) {
 	m.string_cells = make([]llvm.LLVMValueRef, len(m.program.strings), context.temp_allocator)
@@ -286,8 +280,8 @@ add_string_cells :: proc(m: ^Module) {
 	}
 }
 
-// add_string_cell adds a String_Cell holding the units and returns its global. The cell is
-// constant: it lives in read-only data, and the GC never marks it (see abi).
+// add_string_cell makes the cell constant: it lives in read-only data, and the GC never marks it
+// (see abi).
 @(private)
 add_string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
 	unit_values := make([]llvm.LLVMValueRef, len(units), context.temp_allocator)
@@ -320,9 +314,8 @@ add_string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
 	return cell
 }
 
-// add_fail_sites writes one constant abi.Fail_Site per site the program can reach, which is what
-// tsnc_fail reads to print where the program failed. The paths are shared: a program has many more
-// sites than files.
+// add_fail_sites writes the constants tsnc_fail reads to print where the program failed. The paths
+// are shared: a program has many more sites than files.
 @(private)
 add_fail_sites :: proc(m: ^Module) {
 	m.fail_sites = make([]llvm.LLVMValueRef, len(m.program.fail_sites), context.temp_allocator)

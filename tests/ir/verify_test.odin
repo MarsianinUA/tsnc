@@ -359,7 +359,6 @@ every_fault_of_a_program_is_reported :: proc(t: ^testing.T) {
 	expect_kinds(t, found, {.Operand_Type, .Operand_Type, .Unknown_Id})
 }
 
-// Edge_Fault says which edge of a phi build_branch breaks.
 @(private = "file")
 Edge_Fault :: enum {
 	None,
@@ -544,8 +543,8 @@ build_return_body :: proc(p: ^ir.Program_Builder, id: ir.Func_ID) {
 	ir.end_func(&f)
 }
 
-// at is a span one byte wide, standing in for the place in the source an instruction came from.
-// The verifier never reads the text, so only the shape matters.
+// at stands in for the place in the source an instruction came from. The verifier never reads the
+// text, so only the shape matters.
 @(private = "file")
 at :: proc(offset: i32) -> source.Span {
 	return {file = 1, start = offset, end = offset + 1}

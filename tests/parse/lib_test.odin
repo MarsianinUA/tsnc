@@ -175,15 +175,13 @@ lib_declarations :: proc(tree: ast.File_AST) -> []string {
 	return entries[:]
 }
 
-// dump_text is the dump of one node.
 dump_text :: proc(nodes: []ast.Node, id: ast.Node_ID) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	dump(&b, nodes, id)
 	return strings.to_string(b)
 }
 
-// with_type_params is name followed by its type parameters, as in "Array<T>"; without any it is
-// name.
+// with_type_params answers "Array<T>" for the name Array and the type parameter T.
 with_type_params :: proc(nodes: []ast.Node, name: string, type_params: []ast.Node_ID) -> string {
 	if len(type_params) == 0 {
 		return name
@@ -198,8 +196,8 @@ with_type_params :: proc(nodes: []ast.Node, name: string, type_params: []ast.Nod
 	return strings.to_string(b)
 }
 
-// sorted_differences walks two sorted lists and returns the entries only want has and the ones
-// only got has. A repeated entry counts once per repetition, so a duplicate shows up too.
+// sorted_differences needs both lists sorted. A repeated entry counts once per repetition, so a
+// duplicate shows up too.
 sorted_differences :: proc(want, got: []string) -> (missing: []string, extra: []string) {
 	only_want := make([dynamic]string, context.temp_allocator)
 	only_got := make([dynamic]string, context.temp_allocator)

@@ -42,7 +42,6 @@ function firstFactor(n: number): number {
   return n;
 }
 
-// A void function with a bare `return` and nothing after it.
 function maybeAnnounce(x: number, loud: boolean): void {
   if (!loud) {
     return;

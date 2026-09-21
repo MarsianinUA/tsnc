@@ -18,7 +18,6 @@ package source
 
 import "core:slice"
 
-// File_ID indexes the file table.
 File_ID :: distinct u32
 
 // MAX_FILE_SIZE is the largest text make_file accepts, in bytes. It keeps every offset, line and
@@ -44,8 +43,7 @@ Position :: struct {
 	column: i32,
 }
 
-// make_file records where the lines of text start. Only line_starts is allocated, with allocator;
-// path and text stay borrowed and must outlive the File.
+// make_file allocates only line_starts; path and text stay borrowed and must outlive the File.
 make_file :: proc(path, text: string, allocator := context.allocator) -> File {
 	ensure(len(text) <= MAX_FILE_SIZE)
 
@@ -71,8 +69,8 @@ make_file :: proc(path, text: string, allocator := context.allocator) -> File {
 	return {path = path, text = text, line_starts = line_starts}
 }
 
-// position turns a byte offset into file.text into a line and a column. offset lies on a character
-// boundary in [0, len(file.text)]; the end of the text is a valid position.
+// position takes a byte offset that lies on a character boundary in [0, len(file.text)]; the end of
+// the text is a valid position.
 position :: proc(file: File, offset: i32) -> Position {
 	assert(0 <= offset && int(offset) <= len(file.text))
 

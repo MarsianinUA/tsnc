@@ -44,8 +44,8 @@ Link_Error :: struct {
 	detail: string, // allocated with link's allocator; empty for None and Unsupported_Target
 }
 
-// link links the program objects and the runtime object into the executable at output. An empty
-// runtime_object means the runtime object of the target next to the running executable.
+// link takes an empty runtime_object to mean the runtime object of the target next to the running
+// executable.
 @(require_results)
 link :: proc(
 	objects: []string,
@@ -114,7 +114,7 @@ link :: proc(
 	return {}
 }
 
-// join joins path elements with the host separator into the temp allocator.
+// join allocates from the temp allocator.
 @(private)
 join :: proc(elems: ..string) -> string {
 	path, _ := os.join_path(elems, context.temp_allocator)

@@ -40,7 +40,6 @@ Loop_Frame :: struct {
 	breaks:    [dynamic]Edge,
 }
 
-// Func_State is one IR function under construction.
 Func_State :: struct {
 	low:    ^Lowering,
 	fb:     ir.Func_Builder,
@@ -54,8 +53,8 @@ Func_State :: struct {
 	loops:  [dynamic]Loop_Frame,
 }
 
-// begin_function opens a body and gives every local of it the zero of its type, parameters aside:
-// those arrive as the values begin_func already emitted, in order.
+// begin_function leaves the parameters out of the zeroing: those arrive as the values begin_func
+// already emitted, in order.
 @(private)
 begin_function :: proc(
 	low: ^Lowering,
@@ -90,9 +89,9 @@ begin_function :: proc(
 	return s
 }
 
-// zero_locals writes the zero of its type into every local of this body. A body is the scopes whose
-// nearest enclosing function is this one; the module scope is left out of the module init, because
-// its bindings are globals of the program and not values of a function.
+// zero_locals takes a body to be the scopes whose nearest enclosing function is this one; the
+// module scope is left out of the module init, because its bindings are globals of the program and
+// not values of a function.
 @(private)
 zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 	for entry, i in s.bound.scopes {
@@ -120,8 +119,8 @@ zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 	}
 }
 
-// owning_function is the nearest enclosing function scope, or MODULE_SCOPE for a scope that no
-// function encloses. MODULE_SCOPE is its own parent, so the walk always ends.
+// owning_function answers MODULE_SCOPE for a scope that no function encloses. MODULE_SCOPE is its
+// own parent, so the walk always ends.
 @(private)
 owning_function :: proc(bound: ^bind.Bound_File, scope: bind.Scope_ID) -> bind.Scope_ID {
 	current := scope
@@ -131,8 +130,8 @@ owning_function :: proc(bound: ^bind.Bound_File, scope: bind.Scope_ID) -> bind.S
 	return current
 }
 
-// zero_value is what a binding of this type holds before anything is written to it. A string takes
-// the empty cell rather than a null pointer, so no reader and no collector has to know about one.
+// zero_value gives a string the empty cell rather than a null pointer, so no reader and no
+// collector has to know about one.
 @(private)
 zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value_ID {
 	switch type.kind {
@@ -152,8 +151,6 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 	return ir.NO_VALUE
 }
 
-// here is the edge that leaves the block being built right now: where it is, and what the locals
-// hold there.
 @(private)
 here :: proc(s: ^Func_State) -> Edge {
 	return {block = s.fb.current, values = slice.clone(s.locals, context.temp_allocator)}
@@ -166,15 +163,13 @@ terminated :: proc(s: ^Func_State) -> bool {
 	return s.fb.current == ir.NO_BLOCK
 }
 
-// value_type is the type the builder recorded for a value.
 @(private)
 value_type :: proc(s: ^Func_State, value: ir.Value_ID) -> ir.Type {
 	return s.fb.values[value].type
 }
 
-// open_join opens a block every edge jumps to and reconciles the locals: one phi per symbol the
-// edges disagree about. A block no edge reaches cannot be entered, and takes an inert terminator so
-// that the statements written after it still have a block to land in.
+// open_join answers false for a block no edge reaches. Such a block cannot be entered, and takes an
+// inert terminator so that the statements written after it still have a block to land in.
 @(private)
 open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: source.Span) -> bool {
 	ir.use_block(&s.fb, block)
@@ -209,8 +204,8 @@ open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: sourc
 	return true
 }
 
-// open_header opens a loop header. Its back edge does not exist yet, so it takes a phi for every
-// symbol the loop assigns and the phis learn their edges through patch_header.
+// open_header cannot see its back edge yet, so it takes a phi for every symbol the loop assigns and
+// the phis learn their edges through patch_header.
 @(private)
 open_header :: proc(
 	s: ^Func_State,
@@ -238,7 +233,6 @@ open_header :: proc(
 	return
 }
 
-// patch_header gives the header phis the values that arrive along the back edge.
 @(private)
 patch_header :: proc(s: ^Func_State, phis: []ir.Value_ID, assigned: []bind.Symbol_ID, back: Edge) {
 	for symbol, i in assigned {

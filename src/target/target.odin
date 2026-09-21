@@ -30,7 +30,7 @@ Target :: enum u8 {
 	wasm32_wasi, // v2: the name is reserved, SPECS has no row for it yet
 }
 
-// HOST is the platform the compiler itself runs on, the default target.
+// HOST is the default target.
 when ODIN_OS == .Windows && ODIN_ARCH == .amd64 {
 	HOST :: Target.windows_amd64
 } else when ODIN_OS == .Linux && ODIN_ARCH == .amd64 {
@@ -54,7 +54,7 @@ Spec :: struct {
 	linker:            Linker,
 	link_flags:        []string, // one command line argument per element, unquoted
 	runtime_object:    string, // file name; link looks for it next to tsnc
-	executable_suffix: string, // what the OS calls an executable: ".exe" on Windows, nothing else
+	executable_suffix: string,
 	pointer_size:      int, // bytes
 }
 
@@ -108,8 +108,7 @@ SPECS := #partial [Target]Spec {
 	},
 }
 
-// supported reports whether SPECS has a row for the target, so that codegen and link can build
-// for it.
+// supported takes a nil triple to mean that SPECS has no row for the target.
 supported :: proc(t: Target) -> bool {
 	return SPECS[t].triple != nil
 }

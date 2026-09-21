@@ -48,8 +48,8 @@ Lowered :: struct {
 	text:    string, // the -emit-ir dump
 }
 
-// lower_sources lowers a whole program. It checks that parse, bind and check said nothing, and that
-// the IR keeps to its contract; what lower itself reported is left for the test to read.
+// lower_sources fails the test when parse, bind or check said anything or the IR breaks its
+// contract; what lower itself reported is left for the test to read.
 lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Lowered {
 	texts := make([]string, len(sources) + 1, context.temp_allocator)
 	texts[0] = LIB_TEXT
@@ -135,7 +135,6 @@ lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location)
 	}
 }
 
-// lower_text lowers one source that has to compile with nothing to report.
 lower_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Lowered {
 	one := [1]string{text}
 	result := lower_sources(t, one[:], loc)
@@ -163,7 +162,6 @@ expect_later :: proc(
 	return result
 }
 
-// func_named answers the body of an IR function by the symbol it carries.
 func_named :: proc(output: ir.Program_IR, name: string) -> (ir.Func, bool) {
 	for body in output.funcs {
 		if body.name == name {
@@ -173,7 +171,6 @@ func_named :: proc(output: ir.Program_IR, name: string) -> (ir.Func, bool) {
 	return {}, false
 }
 
-// init_names is the name of each module init function, in the order tsnc_main runs them.
 init_names :: proc(output: ir.Program_IR) -> []string {
 	names := make([]string, len(output.init_order), context.temp_allocator)
 	for id, i in output.init_order {
@@ -196,7 +193,6 @@ pool_words :: proc(output: ir.Program_IR) -> []string {
 	return words
 }
 
-// dump is the -emit-ir text of a whole program.
 dump :: proc(files: []source.File, output: ir.Program_IR) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	writer := strings.to_writer(&builder)

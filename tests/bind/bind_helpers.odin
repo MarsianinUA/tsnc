@@ -11,8 +11,7 @@ import "../../src/diag"
 import "../../src/parse"
 import "../../src/source"
 
-// Error is a diagnostic the way a user reads it: its code, and the 1-based line and column where
-// it starts.
+// Error is a diagnostic the way a user reads it: the line and column are 1-based.
 Error :: struct {
 	code:   diag.Code,
 	line:   i32,
@@ -28,8 +27,7 @@ Bound :: struct {
 	errors:       []Error, // bind's own diagnostics, in print order
 }
 
-// bind_text parses and binds text as file 0 into the temp allocator, which the test runner frees
-// before each test, and checks the invariants of the result (check_bound).
+// bind_text allocates from the temp allocator, which the test runner frees before each test.
 bind_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Bound {
 	tree, parse_diagnostics := parse.parse_file(text, 0, context.temp_allocator)
 	bound, bind_diagnostics := bind.bind_file(&tree, context.temp_allocator)
@@ -48,7 +46,6 @@ bind_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Bound
 	return result
 }
 
-// expect_bound binds text that must parse and bind without a single diagnostic.
 expect_bound :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Bound {
 	b := bind_text(t, text, loc)
 	testing.expectf(t, len(b.parse_errors) == 0, "%q: parse %v", text, b.parse_errors, loc = loc)
@@ -56,7 +53,7 @@ expect_bound :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Bo
 	return b
 }
 
-// expect_errors binds text and checks the diagnostics bind reports, in print order.
+// expect_errors takes the diagnostics of bind alone, in print order: the text must parse cleanly.
 expect_errors :: proc(
 	t: ^testing.T,
 	text: string,
@@ -127,13 +124,12 @@ type_use_node :: proc(b: Bound, name: string, occurrence := 0) -> ast.Node_ID {
 	return ast.NO_NODE
 }
 
-// use_declaration is where the declaration that a use of name refers to stands. It is {} when the
-// name resolves to nothing, which means check looks it up among the lib names.
+// use_declaration is {} when the name resolves to nothing, which means check looks it up among the
+// lib names.
 use_declaration :: proc(b: Bound, name: string, occurrence := 0) -> source.Position {
 	return declaration_position(b, b.bound.node_symbols[use_node(b, name, occurrence)])
 }
 
-// type_use_declaration is use_declaration for a name used as a type.
 type_use_declaration :: proc(b: Bound, name: string, occurrence := 0) -> source.Position {
 	return declaration_position(b, b.bound.node_symbols[type_use_node(b, name, occurrence)])
 }
@@ -163,7 +159,6 @@ body_end_flow :: proc(b: Bound, name: string) -> bind.Flow_ID {
 	return bind.UNREACHABLE
 }
 
-// scope_named is the scope the node that declares name opens.
 scope_of_symbol :: proc(b: Bound, name: string, meaning := bind.Meaning.Value) -> bind.Scope {
 	return b.bound.scopes[symbol_of(b, name, meaning).scope]
 }
@@ -178,12 +173,10 @@ function_scope_of :: proc(b: Bound, name: string) -> bind.Scope_ID {
 	return b.bound.node_scopes[node]
 }
 
-// capture_names lists what the function that name stands for captures, as it captured them.
 capture_names :: proc(b: Bound, function: string) -> []string {
 	return scope_captures(b, b.bound.scopes[function_scope_of(b, function)])
 }
 
-// scope_captures lists what a scope captures, in the order it captured them.
 scope_captures :: proc(b: Bound, scope: bind.Scope) -> []string {
 	names := make([dynamic]string, context.temp_allocator)
 	for captured in scope.captures {
@@ -284,7 +277,6 @@ write_antecedents :: proc(
 	strings.write_string(builder, ")")
 }
 
-// node_text is the source text of a node, on one line.
 @(private = "file")
 node_text :: proc(b: Bound, id: ast.Node_ID) -> string {
 	span := b.tree.nodes[id].span
@@ -445,7 +437,6 @@ errors_of :: proc(file: source.File, diagnostics: []diag.Diagnostic) -> []Error 
 	return errors
 }
 
-// lines joins its arguments with a newline, for writing a program in a test.
 lines :: proc(parts: ..string) -> string {
 	return strings.join(parts, "\n", context.temp_allocator)
 }

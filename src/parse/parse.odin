@@ -47,9 +47,8 @@ import "../ast"
 import "../diag"
 import "../source"
 
-// parse_file parses text, the text of file: tokenize, then parse_tokens. diagnostics has the
-// tokenizer's diagnostics first, then the parser's; a tokenizer error inside a regular expression
-// literal is left out, since the literal is reported as a whole.
+// parse_file puts the tokenizer's diagnostics first, then the parser's; a tokenizer error inside a
+// regular expression literal is left out, since the literal is reported as a whole.
 parse_file :: proc(
 	text: string,
 	file: source.File_ID,
@@ -79,9 +78,9 @@ parse_file :: proc(
 	return tree, all[:]
 }
 
-// inside_regular_expression reports whether span lies in a regular expression literal that parse
-// reported. tokenize reads the literal as ordinary tokens, and its errors there (a `\` is no
-// token) would only repeat that report.
+// inside_regular_expression is asked because tokenize reads a regular expression literal as
+// ordinary tokens, and its errors there (a `\` is no token) would only repeat what parse reported
+// for the literal.
 @(private)
 inside_regular_expression :: proc(span: source.Span, diagnostics: []diag.Diagnostic) -> bool {
 	for d in diagnostics {
@@ -93,9 +92,8 @@ inside_regular_expression :: proc(span: source.Span, diagnostics: []diag.Diagnos
 	return false
 }
 
-// parse_tokens builds the syntax tree of the tokens of one file, as tokenize returns them: the
-// file is the one of the EOF token. It reports every problem it finds as a diagnostic and always
-// returns a whole tree.
+// parse_tokens takes the tokens of one file as tokenize returns them: the file is the one of the
+// EOF token. It reports every problem it finds as a diagnostic and always returns a whole tree.
 parse_tokens :: proc(
 	tokens: []Token,
 	allocator := context.allocator,
@@ -134,7 +132,6 @@ parse_tokens :: proc(
 	return tree, p.diagnostics[:]
 }
 
-// Parser is the state of one parse_tokens call.
 @(private)
 Parser :: struct {
 	tokens:           []Token,
@@ -208,7 +205,6 @@ mark :: proc(p: ^Parser) -> Mark {
 	}
 }
 
-// undo returns to m as if nothing was parsed since, and remembers that the try from m failed.
 @(private)
 undo :: proc(p: ^Parser, m: Mark) {
 	p.current = m.current
@@ -220,15 +216,15 @@ undo :: proc(p: ^Parser, m: Mark) {
 	p.failed_tries[m.current] = {}
 }
 
-// drop removes the nodes parsed since m. Nothing refers to them yet: a parent is added after its
+// drop is safe because nothing refers to the nodes parsed since m yet: a parent is added after its
 // children, and the lists in progress hold only older nodes.
 @(private)
 drop :: proc(p: ^Parser, m: Mark) {
 	resize(&p.nodes, m.node_count)
 }
 
-// discard replaces the nodes parsed since m with one Bad node over the text from start, for a
-// construct outside the subset that has been reported.
+// discard is for a construct outside the subset that has been reported: one Bad node stands for the
+// text from start.
 @(private)
 discard :: proc(p: ^Parser, m: Mark, start: i32) -> ast.Node_ID {
 	drop(p, m)
@@ -237,13 +233,13 @@ discard :: proc(p: ^Parser, m: Mark, start: i32) -> ast.Node_ID {
 
 // Tokens.
 
-// peek returns the token ahead tokens after the current one; past the end it is the EOF token.
+// peek past the end answers with the EOF token.
 @(private)
 peek :: proc(p: ^Parser, ahead := 0) -> Token {
 	return p.tokens[min(p.current + ahead, len(p.tokens) - 1)]
 }
 
-// advance consumes the current token and returns it. It never moves past EOF.
+// advance never moves past EOF.
 @(private)
 advance :: proc(p: ^Parser) -> Token {
 	token := p.tokens[p.current]
@@ -258,7 +254,6 @@ at :: proc(p: ^Parser, kind: Token_Kind) -> bool {
 	return p.tokens[p.current].kind == kind
 }
 
-// at_word reports whether the current token is the name word, which may be a contextual keyword.
 @(private)
 at_word :: proc(p: ^Parser, word: string) -> bool {
 	return is_word(peek(p), word)
@@ -277,7 +272,6 @@ is_name_token :: proc(token: Token) -> bool {
 	return token.kind == .Identifier || token.kind >= .Await
 }
 
-// next_on_same_line reports whether the token after the current one has no line break before it.
 @(private)
 next_on_same_line :: proc(p: ^Parser) -> bool {
 	next := peek(p, 1)
@@ -302,7 +296,6 @@ accept_word :: proc(p: ^Parser, word: string) -> bool {
 	return true
 }
 
-// expect consumes a punctuator of kind, or reports it missing and leaves the current token.
 @(private)
 expect :: proc(p: ^Parser, kind: Token_Kind) -> bool {
 	if accept(p, kind) {
@@ -321,22 +314,19 @@ expect_word :: proc(p: ^Parser, word: string) -> bool {
 	return false
 }
 
-// token_start is where the current token starts: the start of the node that begins with it.
 @(private)
 token_start :: proc(p: ^Parser) -> i32 {
 	return p.tokens[p.current].span.start
 }
 
-// previous_end is where the last consumed token ends: the end of the node that ends with it.
 @(private)
 previous_end :: proc(p: ^Parser) -> i32 {
 	return p.tokens[p.current - 1].span.end if p.current > 0 else 0
 }
 
-// matching_close is the index of the token that closes the bracket at index open. It is -1 for an
-// unclosed bracket: the text ends first, or a closing bracket of a kind with none open comes first,
-// such as the `}` of the enclosing block. A template substitution counts as a bracket: `${`
-// opens, the tail closes.
+// matching_close is -1 for an unclosed bracket: the text ends first, or a closing bracket of a kind
+// with none open comes first, such as the `}` of the enclosing block. A template substitution
+// counts as a bracket: `${` opens, the tail closes.
 @(private)
 matching_close :: proc(p: ^Parser, open: int) -> int {
 	depths: [4]int // open (, [, { and ${
@@ -373,8 +363,7 @@ matching_close :: proc(p: ^Parser, open: int) -> int {
 	return -1
 }
 
-// skip_balanced skips the bracket at the current token and everything up to its closing bracket.
-// An unclosed bracket is skipped alone, so that the text after it still parses.
+// skip_balanced skips an unclosed bracket alone, so that the text after it still parses.
 @(private)
 skip_balanced :: proc(p: ^Parser) {
 	close := matching_close(p, p.current)
@@ -389,8 +378,8 @@ skip_balanced :: proc(p: ^Parser) {
 
 // Nodes.
 
-// add_node appends a node that spans the text from start to the end of the last consumed token.
-// A node that consumed nothing is zero-width at that end, like add_missing.
+// add_node ends the node at the last consumed token. A node that consumed nothing is zero-width at
+// that end, like add_missing.
 @(private)
 add_node :: proc(p: ^Parser, start: i32, variant: ast.Variant) -> ast.Node_ID {
 	end := previous_end(p)
@@ -451,8 +440,6 @@ missing_name :: proc(p: ^Parser) -> ast.Name {
 	return {span = {file = p.file, start = end, end = end}}
 }
 
-// module_requests lists the imports and re-exports among the top-level statements, the requests
-// that driver follows.
 @(private)
 module_requests :: proc(
 	nodes: []ast.Node,
@@ -576,7 +563,6 @@ describe_token :: proc(p: ^Parser, token: Token) -> string {
 	return quoted(p, punctuator_text(token.kind))
 }
 
-// punctuator_text is the spelling of a punctuator kind.
 @(private)
 punctuator_text :: proc(kind: Token_Kind) -> string {
 	for punctuator in PUNCTUATORS {
@@ -587,7 +573,6 @@ punctuator_text :: proc(kind: Token_Kind) -> string {
 	unreachable()
 }
 
-// quoted puts text in backticks, the way messages show code.
 @(private)
 quoted :: proc(p: ^Parser, text: string) -> string {
 	return strings.concatenate({"`", text, "`"}, p.allocator)
@@ -595,9 +580,8 @@ quoted :: proc(p: ^Parser, text: string) -> string {
 
 // Statements end.
 
-// end_statement consumes the `;` that ends a statement, or accepts its absence where automatic
-// semicolon insertion puts one. Otherwise it reports the `;` missing and skips to the next
-// statement.
+// end_statement accepts a missing `;` where automatic semicolon insertion puts one. Otherwise it
+// reports the `;` missing and skips to the next statement.
 @(private)
 end_statement :: proc(p: ^Parser) {
 	if accept(p, .Semicolon) {
@@ -635,8 +619,7 @@ skip_statement :: proc(p: ^Parser) {
 	}
 }
 
-// skip_unsupported_member reports a member of an object type that is outside the subset, at span,
-// and skips it. The result is NO_NODE: the member is left out of its list.
+// skip_unsupported_member answers NO_NODE: the member is left out of its list.
 @(private)
 skip_unsupported_member :: proc(
 	p: ^Parser,
@@ -669,7 +652,6 @@ skip_member :: proc(p: ^Parser) {
 	}
 }
 
-// starts_statement reports the keywords that start a statement, where skip_statement stops.
 @(private)
 starts_statement :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {

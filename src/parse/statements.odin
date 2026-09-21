@@ -3,8 +3,7 @@ package parse
 
 import "../ast"
 
-// parse_module_items parses the statements, imports and exports of a module up to closer: the end
-// of the file, or the `}` of a namespace body.
+// parse_module_items stops at closer: the end of the file, or the `}` of a namespace body.
 parse_module_items :: proc(p: ^Parser, closer: Token_Kind) -> []ast.Node_ID {
 	first := len(p.scratch)
 	for !at(p, closer) && !at(p, .EOF) {
@@ -14,7 +13,6 @@ parse_module_items :: proc(p: ^Parser, closer: Token_Kind) -> []ast.Node_ID {
 	return finish_list(p, first)
 }
 
-// parse_block_items parses the statements of a block up to its `}`.
 parse_block_items :: proc(p: ^Parser) -> []ast.Node_ID {
 	first := len(p.scratch)
 	for !at(p, .Close_Brace) && !at(p, .EOF) {
@@ -24,9 +22,8 @@ parse_block_items :: proc(p: ^Parser) -> []ast.Node_ID {
 	return finish_list(p, first)
 }
 
-// add_item appends an item that a list loop parsed to the list in scratch. An item that read
-// nothing started at a token that starts no statement: it is reported and skipped, so that the
-// loop moves on.
+// add_item keeps a list loop moving: an item that read nothing started at a token that starts no
+// statement, so that token is reported and skipped.
 add_item :: proc(p: ^Parser, item: ast.Node_ID, before: int) {
 	if item != ast.NO_NODE {
 		append(&p.scratch, item)
@@ -52,7 +49,6 @@ parse_module_item :: proc(p: ^Parser) -> ast.Node_ID {
 	return parse_block_item(p)
 }
 
-// parse_block_item parses a statement or a declaration: an item of a block or a case.
 parse_block_item :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return ast.NO_NODE
@@ -114,8 +110,8 @@ starts_declaration_word :: proc(p: ^Parser) -> bool {
 
 // Declarations.
 
-// parse_declaration parses a declaration that starts at the current token, after the modifiers
-// already read from start on (`export`, `declare`).
+// parse_declaration starts at the current token, after the modifiers already read from start on
+// (`export`, `declare`).
 parse_declaration :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	token := peek(p)
 	#partial switch token.kind {
@@ -264,7 +260,6 @@ check_binding_name :: proc(p: ^Parser, name: ast.Name) {
 	}
 }
 
-// parse_type_name parses the name of an interface, a type alias or a type parameter.
 parse_type_name :: proc(p: ^Parser) -> ast.Name {
 	if at(p, .Identifier) {
 		return name_of(advance(p))
@@ -299,7 +294,6 @@ parse_function_decl :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) ->
 	return discard(p, m, start)
 }
 
-// parse_function_rest parses a function from its type parameters on, after its name.
 parse_function_rest :: proc(
 	p: ^Parser,
 	start: i32,
@@ -537,7 +531,6 @@ parse_default_export_value :: proc(p: ^Parser) {
 	parse_function_rest(p, start, {}, name)
 }
 
-// starts_declaration reports whether a declaration starts at the current token.
 starts_declaration :: proc(p: ^Parser) -> bool {
 	#partial switch peek(p).kind {
 	case .Let, .Const, .Var, .Function, .Class, .Enum, .Interface:
@@ -653,7 +646,6 @@ parse_class :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 	return discard(p, m, start)
 }
 
-// parse_enum reports an enum and skips it to the end of its body.
 parse_enum :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 	m := mark(p)
 	report_subset(p, .Enum, peek(p).span)
@@ -719,9 +711,9 @@ parse_namespace :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 
 // Statements.
 
-// parse_statement parses a statement. A declaration is not a statement: as the body of an `if` or
-// a loop it needs a block, so there it is reported, then parsed anyway. The result is NO_NODE when
-// no statement starts at the current token; nothing is read then.
+// parse_statement takes a declaration for no statement: as the body of an `if` or a loop it needs
+// a block, so there it is reported, then parsed anyway. The result is NO_NODE when no statement
+// starts at the current token; nothing is read then.
 parse_statement :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return ast.NO_NODE
@@ -788,7 +780,6 @@ parse_statement :: proc(p: ^Parser) -> ast.Node_ID {
 	return parse_expression_statement(p)
 }
 
-// parse_body parses the body of an `if` or a loop: a missing one is a zero-width Bad node.
 parse_body :: proc(p: ^Parser) -> ast.Node_ID {
 	body := parse_statement(p)
 	if body == ast.NO_NODE {
@@ -840,7 +831,6 @@ parse_if :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, branches)
 }
 
-// parse_condition parses the `(expression)` of an `if`, a `while` or a `switch`.
 parse_condition :: proc(p: ^Parser) -> ast.Node_ID {
 	expect(p, .Open_Paren)
 	condition := parse_expression(p)

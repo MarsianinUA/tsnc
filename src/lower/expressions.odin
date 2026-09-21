@@ -124,16 +124,16 @@ later :: proc(s: ^Func_State, span: source.Span, construct: string) -> ir.Value_
 	return ir.NO_VALUE
 }
 
-// node_type is the IR type check gave a node. A type this slice has no room for answers VOID, and
-// whoever asked has already reported it or is about to.
+// node_type answers VOID for a type this slice has no room for, and whoever asked has already
+// reported it or is about to.
 @(private)
 node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
 	type, ok := ir_type(s.types, s.typed.node_types[id])
 	return type if ok else ir.VOID
 }
 
-// coerce makes a value fit where it is going. The only conversion of this slice is boxing a
-// statically typed value into a tagged one; reading one back needs the tag check of milestone 5.
+// coerce has one conversion in this slice, boxing a statically typed value into a tagged one;
+// reading one back needs the tag check of milestone 5.
 @(private)
 coerce :: proc(
 	s: ^Func_State,
@@ -176,9 +176,8 @@ boxable :: proc(type: ir.Type) -> bool {
 	return false
 }
 
-// truthy is the condition an `if`, a loop or a `!` tests. A number is truthy when its magnitude is
-// above zero, which is one intrinsic and one comparison and is false for NaN and for both zeros
-// without a branch.
+// truthy tests a number by its magnitude being above zero, which is one intrinsic and one
+// comparison and is false for NaN and for both zeros without a branch.
 @(private)
 truthy :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	if value == ir.NO_VALUE {
@@ -205,14 +204,13 @@ truthy :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Valu
 	return ir.NO_VALUE
 }
 
-// lower_condition is the boolean an `if`, a loop or a ternary branches on.
 @(private)
 lower_condition :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	return truthy(s, lower_expression(s, id), s.tree.nodes[id].span)
 }
 
-// lower_ident reads a name. check resolved it across files, so the answer names the declaration and
-// not the local alias an import gave it.
+// lower_ident relies on check having resolved the name across files, so the answer names the
+// declaration and not the local alias an import gave it.
 @(private)
 lower_ident :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Ident) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -242,7 +240,7 @@ lower_ident :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Ident) -> ir.Valu
 	return s.locals[ref.symbol]
 }
 
-// lower_lib_value reads a name the lib declares. Only the two number constants are a value of their
+// lower_lib_value handles the two number constants, the only lib names that are a value of their
 // own; the rest of the lib is reached through a member or a call.
 @(private)
 lower_lib_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -> ir.Value_ID {
@@ -257,8 +255,8 @@ lower_lib_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Spa
 	return later(s, span, construct_of(strategy, name))
 }
 
-// lower_member reads a field. Everything of an object or an array waits for milestone 5, so what
-// stays is a constant of the lib, such as Math.PI.
+// lower_member is left with a constant of the lib, such as Math.PI: everything of an object or an
+// array waits for milestone 5.
 @(private)
 lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -410,8 +408,7 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 	return ""
 }
 
-// lower_binary is an arithmetic operator or a comparison. `&&`, `||` and `??` branch, and are
-// lower_logical.
+// lower_binary never sees `&&`, `||` and `??`: they branch, and are lower_logical.
 @(private)
 lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -437,9 +434,9 @@ lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Va
 	return ir.emit(&s.fb, ir.F64, ir.Binary{op = op, left = left, right = right}, span)
 }
 
-// lower_compare answers a boolean. The IR compares two numbers, two booleans or two references
-// itself; a string holds its contents and a tagged value its tag, so both go through the runtime,
-// which milestone 5 brings.
+// lower_compare lets the IR compare two numbers, two booleans or two references itself; a string
+// holds its contents and a tagged value its tag, so both go through the runtime, which milestone 5
+// brings.
 @(private)
 lower_compare :: proc(
 	s: ^Func_State,
@@ -484,8 +481,6 @@ operand_not_lowered :: proc(
 	return later(s, span, "this operand")
 }
 
-// operands_not_lowered is operand_not_lowered for an operator with two sides: it names the side that
-// is not a number, the left one when neither is.
 @(private)
 operands_not_lowered :: proc(
 	s: ^Func_State,
@@ -498,9 +493,9 @@ operands_not_lowered :: proc(
 	return operand_not_lowered(s, right, span)
 }
 
-// lower_logical is `&&`, `||` and `??`. The result is one of the two sides, not a boolean, and the
-// side that does not run must not be evaluated, so each opens a block of its own. A result of VOID
-// means nobody reads the value, and the two sides meet without a phi.
+// lower_logical answers one of the two sides, not a boolean, and the side that does not run must
+// not be evaluated, so each opens a block of its own. A result of VOID means nobody reads the
+// value, and the two sides meet without a phi.
 @(private)
 lower_logical :: proc(
 	s: ^Func_State,
@@ -543,8 +538,8 @@ lower_logical :: proc(
 	return join_values(s, join, edges[:], values[:], result, span)
 }
 
-// lower_coalesce is `??`. In this slice the left side is either never nullish, and the right one
-// never runs, or it is a tagged value, whose test is the tag check of milestone 5.
+// lower_coalesce meets in this slice a left side that is either never nullish, and the right one
+// never runs, or a tagged value, whose test is the tag check of milestone 5.
 @(private)
 lower_coalesce :: proc(
 	s: ^Func_State,
@@ -564,8 +559,8 @@ lower_coalesce :: proc(
 	return coerce(s, left, result, span)
 }
 
-// lower_conditional is the ternary: one side runs, and the two meet in a phi. A result of VOID
-// means nobody reads the value, and the two sides meet without one.
+// lower_conditional takes a result of VOID to mean nobody reads the value, and the two sides then
+// meet without a phi.
 @(private)
 lower_conditional :: proc(
 	s: ^Func_State,
@@ -670,8 +665,6 @@ join_values :: proc(
 	return merged
 }
 
-// lower_update is `++` and `--`: read the binding, add or subtract one, write it back. The value of
-// the expression is the old binding before the operator and the new one after it.
 @(private)
 lower_update :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Update) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -694,7 +687,7 @@ lower_update :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Update) -> ir.Va
 	return stored if node.op == .Pre_Increment || node.op == .Pre_Decrement else before
 }
 
-// lower_assign is `=` and every compound form. The value of the expression is what was written.
+// lower_assign answers what was written, which is the value of the expression.
 @(private)
 lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -827,7 +820,6 @@ compare_op :: proc(op: ast.Binary_Op) -> (ir.Compare_Op, bool) {
 	return .Equal, false
 }
 
-// assign_binary is the operator a compound assignment computes with.
 @(private)
 assign_binary :: proc(op: ast.Assign_Op) -> ast.Binary_Op {
 	#partial switch op {

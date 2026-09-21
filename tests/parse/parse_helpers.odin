@@ -10,8 +10,7 @@ import "../../src/diag"
 import "../../src/parse"
 import "../../src/source"
 
-// Error is a diagnostic the way a user reads it: its code, and the 1-based line and column where
-// it starts.
+// Error is a diagnostic the way a user reads it: the line and column are 1-based.
 Error :: struct {
 	code:   diag.Code,
 	line:   i32,
@@ -24,8 +23,7 @@ Parsed :: struct {
 	errors:      []Error, // the diagnostics as Errors
 }
 
-// parse_checked parses text as file 0 with parse_file into the temp allocator, which the test
-// runner frees before each test, and checks the invariants of the tree (check_tree).
+// parse_checked allocates from the temp allocator, which the test runner frees before each test.
 parse_checked :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Parsed {
 	tree, diagnostics := parse.parse_file(text, 0, context.temp_allocator)
 	diag.sort(diagnostics)
@@ -39,8 +37,7 @@ parse_checked :: proc(t: ^testing.T, text: string, loc := #caller_location) -> P
 	return {tree = tree, diagnostics = diagnostics, errors = errors}
 }
 
-// expect_tree checks that text parses without diagnostics into the top-level statements expected,
-// one dump per line.
+// expect_tree takes the dumps of the top-level statements in expected, one per line.
 expect_tree :: proc(t: ^testing.T, text: string, expected: string, loc := #caller_location) {
 	parsed := parse_checked(t, text, loc)
 	expect_errors_of(t, text, parsed, {}, loc)
@@ -48,19 +45,16 @@ expect_tree :: proc(t: ^testing.T, text: string, expected: string, loc := #calle
 	testing.expectf(t, got == expected, "%q:\ngot  %s\nwant %s", text, got, expected, loc = loc)
 }
 
-// expect_expression checks that text is one expression statement without diagnostics, and the
-// dump of its expression.
 expect_expression :: proc(t: ^testing.T, text: string, expected: string, loc := #caller_location) {
 	expect_tree(t, text, concat("(expr ", expected, ")"), loc)
 }
 
-// expect_type checks the dump of type_text parsed as the type of an alias, without diagnostics.
 expect_type :: proc(t: ^testing.T, type_text: string, expected: string, loc := #caller_location) {
 	text := concat("type T = ", type_text)
 	expect_tree(t, text, concat("(type T = ", expected, ")"), loc)
 }
 
-// expect_errors checks the diagnostics of text, in print order, and returns the parse.
+// expect_errors takes the expected diagnostics in print order.
 expect_errors :: proc(
 	t: ^testing.T,
 	text: string,
@@ -72,7 +66,6 @@ expect_errors :: proc(
 	return parsed
 }
 
-// expect_parse checks both the diagnostics and the top-level dump of text.
 expect_parse :: proc(
 	t: ^testing.T,
 	text: string,
@@ -223,7 +216,6 @@ check_tree :: proc(
 	)
 }
 
-// check_lists checks that the lists of one kind of node in node hold only that kind.
 check_lists :: proc(
 	t: ^testing.T,
 	text: string,
@@ -297,7 +289,6 @@ check_lists :: proc(
 // `(. a name)`, `(x !)`; types `(| A B)`, `(T [])`, `(=> <U> [(x : T)] U)`, `{(x? : T)}`. An absent
 // child is `_`, an empty name `_`, a Bad node `bad`.
 
-// dump_statements dumps the top-level statements of tree, one per line.
 dump_statements :: proc(tree: ast.File_AST) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	module := tree.nodes[ast.ROOT].variant.(ast.Module)
@@ -751,12 +742,10 @@ KEYWORD_TEXT := [ast.Type_Keyword]string {
 	.Never     = "never",
 }
 
-// concat joins parts into one string in the temp allocator.
 concat :: proc(parts: ..string) -> string {
 	return strings.concatenate(parts, context.temp_allocator)
 }
 
-// lines joins parts with line breaks, for texts and dumps of several lines.
 lines :: proc(parts: ..string) -> string {
 	return strings.join(parts, "\n", context.temp_allocator)
 }

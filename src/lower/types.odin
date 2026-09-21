@@ -13,7 +13,6 @@ A type this slice cannot represent answers `false`, and the caller reports Not_L
 guessing. Objects, arrays and function values are the whole of that list, and milestone 5 removes it.
 */
 
-// ir_type is the IR type a value of this TypeScript type lives in.
 ir_type :: proc(types: []check.Type, id: check.Type_ID) -> (type: ir.Type, ok: bool) {
 	switch v in types[id] {
 	case check.Basic_Kind:
@@ -62,8 +61,8 @@ ir_type :: proc(types: []check.Type, id: check.Type_ID) -> (type: ir.Type, ok: b
 	return ir.VOID, false
 }
 
-// construct_text names what a type belongs to, for the Not_Lowered message. A union answers for the
-// first member that has no representation, since that member is why the union has none either.
+// construct_text feeds the Not_Lowered message. A union answers for the first member that has no
+// representation, since that member is why the union has none either.
 construct_text :: proc(types: []check.Type, id: check.Type_ID) -> string {
 	#partial switch v in types[id] {
 	case check.Object:

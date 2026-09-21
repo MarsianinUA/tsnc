@@ -187,8 +187,8 @@ the_result_outlives_the_scratch_of_the_check :: proc(t: ^testing.T) {
 	testing.expect(t, found)
 }
 
-// type_id_of is the raw Type_ID of a declaration, for the one test that has to see that two
-// structures share a row rather than only print the same.
+// type_id_of serves the one test that has to see that two structures share a row rather than only
+// print the same.
 @(private = "file")
 type_id_of :: proc(c: Checked, typed: ^check.Typed_File, name: string) -> check.Type_ID {
 	for symbol in c.program.bound[MAIN].symbols[1:] {

@@ -43,8 +43,6 @@ import "core:strings"
 // the runner is started from the repository root.
 NEGATIVE_CORPUS :: "tests/negative"
 
-// EXPECT_PREFIX opens a header line that names one diagnostic; EXPECT_EXAMPLE shows the whole form
-// in the message about a line that does not parse.
 EXPECT_PREFIX :: "// expect:"
 EXPECT_EXAMPLE :: "// expect: T2001 5:1"
 
@@ -67,8 +65,8 @@ Expected :: struct {
 	column: int,
 }
 
-// negative runs every program in the corpus. It reports every mismatch instead of stopping at the
-// first, so that one CI log shows all of them.
+// negative reports every mismatch instead of stopping at the first, so that one CI log shows all of
+// them.
 negative :: proc() -> (passed: bool) {
 	// The programs keep their relative paths: the compiler inherits this directory, and a short
 	// path keeps the diagnostics readable in a CI log.
@@ -115,8 +113,7 @@ negative :: proc() -> (passed: bool) {
 	return passed
 }
 
-// check_program runs one corpus program and compares what the compiler printed with what the
-// program's header expects. It answers how many diagnostics the compiler printed, for the summary.
+// check_program answers how many diagnostics the compiler printed, for the summary line.
 @(private = "file")
 check_program :: proc(compiler, name: string) -> (printed: int, ok: bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -173,9 +170,8 @@ check_program :: proc(compiler, name: string) -> (printed: int, ok: bool) {
 	return len(got), ok
 }
 
-// expectations reads the `// expect:` lines of the header of text. The header ends at the first
-// line that is neither blank nor a comment, so an expectation always sits above the program it
-// describes.
+// expectations ends the header at the first line that is neither blank nor a comment, so an
+// expectation always sits above the program it describes.
 @(private = "file")
 expectations :: proc(path, text: string) -> (want: []Expected, ok: bool) {
 	list := make([dynamic]Expected, context.temp_allocator)
@@ -275,8 +271,7 @@ diagnostics_of :: proc(path, text: string) -> (got: []Expected, ok: bool) {
 	return list[:], ok
 }
 
-// parse_diagnostic reads the error line of a rendered diagnostic: the file it stands in, its
-// position and its code. The text and the hint belong to the diag registry, which tests/diag
+// parse_diagnostic skips the text and the hint: they belong to the diag registry, which tests/diag
 // already covers.
 @(private = "file")
 parse_diagnostic :: proc(line: string) -> (printed: Expected, file: string, ok: bool) {
@@ -325,7 +320,6 @@ parse_number :: proc(text: string) -> (value: int, ok: bool) {
 	return strconv.parse_int(text, 10)
 }
 
-// describe names one diagnostic of a list for a mismatch line, or says that the list ended there.
 @(private = "file")
 describe :: proc(list: []Expected, index: int) -> string {
 	if index >= len(list) {

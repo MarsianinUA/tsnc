@@ -241,8 +241,8 @@ the_program_outlives_the_scratch_it_was_built_from :: proc(t: ^testing.T) {
 	testing.expect_value(t, layout.fields[0].offset, size_of(abi.Cell_Header))
 }
 
-// at is a span one byte wide at offset, standing in for the place in the source an instruction came
-// from. The tests compare spans, so only the shape matters.
+// at stands in for the place in the source an instruction came from. The tests compare spans, so
+// only the shape matters.
 @(private = "file")
 at :: proc(offset: i32) -> source.Span {
 	return {file = 1, start = offset, end = offset + 1}

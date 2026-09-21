@@ -86,7 +86,6 @@ the_math_names_the_ir_has_an_intrinsic_for_use_it :: proc(t: ^testing.T) {
 	}
 }
 
-// lib_names reads the real lib file and answers every name a program can reach.
 @(private = "file")
 lib_names :: proc(t: ^testing.T) -> []Name {
 	tree, diagnostics := parse.parse_file(LIB_TEXT, LIB, context.temp_allocator)

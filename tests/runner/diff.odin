@@ -38,9 +38,8 @@ import "core:strings"
 
 import "../../src/target"
 
-// DIFF_PROJECT is the npm project of the corpus, and DIFF_CORPUS holds its programs. Both are
-// relative to the current directory, as the compiler path in runner.odin is: the runner is started
-// from the repository root.
+// DIFF_PROJECT and DIFF_CORPUS are relative to the current directory, as the compiler path in
+// runner.odin is: the runner is started from the repository root.
 DIFF_PROJECT :: "tests/diff"
 DIFF_CORPUS :: DIFF_PROJECT + "/src"
 
@@ -53,8 +52,8 @@ TSC_INSTALL :: "npm ci --prefix " + DIFF_PROJECT
 // pin Node 24, which runs a .ts file with no flags and is what makes it a reference at all.
 NODE :: "node"
 
-// Level is one optimization level every corpus program is built at. The suffix keeps the artifacts
-// of one program apart, so a build that failed leaves the other one behind to look at.
+// Level carries a suffix that keeps the artifacts of one program apart, so a build that failed
+// leaves the other one behind to look at.
 Level :: struct {
 	flag:   string, // as `tsnc build` spells it
 	suffix: string, // as the artifact is named
@@ -69,15 +68,14 @@ LEVELS := [?]Level{{flag = "-o:none", suffix = "none"}, {flag = "-o:speed", suff
 // every signal number, where a crash can never pass for the right answer.
 SIGNAL_MAX :: 64
 
-// Output is everything one run left behind.
 Output :: struct {
 	stdout: string,
 	stderr: string,
 	code:   int,
 }
 
-// diff runs every program in the corpus. It reports every mismatch instead of stopping at the
-// first, so that one CI log shows all of them.
+// diff reports every mismatch instead of stopping at the first, so that one CI log shows all of
+// them.
 diff :: proc() -> (passed: bool) {
 	compiler := compiler_path("diff") or_return
 
@@ -108,8 +106,8 @@ diff :: proc() -> (passed: bool) {
 	return passed
 }
 
-// corpus_names lists the programs of the corpus, sorted: a file system lists a directory in
-// whatever order it keeps it, and two runs of the corpus should print the same log.
+// corpus_names sorts the programs: a file system lists a directory in whatever order it keeps it,
+// and two runs of the corpus should print the same log.
 @(private = "file")
 corpus_names :: proc() -> (names: []string, ok: bool) {
 	entries, dir_err := os.read_all_directory_by_path(DIFF_CORPUS, context.temp_allocator)
@@ -134,7 +132,6 @@ corpus_names :: proc() -> (names: []string, ok: bool) {
 	return list[:], true
 }
 
-// gate checks the whole corpus with tsc before a single program is built.
 @(private = "file")
 gate :: proc() -> (ok: bool) {
 	if !os.is_file(TSC) {
@@ -167,8 +164,6 @@ gate :: proc() -> (ok: bool) {
 	return false
 }
 
-// compare_program runs one corpus program under Node and under every optimization level, and
-// compares what each build printed with what Node printed.
 @(private = "file")
 compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -204,7 +199,6 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 	return ok
 }
 
-// compare_level builds one program at one level and compares that run with Node's.
 @(private = "file")
 compare_level :: proc(compiler, path, program: string, level: Level, want: Output) -> (ok: bool) {
 	command := [?]string{compiler, "build", path, level.flag, fmt.tprintf("-out:%s", program)}
@@ -239,8 +233,8 @@ compare_level :: proc(compiler, path, program: string, level: Level, want: Outpu
 	return ok
 }
 
-// execute starts one program and reads everything it left behind. A program that could not be
-// started at all is reported here, and the caller stops: there is nothing left to compare.
+// execute reports a program that could not be started at all, and the caller stops: there is
+// nothing left to compare.
 @(private = "file")
 execute :: proc(path, what: string, command: []string) -> (output: Output, ok: bool) {
 	state, stdout, stderr, err := os.process_exec({command = command}, context.temp_allocator)
@@ -251,9 +245,8 @@ execute :: proc(path, what: string, command: []string) -> (output: Output, ok: b
 	return Output{stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, true
 }
 
-// same_stream compares one stream byte for byte and names the first line where the two part. A
-// corpus program prints a couple of dozen lines, and dumping both streams into a CI log buries the
-// one that moved.
+// same_stream names only the first line where the two streams part: a corpus program prints a
+// couple of dozen lines, and dumping both streams into a CI log buries the one that moved.
 @(private = "file")
 same_stream :: proc(path: string, level: Level, stream, got, want: string) -> bool {
 	if got == want {
@@ -286,7 +279,6 @@ same_stream :: proc(path: string, level: Level, stream, got, want: string) -> bo
 	return false
 }
 
-// describe_line quotes one line of a stream, or says that the stream ended before it.
 @(private = "file")
 describe_line :: proc(lines: []string, index: int) -> string {
 	if index >= len(lines) {

@@ -7,8 +7,8 @@ import "../program"
 
 // Type syntax.
 
-// resolve_type is the type a type slot names. A slot the rules could not read answers with the error
-// type, which is assignable in both directions, so one message stays one message.
+// resolve_type answers with the error type for a slot the rules could not read: it is assignable in
+// both directions, so one message stays one message.
 @(private)
 resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	if id == ast.NO_NODE {
@@ -42,9 +42,9 @@ resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	return set_type(c, id, ERROR)
 }
 
-// resolve_type_params is the type variables a generic signature has to work out at a call. Only the
-// lib file declares any: a type parameter of a user file answers with the error type, and a
-// signature that holds none is the ordinary case.
+// resolve_type_params answers only in the lib file, which alone declares type variables: a type
+// parameter of a user file answers with the error type, and a signature that holds none is the
+// ordinary case.
 @(private)
 resolve_type_params :: proc(c: ^Checker, ids: []ast.Node_ID) -> []Type_ID {
 	if len(ids) == 0 || c.at.file != program.LIB {
@@ -75,9 +75,9 @@ KEYWORD_TYPES := [ast.Type_Keyword]Type_ID {
 	.Never     = NEVER,
 }
 
-// resolve_params reads the parameters of a function, an arrow or a function type. required counts
-// the parameters a call has to supply, which is the run of required ones at the front: a required
-// parameter behind an optional one is a signature tsc rejects, and tsnc takes its input from tsc.
+// resolve_params counts in required the parameters a call has to supply, which is the run of
+// required ones at the front: a required parameter behind an optional one is a signature tsc
+// rejects, and tsnc takes its input from tsc.
 //
 // contextual is the signature an arrow is going into, and gives a parameter with no annotation its
 // type. parameter_at answers for the position, so one landing on an optional parameter is
@@ -133,9 +133,9 @@ resolve_params :: proc(
 
 // Names.
 
-// resolve_name is the symbol a name refers to inside this file. bind answers for a name the file
-// declares, an import included; a name it does not is a name of the lib module, which every file
-// sees, or nothing at all. Following an import to the module it came from is modules.odin's job.
+// resolve_name stays inside this file: bind answers for a name the file declares, an import
+// included; a name it does not is a name of the lib module, which every file sees, or nothing at
+// all. Following an import to the module it came from is modules.odin's job.
 @(private)
 resolve_name :: proc(
 	c: ^Checker,
@@ -153,8 +153,7 @@ resolve_name :: proc(
 	return {}
 }
 
-// type_of_symbol is the type of a declared name, worked out the first time anything asks and kept
-// afterwards. A declaration that needs its own type to answer has no answer at all, and the
+// type_of_symbol has no answer for a declaration that needs its own type to answer, and the
 // annotation has to say instead.
 //
 // A name read inside a function body is a different matter: the body runs later, so the declaration
@@ -208,9 +207,9 @@ recorded_declaration :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) 
 	return types[symbol.declaration]
 }
 
-// recursion_code names the mistake a declaration that needs its own type makes. A function and an
-// arrow both lack a result the search could use, which is what an annotation supplies; any other
-// variable has an initializer that reads the name it is defining.
+// recursion_code tells two mistakes apart: a function and an arrow both lack a result the search
+// could use, which is what an annotation supplies; any other variable has an initializer that reads
+// the name it is defining.
 @(private)
 recursion_code :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> diag.Code {
 	if symbol.kind == .Function {
@@ -226,7 +225,6 @@ recursion_code :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> dia
 	return .Circular_Initializer
 }
 
-// declared_type works out the type of a symbol from the node that declares it.
 @(private)
 declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type_ID {
 	node := symbol.declaration
@@ -246,8 +244,8 @@ declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type
 	return ERROR
 }
 
-// declarator_type is the type of one `let` or `const` binding, and it checks the initializer while
-// it is here. The walk over the statements comes through here too, so this happens exactly once.
+// declarator_type checks the initializer while it is here. The walk over the statements comes
+// through here too, so this happens exactly once.
 //
 // The node holds its type before the initializer is read wherever the type is known without it, so
 // that a name used inside its own initializer's body finds the answer rather than the search still
@@ -296,7 +294,6 @@ declarator_type :: proc(
 	return set_type(c, id, value if kind == .Const else widen(&c.table, value))
 }
 
-// exported reports whether the module exports the symbol a node declares.
 @(private)
 exported :: proc(c: ^Checker, declaration: ast.Node_ID) -> bool {
 	symbol := c.at.bound.node_symbols[declaration]
@@ -311,10 +308,10 @@ exported :: proc(c: ^Checker, declaration: ast.Node_ID) -> bool {
 	return false
 }
 
-// function_decl_type is the type of a `function` declaration, and it reads the body while it is
-// here. An annotated result is recorded before the body, so that a call to the function inside its
-// own body finds it. An inferred one is not known until the body has been read, so a call to itself
-// there has nothing to find, which is what Recursive_Return_Type says.
+// function_decl_type reads the body while it is here. An annotated result is recorded before the
+// body, so that a call to the function inside its own body finds it. An inferred one is not known
+// until the body has been read, so a call to itself there has nothing to find, which is what
+// Recursive_Return_Type says.
 @(private)
 function_decl_type :: proc(
 	c: ^Checker,
@@ -340,9 +337,9 @@ function_decl_type :: proc(
 	return set_type(c, id, function_type(&c.table, params, result, required, variadic))
 }
 
-// check_result_reached reports a function whose body can end without a `return` while the result it
-// declares does not hold `undefined`. `void` and `any` take it, and so does a result written
-// `T | undefined`; anything else would hand the caller a value that is not there.
+// check_result_reached lets `void` and `any` take a body that can end without a `return`, and a
+// result written `T | undefined` as well; anything else would hand the caller a value that is not
+// there.
 @(private)
 check_result_reached :: proc(
 	c: ^Checker,
@@ -356,9 +353,8 @@ check_result_reached :: proc(
 	report(c, .Missing_Return, span_of(c, annotation), text_of(c, result))
 }
 
-// inferred_result is the result of a function with no annotation: the union of what its `return`
-// statements gave, widened, because what a call hands back is not the one literal the body happened
-// to write.
+// inferred_result widens what the `return` statements gave, because what a call hands back is not
+// the one literal the body happened to write.
 //
 // A body whose every `return` is bare gives `void`, as in tsc. One that mixes a bare `return` with
 // a `return` of a value gives `undefined` for the bare one, which is what check_return's VOID
@@ -390,11 +386,10 @@ every_return_is_bare :: proc(returns: []Type_ID) -> bool {
 	return true
 }
 
-// falls_through reports whether control can reach the end of a body. The flow at the end of a block
-// is where the paths through it join, and a join is a node whether or not anything arrives, so the
-// question is asked of the graph: reaches_start walks back and stops at a `return`, at a call that
-// never returns and at an exhausted `switch`. An arrow written without braces is its own value and
-// always produces one.
+// falls_through asks the flow graph. The flow at the end of a block is where the paths through it
+// join, and a join is a node whether or not anything arrives, so reaches_start walks back from it
+// and stops at a `return`, at a call that never returns and at an exhausted `switch`. An arrow
+// written without braces is its own value and always produces one.
 @(private)
 falls_through :: proc(c: ^Checker, body: ast.Node_ID) -> bool {
 	if body == ast.NO_NODE {
@@ -406,9 +401,9 @@ falls_through :: proc(c: ^Checker, body: ast.Node_ID) -> bool {
 	return reaches_start(c, c.at.bound.node_flow[body])
 }
 
-// check_body reads the body of a function or an arrow. returns is non-nil while the result is being
-// inferred, and collects what each `return` gave; otherwise result is the declared one and every
-// `return` is checked against it.
+// check_body takes a non-nil returns while the result is being inferred, and collects in it what
+// each `return` gave; otherwise result is the declared one and every `return` is checked against
+// it.
 @(private)
 check_body :: proc(c: ^Checker, body: ast.Node_ID, result: Type_ID, returns: ^[dynamic]Type_ID) {
 	if body == ast.NO_NODE {
