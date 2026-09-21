@@ -12,8 +12,8 @@ and the libraries itself. On macOS /usr/bin/cc is the Xcode shim that picks the 
 --sysroot from `xcrun --show-sdk-path` on top of that; link adds it once CI shows a machine that
 needs it.
 
-The runtime object lies next to the running executable, where the README builds it (dist/), unless
-the caller passes its path.
+The runtime object lies next to the running executable, where docs/development.md builds it
+(dist/), unless the caller passes its path.
 
 v1 links for the host only (requirements 9): linking for another platform needs its libraries,
 which v2 cross-compilation adds to target.

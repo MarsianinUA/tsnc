@@ -433,7 +433,7 @@ build_executable :: proc(
 		return err
 	}
 	// An empty runtime object path means the object of the target next to tsnc itself, which is
-	// where the README's command puts it.
+	// where the command in docs/development.md puts it.
 	if err := link.link({object}, options.target, paths.temporary, "", allocator);
 	   err.kind != .None {
 		// The missing runtime object keeps a kind of its own: it is the one link failure a user
