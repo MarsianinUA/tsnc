@@ -48,6 +48,11 @@ error_text :: proc(err: driver.Driver_Error) -> string {
 		return CROSS_LINK
 	case .Output_Unnamable:
 		return fmt.tprintf("cannot name the output after %s\n  hint: pass -out:", err.detail)
+	case .Output_Is_Source:
+		return fmt.tprintf(
+			"cannot write %s: it is a source file of the program\n  hint: pass another -out:",
+			err.detail,
+		)
 	case .Output_Directory_Missing:
 		return fmt.tprintf("there is no directory %s", err.detail)
 	case .Broken_IR:

@@ -102,6 +102,7 @@ Error_Kind :: enum u8 {
 	Nothing_To_Run, // detail: empty
 	Cross_Link, // detail: empty
 	Output_Unnamable, // detail: the entry file, whose name cannot become the output's
+	Output_Is_Source, // detail: the source file the output would have replaced
 	Output_Directory_Missing, // detail: the directory
 	Broken_IR, // detail: every violation, rendered; a compiler bug
 	Codegen_Failed, // detail: the path, then what codegen answered

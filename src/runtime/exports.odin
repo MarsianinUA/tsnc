@@ -11,55 +11,60 @@ import "num"
 // One export per abi.Runtime_Proc; add the export together with the row.
 #assert(len(abi.Runtime_Proc) == 9)
 
+// Generated code only needs these symbols to be external, and nothing imports them from the
+// executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
+// dllexport on Windows: the executable got an export table, lld-link wrote the output's file name
+// into it, and the name is the temporary one with a process id, so no two builds were alike.
+
 // Every returning export starts the same way: its own context, then a temp arena guard that
 // rewinds the scratch memory to where it was on entry. A rewind rather than a reset keeps an outer
 // export's scratch intact when generated code calls back in, as the array sort comparator will.
 // The three Math exports do no allocating of their own, and they still take a context, because an
 // export that skipped it would be the one place a later assert inside it had nowhere to go.
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Console_String].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_String].symbol)
 console_string :: proc "c" (err: b64, text: ^abi.String_Cell) {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	console.write_string(bool(err), text)
 }
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Console_Number].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_Number].symbol)
 console_number :: proc "c" (err: b64, value: f64) {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	console.write_number(bool(err), value)
 }
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Console_Boolean].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_Boolean].symbol)
 console_boolean :: proc "c" (err: b64, value: b64) {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	console.write_boolean(bool(err), bool(value))
 }
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Log_String].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Log_String].symbol)
 log_string :: proc "c" (text: ^abi.String_Cell) {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	console.log_string(text)
 }
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Math_Round].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Round].symbol)
 math_round :: proc "c" (x: f64) -> f64 {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	return num.round(x)
 }
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Math_Max].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Max].symbol)
 math_max :: proc "c" (a, b: f64) -> f64 {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	return num.max(a, b)
 }
 
-@(export, link_name = abi.RUNTIME_EXPORTS[.Math_Min].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Min].symbol)
 math_min :: proc "c" (a, b: f64) -> f64 {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -69,14 +74,21 @@ math_min :: proc "c" (a, b: f64) -> f64 {
 // No temp guard below: the process ends inside. The rows tell codegen the same through `diverges`.
 
 #assert(abi.RUNTIME_EXPORTS[.Process_Exit].diverges)
-@(export, link_name = abi.RUNTIME_EXPORTS[.Process_Exit].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Process_Exit].symbol)
 process_exit :: proc "c" (code: f64) -> ! {
 	context = export_context()
-	os.exit(num.exit_code(code))
+	exit, ok := num.exit_code(code)
+	if !ok {
+		// Node throws a RangeError, and v1 has no exceptions: the failure ends the process with
+		// the code 1 an uncaught one ends Node with. The export is not told where the call
+		// stands, so the line names no place.
+		fail.at({error = .Exit_Code_Not_Integer})
+	}
+	os.exit(exit)
 }
 
 #assert(abi.RUNTIME_EXPORTS[.Fail].diverges)
-@(export, link_name = abi.RUNTIME_EXPORTS[.Fail].symbol)
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Fail].symbol)
 fail_at :: proc "c" (site: ^abi.Fail_Site) -> ! {
 	context = export_context()
 	fail.at(site^)

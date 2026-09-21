@@ -76,6 +76,7 @@ Runtime_Error :: enum i32 {
 	Type_Assertion, // an `as` that narrows a union fails its tag check
 	Out_Of_Memory,
 	Internal, // an assertion inside the runtime
+	Exit_Code_Not_Integer, // process.exit with NaN, an infinity or a fraction: Node's RangeError
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

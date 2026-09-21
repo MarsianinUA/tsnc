@@ -225,13 +225,14 @@ phi :: proc(f: ^Func_Builder, type: Type, span: source.Span) -> Value_ID {
 // phi_incoming adds the edge "control came through block, so the phi is value". There is one edge
 // per predecessor edge, so a branch that names one block on both sides gives it two.
 phi_incoming :: proc(f: ^Func_Builder, phi: Value_ID, block: Block_ID, value: Value_ID) {
-	for &edges in f.phis {
-		if edges.value == phi {
-			append(&edges.incoming, Incoming{block = block, value = value})
-			return
-		}
+	// phi appends in Value_ID order, so the list is sorted by value and a join with many phis does
+	// not walk them all for every edge.
+	by_value :: proc(edges: Phi_Edges, phi: Value_ID) -> slice.Ordering {
+		return slice.cmp(edges.value, phi)
 	}
-	assert(false, "phi_incoming on a value that is not a phi of this function")
+	i, found := slice.binary_search_by(f.phis[:], phi, by_value)
+	assert(found, "phi_incoming on a value that is not a phi of this function")
+	append(&f.phis[i].incoming, Incoming{block = block, value = value})
 }
 
 // end_func freezes the function into the row it was declared in.

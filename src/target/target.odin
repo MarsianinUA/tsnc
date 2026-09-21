@@ -5,12 +5,12 @@ platform knowledge lives in one place. The package imports nothing, not even cor
 
 The link flags follow Odin dev-2026-09-nightly:a2fb372, so the program links the way Odin links
 the runtime object. On Windows Odin runs lld-link, and the flags are the output of
-`odin build -linker:lld -print-linker-flags` plus tsnc's own /noimplib: the runtime object exports
-its procedures to generated code, and for an executable with exports lld-link would also write an
-import library. On Linux and macOS Odin, like Rust, runs the system C compiler as the linker
-driver, because only the C compiler knows where crt1.o, the dynamic loader and the SDK live on a
-given machine. There the flags are what `odin build -print-linker-flags` prints, in clang syntax,
-read from Odin's src/linker.cpp.
+`odin build -linker:lld -print-linker-flags` plus tsnc's own /Brepro, which stamps the executable
+with a hash of its content instead of the time, so one program always links to the same bytes. On
+Linux and macOS Odin, like Rust, runs the system C compiler as the linker driver, because only the
+C compiler knows where crt1.o, the dynamic loader and the SDK live on a given machine. There the
+flags are what `odin build -print-linker-flags` prints, in clang syntax, read from Odin's
+src/linker.cpp.
 
 The table leaves out everything that depends on the machine: library search paths (/LIBPATH, -L,
 --sysroot). It also leaves out flags for Odin features tsnc does not use: rpath, which lets shared
@@ -72,7 +72,7 @@ SPECS := #partial [Target]Spec {
 			"/opt:ref",
 			"/subsystem:CONSOLE",
 			"/machine:x64",
-			"/noimplib",
+			"/Brepro",
 			"kernel32.lib",
 			"bcrypt.lib",
 		},

@@ -40,6 +40,7 @@ import "../diag"
 import "../ir"
 import "../link"
 import "../lower"
+import "../program"
 import "../source"
 import "../target"
 
@@ -111,6 +112,9 @@ build :: proc(
 	output: string
 	if output, err = output_path(options, artifact, arena); err.kind != .None {
 		return report, err
+	}
+	if source_path, is_source := source_at(output, report.check.program.files); is_source {
+		return report, {.Output_Is_Source, strings.clone(source_path, arena)}
 	}
 	if directory := os.dir(output); directory != "" && directory != "." && !os.is_dir(directory) {
 		return report, {.Output_Directory_Missing, strings.clone(directory, arena)}
@@ -232,6 +236,52 @@ output_path :: proc(
 		return "", {.Output_Unnamable, strings.clone(options.input, allocator)}
 	}
 	return path, {}
+}
+
+// source_at answers the source file of the program that already lives at path, if one does. -out:
+// is taken as written, and a compiler that writes over its own input destroys it, as gcc and rustc
+// refuse to. The file system decides rather than the spelling, so another case, a `..` or a link
+// still names the file, and an imported module counts as much as the entry file. The lib is
+// embedded and has no file.
+@(private = "file")
+source_at :: proc(path: string, files: []source.File) -> (source_path: string, found: bool) {
+	output, exists := identity_of(path)
+	if !exists {
+		return "", false
+	}
+	for file, id in files {
+		if source.File_ID(id) == program.LIB {
+			continue
+		}
+		if identity, ok := identity_of(file.path); ok && identity == output {
+			return file.path, true
+		}
+	}
+	return "", false
+}
+
+// File_Identity is what the file system calls a file: the volume and the file's number on it.
+@(private = "file")
+File_Identity :: struct {
+	device: u64,
+	inode:  u128,
+}
+
+// identity_of reads the identity of a file through a handle. os.stat by name will not do on
+// Windows: it records the full path as spelled and no file number, and os.same_file compares that
+// path, so `MAIN.TS` and `main.ts` would be two files there.
+@(private = "file")
+identity_of :: proc(path: string) -> (identity: File_Identity, ok: bool) {
+	file, open_err := os.open(path)
+	if open_err != nil {
+		return {}, false
+	}
+	defer os.close(file)
+	info, stat_err := os.fstat(file, context.temp_allocator)
+	if stat_err != nil {
+		return {}, false
+	}
+	return {device = info.device, inode = info.inode}, true
 }
 
 // names_one_file compares two paths as they were written, folded and with one kind of separator.

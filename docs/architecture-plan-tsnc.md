@@ -145,7 +145,7 @@ Directory `src/runtime/`, root package `rt` (the name `runtime` is taken by `bas
 
 | Package | Purpose | Entry point | Owns | Hides | Depends on | Deletion test |
 | --- | --- | --- | --- | --- | --- | --- |
-| `rt` (root) | Entry point and exports | `main` (initializes the heap, reads runtime flags from the environment, calls `tsnc_main`, exits the process); one `@(export) proc "c"` per `abi.Runtime_Proc`, each sets up `context` first | The exports' context: the call's scratch arena as `allocator`, `temp_allocator` reset on exit, `assertion_failure_proc` | Subpackages | all subpackages, `abi` | Passes: shell |
+| `rt` (root) | Entry point and exports | `main` (initializes the heap, reads runtime flags from the environment, calls `tsnc_main`, exits the process); one external `proc "c"` per `abi.Runtime_Proc` under its symbol name from `abi`, each sets up `context` first | The exports' context: the call's scratch arena as `allocator`, `temp_allocator` reset on exit, `assertion_failure_proc` | Subpackages | all subpackages, `abi` | Passes: shell |
 | `gc` | Heap and collector | `heap_init`, cell allocation by type table identifier and size, collection, integrity check | Pages (`mem/virtual`), size classes, the object start map, marking and sweeping, roots: a conservative stack scan after a per-platform assembly stub flushes the registers, and a precise heap scan via type tables from `abi`, stress mode | Heap internals | `abi`, `fail`, `core:mem/virtual` | Passes |
 | `fail` | Runtime errors | `fail(code, file, line, column)`: message to stderr, exit code 1 | Message format | Nothing | `core:os` | Passes: called by `gc`, `str`, `arr`, `value` and the exports |
 | `num` | Numbers to strings and back | Conversion per `Number::toString`, parsing per the `ToNumber` grammar, `toFixed`; they write into the caller's buffer | The `1e21` and `1e-7` thresholds, printing `-0` as `0` | `core:strconv` as the engine underneath | `core:strconv` | Passes: two consumers (`str`, `console`) |
@@ -242,7 +242,7 @@ Value: a code from the enum registry, a span, message arguments. For each code, 
 
 ### Runtime exports (package `rt`)
 
-Every `@(export) proc "c"` first sets up `context`: the call's scratch arena as `allocator`, `temp_allocator` reset on completion, `assertion_failure_proc` leading to `fail`. Then it calls the subpackage. The GC heap never becomes `context.allocator`. An environment variable turns on GC stress mode and the integrity check; the runtime's `main` reads it once.
+Every export is a `proc "c"` under its symbol name from `abi`, kept with `@(require)` and strong linkage rather than `@(export)`, which is dllexport on Windows and would give the executable an export table. It first sets up `context`: the call's scratch arena as `allocator`, `temp_allocator` reset on completion, `assertion_failure_proc` leading to `fail`. Then it calls the subpackage. The GC heap never becomes `context.allocator`. An environment variable turns on GC stress mode and the integrity check; the runtime's `main` reads it once.
 
 ## Simplicity and robustness
 

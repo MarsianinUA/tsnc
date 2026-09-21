@@ -61,8 +61,8 @@ hello_world_links_and_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(stderr), "")
 	testing.expect_value(t, state.exit_code, 0)
 
-	// The runtime object exports its procedures, and without /noimplib lld-link would write an
-	// import library next to the program.
+	// The executable exports nothing, so lld-link writes no import library next to it. It did
+	// while the runtime marked its procedures @(export), which is dllexport on Windows.
 	when ODIN_OS == .Windows {
 		import_library, _ := os.join_path({dir, "link-hello.lib"}, context.temp_allocator)
 		testing.expectf(t, !os.exists(import_library), "%s was written", import_library)
