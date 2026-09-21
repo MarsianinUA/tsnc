@@ -7,12 +7,12 @@ artifact the command line asked for: the tsnc IR dump of -emit-ir, the textual L
 -emit-llvm, or an executable through codegen and link. run starts the program build wrote and
 answers its exit code.
 
-Atomicity. An artifact is written to a temporary file and renamed into place once it is whole, so
-whoever reads the output path sees either the program that was there before or the new one, never
-half of either. The temporary file sits in the target's own directory rather than in the system
-temp directory, because a rename across volumes is a copy and not an atomic replacement. An
-executable needs an object file on the way, and that object is a temporary of its own: requirements
-9 lists an object file as an artifact only on request, and no flag asks for one.
+Atomicity. An artifact is written into a temporary directory and renamed into place once it is
+whole, so whoever reads the output path sees either the program that was there before or the new
+one, never half of either. The directory sits beside the target rather than in the system temp
+directory, because a rename across volumes is a copy and not an atomic replacement. An executable
+needs an object file on the way, and that object is written into the same directory and goes with
+it: requirements 9 lists an object file as an artifact only on request, and no flag asks for one.
 
 Errors. codegen and link each answer with an enum of their own, and build turns them into a
 Driver_Error whose detail is a sentence a user can act on, which is the rule for an infrastructure
@@ -120,8 +120,14 @@ build :: proc(
 		return report, {.Output_Directory_Missing, strings.clone(directory, arena)}
 	}
 
-	// --- Write it beside the target, then rename it into place.
+	// --- Write it into a directory of its own beside the target, then rename it into place. The
+	// directory is new, so removing it with whatever is left inside removes only this build's files.
 	paths := artifact_paths(output, arena)
+	if make_err := os.make_directory(paths.directory); make_err != nil {
+		return report, {.Output_Unwritable, reason_text(output, make_err, arena)}
+	}
+	defer remove_directory(paths.directory)
+
 	switch artifact {
 	case .IR_Dump:
 		err = write_dump(paths, report.check.program.files, program_ir, arena)
@@ -131,11 +137,9 @@ build :: proc(
 		err = build_executable(&program_ir, options, paths, arena)
 	}
 	if err.kind != .None {
-		remove_file(paths.temporary)
 		return report, err
 	}
 	if rename_err := rename_into_place(paths); rename_err != nil {
-		remove_file(paths.temporary)
 		return report, {.Output_Unwritable, reason_text(output, rename_err, arena)}
 	}
 
@@ -323,20 +327,30 @@ rename_into_place :: proc(paths: Paths) -> os.Error {
 }
 
 // Paths is where an artifact is written and what it is going to be called. A failure names the
-// second: the first is a name the user never asked for and would only have to decipher.
+// output: the other two are names the user never asked for and would only have to decipher.
 @(private = "file")
 Paths :: struct {
-	temporary: string,
+	directory: string, // the temporary directory, beside the output
+	temporary: string, // the artifact inside it, before the rename
 	output:    string,
 }
 
-// artifact_paths names the file an artifact is written to before it is renamed into place. It
-// carries the process id, so that two compilers writing into one directory cannot take each
-// other's file.
+// LINKED_NAME is what an artifact is called inside its temporary directory, whichever program it
+// is, the way `go build` links everything as a.out. On macOS the linker signs an arm64 executable,
+// and the signature names the file the linker wrote: while that was a name with the process id in
+// it, no two builds of one program were alike. A fixed name keeps the bytes of an executable
+// independent of where it goes.
+@(private = "file")
+LINKED_NAME :: "a.out"
+
+// artifact_paths names the directory an artifact is written in and the file inside it. The
+// directory carries the process id, so that two compilers writing beside one output cannot take
+// each other's files.
 @(private = "file")
 artifact_paths :: proc(output: string, allocator: runtime.Allocator) -> Paths {
-	temporary := fmt.aprintf("%s.%d.tmp", output, os.get_pid(), allocator = allocator)
-	return {temporary = temporary, output = output}
+	directory := fmt.aprintf("%s.%d.tmp", output, os.get_pid(), allocator = allocator)
+	temporary := strings.concatenate({directory, "/", LINKED_NAME}, allocator)
+	return {directory = directory, temporary = temporary, output = output}
 }
 
 // write_dump writes the tsnc IR of -emit-ir. The dump is a line per instruction and each line is a
@@ -411,15 +425,10 @@ build_executable :: proc(
 	paths: Paths,
 	allocator: runtime.Allocator,
 ) -> Driver_Error {
-	// The temporary name already carries a process id, so the object needs nothing but a suffix to
-	// be as much its own as the program beside it.
+	// The object lives beside the program in its temporary directory, and is removed with it.
 	object := strings.concatenate({paths.temporary, OBJECT_SUFFIX}, allocator)
-	defer remove_file(object)
-
-	object_paths := Paths {
-		temporary = object,
-		output    = paths.output,
-	}
+	object_paths := paths
+	object_paths.temporary = object
 	if err := run_codegen(p, options, .Object, object_paths, allocator); err.kind != .None {
 		return err
 	}
@@ -485,9 +494,10 @@ reason_text :: proc(path: string, err: os.Error, allocator: runtime.Allocator) -
 	return strings.concatenate({path, ": ", failure_text(path, err)}, allocator)
 }
 
-// remove_file drops a temporary file. The build is already going one way or the other, and a
+// remove_directory drops the temporary directory and whatever is still in it: the object file, and
+// the artifact when the build failed. The build is already going one way or the other, and a
 // temporary that could not be removed is not worth a second message.
 @(private = "file")
-remove_file :: proc(path: string) {
-	_ = os.remove(path)
+remove_directory :: proc(path: string) {
+	_ = os.remove_all(path)
 }

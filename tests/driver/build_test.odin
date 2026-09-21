@@ -121,8 +121,11 @@ a_path_that_is_not_ascii_builds_and_runs :: proc(t: ^testing.T) {
 }
 
 // One program builds to one file, byte for byte, which the determinism test of T6.2 stands on. The
-// executable used to carry the name of the temporary file it was linked as, process id and all.
-// Both builds here run in one process and share that id, so the name is looked for directly.
+// executable used to carry the name of the temporary file it was linked as, process id and all: in
+// the export table on Windows, and in the code signature the linker puts on an arm64 program on
+// macOS. Both builds here run in one process and share that id, so the temporary name is looked for
+// directly, and the second build goes to another output, since the program is linked under one name
+// wherever it goes.
 @(test)
 two_builds_of_one_program_are_identical :: proc(t: ^testing.T) {
 	options := build_options("loops", "main.ts", "driver-twice.exe")
@@ -134,12 +137,13 @@ two_builds_of_one_program_are_identical :: proc(t: ^testing.T) {
 	before := read_artifact(t, options.output)
 	testing.expect(t, !strings.contains(before, ".tmp"), "the executable names its temporary file")
 
-	second := build_project(options)
+	elsewhere := build_options("loops", "main.ts", "driver-elsewhere.exe")
+	second := build_project(elsewhere)
 	defer driver.destroy(&second.report.check)
 	if !expect_built(t, second) {
 		return
 	}
-	testing.expect(t, read_artifact(t, options.output) == before, "the two builds differ")
+	testing.expect(t, read_artifact(t, elsewhere.output) == before, "the two builds differ")
 }
 
 // driver.run itself. The fixture prints nothing, so inherited stdio leaves the test log alone and
@@ -387,13 +391,13 @@ read_artifact :: proc(t: ^testing.T, path: string, loc := #caller_location) -> s
 	return string(text)
 }
 
-// expect_no_leftovers checks that the build left nothing beside its artifact: the temporary file
-// it wrote before the rename, and the object file an executable passes through, both carry the
-// artifact's name and a process id.
+// expect_no_leftovers checks that the build left nothing beside its artifact: the temporary
+// directory it wrote the artifact and the object file into carries the artifact's name and a
+// process id.
 //
 // It walks the directory rather than reading it whole. Every test here writes into the one
 // directory beside the test executable and the runner runs them on a thread pool, so another test's
-// build renames its own `<output>.<pid>.tmp` into place while this walk is going. That entry is
+// build removes its own `<output>.<pid>.tmp` directory while this walk is going. That entry is
 // gone by the time the walk stats it, and read_all_directory_by_path turns the one missing entry
 // into a failure of the whole read: on the arm64 CI runner it read as "dist: Not_Exist", as though
 // the directory itself were missing. An entry that vanishes is never the one being checked, since
