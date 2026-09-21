@@ -26,7 +26,6 @@ Name_Key :: struct {
 
 // Scopes.
 
-// open_scope opens a scope inside the current one and returns the scope to close back to.
 @(private)
 open_scope :: proc(b: ^Binder, kind: Scope_Kind, node: ast.Node_ID) -> (previous: Scope_ID) {
 	id := Scope_ID(len(b.scopes))
@@ -52,8 +51,6 @@ close_scope :: proc(b: ^Binder, previous: Scope_ID) {
 	b.scope = previous
 }
 
-// function_of is the .Function scope that runs the code of scope, or MODULE_SCOPE for the
-// top-level code.
 @(private)
 function_of :: proc(b: ^Binder, scope: Scope_ID) -> Scope_ID {
 	current := scope
@@ -65,8 +62,8 @@ function_of :: proc(b: ^Binder, scope: Scope_ID) -> Scope_ID {
 
 // Declarations.
 
-// declare adds a symbol to the current scope. A name parse could not read declares nothing, and a
-// meaning that is taken is reported and left with its first declaration.
+// declare declares nothing for a name parse could not read, and a meaning that is taken is reported
+// and left with its first declaration.
 @(private)
 declare :: proc(
 	b: ^Binder,
@@ -96,8 +93,7 @@ declare :: proc(
 	return symbol
 }
 
-// add_symbol records a symbol and the node that declares it. The symbol of a re-export goes
-// through here alone: the file cannot name it.
+// add_symbol alone is what the symbol of a re-export goes through: the file cannot name it.
 @(private)
 add_symbol :: proc(
 	b: ^Binder,
@@ -166,7 +162,6 @@ declare_statement :: proc(b: ^Binder, id: ast.Node_ID) {
 	}
 }
 
-// add_import records what an alias symbol stands for in the module the request names.
 @(private)
 add_import :: proc(
 	b: ^Binder,
@@ -186,8 +181,8 @@ add_import :: proc(
 
 // Uses.
 
-// resolve records which symbol the use at id names, and returns it. A name no scope of this file
-// holds stays NO_SYMBOL: check looks it up among the lib names.
+// resolve leaves NO_SYMBOL on a name no scope of this file holds: check looks it up among the lib
+// names.
 @(private)
 resolve :: proc(b: ^Binder, id: ast.Node_ID, name: ast.Name, meaning: Meaning) -> Symbol_ID {
 	if name.text == "" {
@@ -257,8 +252,7 @@ mark_assigned :: proc(b: ^Binder, target: ast.Node_ID) {
 
 // Exports.
 
-// collect_exports fills the export table from the top-level statements, after everything is bound:
-// an export list names symbols of the module scope.
+// collect_exports runs after everything is bound: an export list names symbols of the module scope.
 @(private)
 collect_exports :: proc(b: ^Binder, statements: []ast.Node_ID) {
 	taken := make(map[Name_Key]struct{}, context.temp_allocator)
@@ -322,8 +316,8 @@ export_declared :: proc(
 	}
 }
 
-// export_local exports a name the module declares. A name that is both a type and a value, as the
-// lib file's `Math` is, becomes one entry per meaning.
+// export_local makes one entry per meaning of a name that is both a type and a value, as the lib
+// file's `Math` is.
 @(private)
 export_local :: proc(
 	b: ^Binder,
@@ -360,7 +354,6 @@ module_symbol :: proc(b: ^Binder, name: string, meaning: Meaning) -> Symbol_ID {
 	return symbol if ok else NO_SYMBOL
 }
 
-// add_export adds one export entry and reports a name exported twice in the same meaning.
 @(private)
 add_export :: proc(
 	b: ^Binder,
@@ -451,8 +444,6 @@ is_inert :: proc(b: ^Binder, id: ast.Node_ID) -> bool {
 	     ast.Arrow:
 		return true
 	case ast.Ident:
-		// A name of this file or of the lib holds its value already; an imported one may still be
-		// waiting for the module it comes from.
 		symbol := b.node_symbols[id]
 		return symbol == NO_SYMBOL || !is_alias(b.symbols[symbol].kind)
 	case ast.Member:
@@ -487,13 +478,11 @@ all_inert :: proc(b: ^Binder, ids: []ast.Node_ID) -> bool {
 
 // Diagnostics.
 
-// report records a diagnostic about a name, at the name.
 @(private)
 report :: proc(b: ^Binder, code: diag.Code, name: ast.Name) {
 	append(&b.diagnostics, diag.Diagnostic{code = code, span = name.span, args = {0 = name.text}})
 }
 
-// report_statement records a diagnostic about a whole statement, at its start.
 @(private)
 report_statement :: proc(b: ^Binder, code: diag.Code, statement: ast.Node_ID) {
 	append(&b.diagnostics, diag.Diagnostic{code = code, span = b.tree.nodes[statement].span})

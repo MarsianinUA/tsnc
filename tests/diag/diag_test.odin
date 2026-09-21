@@ -123,7 +123,6 @@ sort_keeps_the_input_order_of_equal_keys :: proc(t: ^testing.T) {
 	}
 }
 
-// render_code renders code at the start of an empty file and splits the output into its parts.
 render_code :: proc(code: diag.Code) -> (number, text, hint: string) {
 	file := source.make_file("a.ts", "")
 	defer delete(file.line_starts)

@@ -4,7 +4,8 @@ package parse
 import "../ast"
 import "../diag"
 
-// parse_type parses a type. A conditional type `A extends B ? C : D` is outside the subset.
+// parse_type turns a conditional type `A extends B ? C : D` into one Bad node: it is outside the
+// subset.
 parse_type :: proc(p: ^Parser) -> ast.Node_ID {
 	if !enter(p) {
 		return add_missing(p)
@@ -147,8 +148,6 @@ parse_primary_type :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_missing(p)
 }
 
-// skip_type reports a type outside the subset that starts at the current token and skips it:
-// the token, or the whole bracket or template it opens.
 skip_type :: proc(p: ^Parser, construct: diag.Construct) -> ast.Node_ID {
 	start := token_start(p)
 	report_unsupported(p, construct, peek(p).span)
@@ -363,8 +362,8 @@ parse_params :: proc(p: ^Parser) -> []ast.Node_ID {
 	return finish_list(p, first)
 }
 
-// parse_param parses one parameter. A `this` parameter, a decorator and a default value are
-// outside the subset: they are reported and left out.
+// parse_param reports and leaves out a `this` parameter, a decorator and a default value: they are
+// outside the subset.
 parse_param :: proc(p: ^Parser) -> ast.Node_ID {
 	parse_decorators(p)
 	if at(p, .This) {
@@ -498,8 +497,6 @@ parse_method_type :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, function)
 }
 
-// end_member consumes the `;` or `,` after a member of an object type, or accepts a line break or
-// the closing `}` instead.
 end_member :: proc(p: ^Parser) {
 	if accept(p, .Semicolon) || accept(p, .Comma) {
 		return

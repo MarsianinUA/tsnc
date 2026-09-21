@@ -38,31 +38,18 @@ package ir
 import "../abi"
 import "../source"
 
-// Func_ID indexes Program_IR.funcs.
 Func_ID :: distinct u32
-
-// Global_ID indexes Program_IR.globals.
 Global_ID :: distinct u32
-
-// Layout_ID indexes Program_IR.layouts.
 Layout_ID :: distinct u32
-
-// String_ID indexes Program_IR.strings.
 String_ID :: distinct u32
-
-// Fail_Site_ID indexes Program_IR.fail_sites.
 Fail_Site_ID :: distinct u32
-
-// Block_ID indexes Func.blocks.
 Block_ID :: distinct u32
-
-// Value_ID indexes Func.values: the instruction that defines the value.
 Value_ID :: distinct u32
 
-// ENTRY is the block a function starts in. It is never the target of a jump.
+// ENTRY is never the target of a jump.
 ENTRY :: Block_ID(0)
 
-// NO_LAYOUT means a type carries no layout. Row 0 of Program_IR.layouts is reserved for it.
+// NO_LAYOUT takes row 0 of Program_IR.layouts, which is reserved for it.
 NO_LAYOUT :: Layout_ID(0)
 
 // NO_VALUE means an operand is absent, as in a Return with no result.
@@ -71,7 +58,7 @@ NO_VALUE :: Value_ID(max(u32))
 // NO_BLOCK means the builder has no open block: a terminator closed the last one.
 NO_BLOCK :: Block_ID(max(u32))
 
-// Type_Kind is the closed set of IR types. v2 adds I32 and I64 for narrowed integers.
+// Type_Kind gains I32 and I64 for narrowed integers in v2.
 Type_Kind :: enum u8 {
 	Void,
 	F64, // number
@@ -105,7 +92,6 @@ CLOSURE :: Type {
 	kind = .Closure,
 }
 
-// ref is the type of a reference to a cell of this layout.
 ref :: proc(layout: Layout_ID) -> Type {
 	assert(layout != NO_LAYOUT, "a reference type needs a layout")
 	return {kind = .Ref, layout = layout}
@@ -118,21 +104,19 @@ Slot :: struct {
 	kind: abi.Slot_Kind,
 }
 
-// Global is a module-level binding. It is zero filled before any module runs, so a Tagged global
-// starts as undefined: abi.Tag.Undefined is zero.
+// Global is a module-level binding, zero filled before any module runs, so a Tagged global starts
+// as undefined: abi.Tag.Undefined is zero.
 Global :: struct {
 	name: string, // unique in the program
 	type: Type,
 }
 
-// Block is a basic block: a straight run of instructions ending in a terminator.
 Block :: struct {
 	instructions: []Value_ID, // in order; the last one terminates
 }
 
-// Func is one function. A closure body takes its environment as a hidden first parameter in the abi
-// calling convention, so env names that environment's layout and params holds the TS parameters
-// alone.
+// Func takes a closure's environment as a hidden first parameter in the abi calling convention, so
+// env names that environment's layout and params holds the TS parameters alone.
 Func :: struct {
 	name:   string, // the symbol codegen emits; unique in the program
 	span:   source.Span,
@@ -149,8 +133,8 @@ Unit :: struct {
 	funcs: []Func_ID,
 }
 
-// Program_IR is the whole program. It is frozen once lower returns it: only opt rewrites it, and
-// only in v2, because "IR to IR" is that package's contract.
+// Program_IR is frozen once lower returns it: only opt rewrites it, and only in v2, because "IR to
+// IR" is that package's contract.
 Program_IR :: struct {
 	funcs:      []Func, // indexed by Func_ID
 	layouts:    []abi.Type_Table, // indexed by Layout_ID; the GC type tables; row 0 is reserved

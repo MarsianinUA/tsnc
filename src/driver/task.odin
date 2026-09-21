@@ -17,8 +17,8 @@ import "../diag"
 import "../parse"
 import "../source"
 
-// File_Task is the input and the output of one file's work. It is always heap-allocated: the
-// allocator taken from arena below captures it by pointer, so the task must never move.
+// File_Task is always heap-allocated: the allocator taken from arena below captures it by pointer,
+// so the task must never move.
 File_Task :: struct {
 	arena:       virtual.Arena, // holds tree, bound and diagnostics until the end of the build
 	file:        source.File_ID,
@@ -28,8 +28,8 @@ File_Task :: struct {
 	diagnostics: []diag.Diagnostic, // parse's first, then bind's
 }
 
-// run_file_task parses and binds one file into the task's own arena. bind reads the tree stored in
-// the task, not a copy, because Bound_File borrows from it.
+// run_file_task hands bind the tree stored in the task, not a copy, because Bound_File borrows from
+// it.
 run_file_task :: proc(task: ^File_Task) {
 	allocator := virtual.arena_allocator(&task.arena)
 

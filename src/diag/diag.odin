@@ -26,7 +26,6 @@ import "core:slice"
 
 import "../source"
 
-// MAX_ARGS is how many arguments a code's text and hint can refer to, as {0} and {1}.
 MAX_ARGS :: 2
 
 Diagnostic :: struct {
@@ -37,15 +36,12 @@ Diagnostic :: struct {
 	args: [MAX_ARGS]string,
 }
 
-// sort puts diagnostics in print order: by file, then by the start of the span, then by code
-// number. The sort is stable, so the order stays deterministic as long as the caller collects the
-// diagnostics in a fixed order, whatever the number of threads.
+// sort is stable, so the order stays deterministic as long as the caller collects the diagnostics
+// in a fixed order, whatever the number of threads.
 sort :: proc(diagnostics: []Diagnostic) {
 	slice.stable_sort_by(diagnostics, prints_before)
 }
 
-// render writes the error line and the hint line of d. files is the file table, indexed by
-// File_ID.
 render :: proc(w: io.Writer, files: []source.File, d: Diagnostic) -> io.Error {
 	file := files[d.span.file]
 	position := source.position(file, d.span.start)

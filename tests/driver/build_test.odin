@@ -355,8 +355,7 @@ the_default_output_is_named_after_the_entry_file :: proc(t: ^testing.T) {
 	}
 }
 
-// copy_project writes a copy of some files of a fixture into directory, creating it, for a test
-// whose build must not touch the fixture itself.
+// copy_project serves a test whose build must not touch the fixture itself.
 @(private = "file")
 copy_project :: proc(
 	t: ^testing.T,
@@ -380,8 +379,6 @@ copy_project :: proc(
 	return true
 }
 
-// read_artifact answers what a build wrote, and an empty string with a message when it wrote
-// nothing a test can read.
 @(private = "file")
 read_artifact :: proc(t: ^testing.T, path: string, loc := #caller_location) -> string {
 	text, err := os.read_entire_file(path, context.temp_allocator)

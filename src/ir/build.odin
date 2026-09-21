@@ -23,8 +23,7 @@ goes back in finish; nothing else is ever freed. Names, paths and the slices ins
 scratch of the caller: emit copies what it keeps, and the package doc says which strings it borrows.
 */
 
-// Program_Builder holds the program under construction. Read its fields freely; write them through
-// the procedures below.
+// Program_Builder fields are free to read; write them through the procedures below.
 Program_Builder :: struct {
 	allocator:   runtime.Allocator,
 	funcs:       [dynamic]Func,
@@ -43,8 +42,8 @@ Program_Builder :: struct {
 	key:         strings.Builder,
 }
 
-// make_builder opens a builder whose rows all come from allocator. Layout row 0 is reserved for
-// NO_LAYOUT, so it is there from the start and no program ever names it.
+// make_builder puts layout row 0 there from the start: it is reserved for NO_LAYOUT, so no program
+// ever names it.
 make_builder :: proc(allocator := context.allocator) -> Program_Builder {
 	return {
 		allocator = allocator,
@@ -60,15 +59,14 @@ make_builder :: proc(allocator := context.allocator) -> Program_Builder {
 	}
 }
 
-// object_layout is the layout of an object cell whose fields are these, in the canonical order
-// lower chose. Two calls with the same shape answer the same Layout_ID: the layout is a function of
-// the structure, which is what lets Point and Vec2 share one.
+// object_layout takes the fields in the canonical order lower chose. Two calls with the same shape
+// answer the same Layout_ID: the layout is a function of the structure, which is what lets Point
+// and Vec2 share one.
 object_layout :: proc(p: ^Program_Builder, fields: []Slot) -> Layout_ID {
 	return intern_layout(p, .Object, fields, .Number)
 }
 
-// environment_layout is the layout of the cell a closure captures its variables in. The slots have
-// no names: nothing looks a captured variable up by name.
+// environment_layout gives the slots no names: nothing looks a captured variable up by name.
 environment_layout :: proc(p: ^Program_Builder, slots: []abi.Slot_Kind) -> Layout_ID {
 	fields := make([]Slot, len(slots), context.temp_allocator)
 	for kind, i in slots {
@@ -79,15 +77,14 @@ environment_layout :: proc(p: ^Program_Builder, slots: []abi.Slot_Kind) -> Layou
 	return intern_layout(p, .Environment, fields, .Number)
 }
 
-// array_layout is the layout of an array cell holding unboxed elements of this kind. The elements
-// live in an allocation of their own, so the cell has the fixed size of abi.Array_Cell.
+// array_layout has the fixed size of abi.Array_Cell: the unboxed elements live in an allocation of
+// their own.
 array_layout :: proc(p: ^Program_Builder, element: abi.Slot_Kind) -> Layout_ID {
 	return intern_layout(p, .Array, nil, element)
 }
 
-// intern_string adds a string constant to the pool and answers where it landed. text is the cooked
-// value of a literal, which parse keeps in UTF-8, and the pool holds UTF-16 units, which is what a
-// cell holds and what codegen emits.
+// intern_string takes the cooked value of a literal, which parse keeps in UTF-8; the pool holds
+// UTF-16 units, which is what a cell holds and what codegen emits.
 intern_string :: proc(p: ^Program_Builder, text: string) -> String_ID {
 	if id, found := p.string_ids[text]; found {
 		return id
@@ -98,17 +95,16 @@ intern_string :: proc(p: ^Program_Builder, text: string) -> String_ID {
 	return id
 }
 
-// add_global adds a module-level binding. name is borrowed and must outlive the program. A global
-// is zero filled before any module runs, so a Tagged one starts as undefined.
+// add_global borrows name, which must outlive the program. A global is zero filled before any
+// module runs, so a Tagged one starts as undefined.
 add_global :: proc(p: ^Program_Builder, name: string, type: Type) -> Global_ID {
 	id := Global_ID(len(p.globals))
 	append(&p.globals, Global{name = name, type = type})
 	return id
 }
 
-// fail_site records where generated code may fail and answers where it landed. The path inside the
-// site is borrowed and must outlive the program. lower resolves the line and the column, because
-// only source can turn an offset into them; see the package doc.
+// fail_site borrows the path inside the site, which must outlive the program. lower resolves the
+// line and the column, because only source can turn an offset into them; see the package doc.
 fail_site :: proc(p: ^Program_Builder, site: abi.Fail_Site) -> Fail_Site_ID {
 	if id, found := p.site_ids[site]; found {
 		return id
@@ -144,8 +140,7 @@ declare_func :: proc(
 	return id
 }
 
-// Func_Builder holds one function under construction. It is built into the row declare_func
-// reserved, and end_func writes it there.
+// Func_Builder builds into the row declare_func reserved, and end_func writes it there.
 Func_Builder :: struct {
 	program: ^Program_Builder,
 	id:      Func_ID,
@@ -155,9 +150,9 @@ Func_Builder :: struct {
 	current: Block_ID, // the block emit appends to, or NO_BLOCK once a terminator closed it
 }
 
-// begin_func opens the body of a declared function. It opens ENTRY and emits one Param per
-// parameter, so parameter i is Value_ID(i). A closure body takes its environment ahead of them all,
-// in the calling convention rather than as a Param.
+// begin_func opens ENTRY and emits one Param per parameter, so parameter i is Value_ID(i). A
+// closure body takes its environment ahead of them all, in the calling convention rather than as a
+// Param.
 begin_func :: proc(p: ^Program_Builder, id: Func_ID) -> Func_Builder {
 	ensure(int(id) < len(p.funcs), "begin_func on a function that was never declared")
 	f := Func_Builder {
@@ -176,25 +171,21 @@ begin_func :: proc(p: ^Program_Builder, id: Func_ID) -> Func_Builder {
 	return f
 }
 
-// add_block opens an empty block and answers its id. Nothing goes into it until use_block.
+// add_block does not make the block current: nothing goes into it until use_block.
 add_block :: proc(f: ^Func_Builder) -> Block_ID {
 	id := Block_ID(len(f.blocks))
 	append(&f.blocks, make([dynamic]Value_ID, f.program.allocator))
 	return id
 }
 
-// use_block makes block the one emit appends to.
 use_block :: proc(f: ^Func_Builder, block: Block_ID) {
 	assert(int(block) < len(f.blocks), "use_block on a block of another function")
 	f.current = block
 }
 
-// emit adds an instruction to the open block and answers the value it defines, which is of type
-// VOID when it defines none.
-//
-// The type is the caller's to state. ir cannot work it out: a reference slot of a layout names no
-// layout of its own, a runtime export declares only a pointer or nothing, and a function value
-// carries no signature at all. The verifier checks that the type suits the variant.
+// emit leaves the type for the caller to state. ir cannot work it out: a reference slot of a layout
+// names no layout of its own, a runtime export declares only a pointer or nothing, and a function
+// value carries no signature at all. The verifier checks that the type suits the variant.
 //
 // A terminator closes its block, so whatever follows it goes into a block of its own. Emitting into
 // a closed block is a mistake of the caller, not an instruction quietly dropped.
@@ -210,9 +201,8 @@ emit :: proc(f: ^Func_Builder, type: Type, variant: Variant, span: source.Span) 
 	return id
 }
 
-// phi adds the value a block receives from whichever predecessor control came through. Its edges
-// arrive later, through phi_incoming, because the back edge of a loop header is known only once the
-// body is built; LLVM patches a phi the same way.
+// phi takes no edges: they arrive later, through phi_incoming, because the back edge of a loop
+// header is known only once the body is built; LLVM patches a phi the same way.
 phi :: proc(f: ^Func_Builder, type: Type, span: source.Span) -> Value_ID {
 	assert(f.current != NO_BLOCK, "phi after a terminator closed the block")
 	assert(only_phis(f, f.current), "a phi comes before every other instruction of its block")
@@ -235,7 +225,6 @@ phi_incoming :: proc(f: ^Func_Builder, phi: Value_ID, block: Block_ID, value: Va
 	append(&f.phis[i].incoming, Incoming{block = block, value = value})
 }
 
-// end_func freezes the function into the row it was declared in.
 end_func :: proc(f: ^Func_Builder) {
 	for edges in f.phis {
 		f.values[edges.value].variant = Phi {
@@ -254,8 +243,8 @@ end_func :: proc(f: ^Func_Builder) {
 	declared.values = f.values[:]
 }
 
-// finish freezes the program. main is the function that takes the abi.MAIN_SYMBOL name and calls
-// the module init functions of init_order in turn. v1 puts every function in one unit.
+// finish takes as main the function that takes the abi.MAIN_SYMBOL name and calls the module init
+// functions of init_order in turn. v1 puts every function in one unit.
 //
 // The builder is spent afterwards: what only building needed goes back here.
 finish :: proc(p: ^Program_Builder, main: Func_ID, init_order: []Func_ID) -> Program_IR {
@@ -371,8 +360,7 @@ intern_layout :: proc(
 	return id
 }
 
-// write_layout_key writes the key a layout is interned under: the kind, the element kind and every
-// slot in order. A name is quoted, so no name can spell the separators. The key is internal, never
+// write_layout_key quotes a name, so no name can spell the separators. The key is internal, never
 // printed and never ordered.
 @(private)
 write_layout_key :: proc(
@@ -408,11 +396,9 @@ fixed_size :: proc(kind: abi.Cell_Kind) -> int {
 	return size_of(abi.Cell_Header)
 }
 
-// encode_units turns the cooked text of a string literal into UTF-16 units.
-//
-// It is not utf16.encode_string, which decodes runes: parse keeps a lone surrogate escape such as
-// \uD800 in its three-byte WTF-8 form, precisely so that lower gets back every unit the program
-// wrote (ast.String_Literal), and decoding that as a rune yields U+FFFD and loses the unit.
+// encode_units is not utf16.encode_string, which decodes runes: parse keeps a lone surrogate escape
+// such as \uD800 in its three-byte WTF-8 form, precisely so that lower gets back every unit the
+// program wrote (ast.String_Literal), and decoding that as a rune yields U+FFFD and loses the unit.
 @(private)
 encode_units :: proc(text: string, allocator: runtime.Allocator) -> []u16 {
 	// UTF-8 never takes fewer bytes than UTF-16 takes units.

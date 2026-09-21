@@ -1,4 +1,3 @@
-// Builds first, then launches the debug binary under CodeLLDB.
 // Zed downloads the CodeLLDB adapter on first use.
 [
 	{

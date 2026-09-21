@@ -3,7 +3,6 @@ package check
 import "../ast"
 import "../bind"
 
-// NO_CUT is the cut of an answer no back edge was cut under. See Answer.
 @(private)
 NO_CUT :: max(int)
 
@@ -21,9 +20,9 @@ Answer :: struct {
 	cut:     int,
 }
 
-// Narrowing is the state of one walk over the flow graph. One buffer serves the whole check: the
-// walk reads facts check has already recorded and never calls check_expression, so no second walk
-// can be running while this one is, which is the argument Trail makes for fits.
+// Narrowing is one buffer for the whole check: the walk reads facts check has already recorded and
+// never calls check_expression, so no second walk can be running while this one is, which is the
+// argument Trail makes for fits.
 @(private)
 Narrowing :: struct {
 	// The answer already worked out for a flow node of this walk, cleared before the next one. It
@@ -87,10 +86,9 @@ narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Typ
 
 // The walk.
 
-// flow_type is the answer for the reference at one node of the flow graph. The nodes that say
-// nothing about this reference are stepped over in a loop rather than by recursion: a long run of
-// writes to other names is the one shape that could otherwise grow the stack with the size of a
-// function.
+// flow_type steps over the nodes that say nothing about this reference in a loop rather than by
+// recursion: a long run of writes to other names is the one shape that could otherwise grow the
+// stack with the size of a function.
 //
 // An answer is kept for the rest of the walk, or, when a back edge was cut while it was worked out,
 // until the loop that cut it has been evaluated. Without that a loop body with a run of N `if`
@@ -139,8 +137,8 @@ flow_type :: proc(
 	return answer
 }
 
-// cached is the answer this walk already has for a node. Reading one is borrowing its cut: the
-// answer being worked out is no better than the answers it was built from.
+// cached hands over the cut of an answer along with it: the answer being worked out is no better
+// than the answers it was built from.
 @(private)
 cached :: proc(c: ^Checker, flow: bind.Flow_ID) -> (hit: Answer, found: bool) {
 	hit, found = c.narrowing.answers[flow]
@@ -150,8 +148,8 @@ cached :: proc(c: ^Checker, flow: bind.Flow_ID) -> (hit: Answer, found: bool) {
 	return hit, found
 }
 
-// remember keeps an answer for the nodes that lead to it. One with a cut goes on the partial list
-// as well, so that the loop it was cut under can drop it again.
+// remember puts an answer with a cut on the partial list as well, so that the loop it was cut under
+// can drop it again.
 @(private)
 remember :: proc(c: ^Checker, flow: bind.Flow_ID, answer: Answer) {
 	c.narrowing.answers[flow] = answer
@@ -185,7 +183,6 @@ steps_over :: proc(
 	return flow, false
 }
 
-// settled_type is the answer of the node the walk stopped on.
 @(private)
 settled_type :: proc(
 	c: ^Checker,
@@ -232,9 +229,9 @@ settled_type :: proc(
 	return declared, true
 }
 
-// start_type is what a reference is worth at the start of a function. An arrow keeps the flow where
-// it was created, so a narrowing made outside it still holds inside; a function declaration is
-// hoisted and may run at any point, so bind leaves its outer flow unreachable.
+// start_type lets a narrowing made outside an arrow hold inside it, because an arrow keeps the flow
+// where it was created; a function declaration is hoisted and may run at any point, so bind leaves
+// its outer flow unreachable.
 //
 // The narrowing carries only for a name nothing writes to. A write anywhere in the file could
 // happen between the moment the arrow is made and the moment it runs, and bind's Assigned flag
@@ -256,9 +253,6 @@ start_type :: proc(
 	return answer.type, answer.reached
 }
 
-// joined_type is the type where paths meet: the value is whatever any one of the paths that arrive
-// left. A path that arrives nowhere contributes nothing, and a join no path arrives at is itself
-// not reached.
 @(private)
 joined_type :: proc(
 	c: ^Checker,
@@ -284,9 +278,8 @@ joined_type :: proc(
 	return union_type(&c.table, parts[:]), true
 }
 
-// loop_type is the type at the head of a loop: the path that enters it joined with what comes back
-// from the body. A back edge that reaches the head again finds it on the stack and contributes
-// nothing, which is what makes the walk end.
+// loop_type is what makes the walk end: a back edge that reaches the head again finds it on the
+// stack and contributes nothing.
 //
 // Every cycle of the graph passes a loop head, and that head is on the stack between an open
 // flow_type frame and a second entry into the same node, so an answer worked out under a back edge
@@ -329,9 +322,8 @@ loop_type :: proc(
 
 // Writes.
 
-// written_type is what one write left in the reference, and whether it wrote there at all. A
-// declarator writes to the name it declares rather than to an expression, so it is matched by
-// symbol; the other three write to a place spelled out in the source.
+// written_type matches a declarator by symbol, because it writes to the name it declares rather
+// than to an expression; the other three write to a place spelled out in the source.
 //
 // A write to something the reference is read through counts too: `b = other` leaves nothing known
 // about `b.v`. The value is then unknown, which is the error type, and reduce_to_assigned turns
@@ -419,9 +411,8 @@ declares_root :: proc(c: ^Checker, declaration, reference: ast.Node_ID) -> bool 
 	return root != reference && declares_reference(c, declaration, root)
 }
 
-// reduce_to_assigned is what a union holds right after a write: the members the written value could
-// be. A value the walk knows nothing about, and one that fits no member at all, both leave the
-// declared type alone, which is the wider and safer answer.
+// reduce_to_assigned leaves the declared type alone for a value the walk knows nothing about and
+// for one that fits no member at all, which is the wider and safer answer.
 @(private)
 reduce_to_assigned :: proc(c: ^Checker, declared, written: Type_ID) -> Type_ID {
 	if written == ERROR || written == ANY {
@@ -440,7 +431,6 @@ reduce_to_assigned :: proc(c: ^Checker, declared, written: Type_ID) -> Type_ID {
 	return declared if reduced == NEVER else reduced
 }
 
-// loop_declarator is the one binding a `for...of` header declares.
 @(private)
 loop_declarator :: proc(c: ^Checker, declaration: ast.Node_ID) -> ast.Node_ID {
 	node, is_var := c.at.tree.nodes[declaration].variant.(ast.Var_Decl)
@@ -452,8 +442,8 @@ loop_declarator :: proc(c: ^Checker, declaration: ast.Node_ID) -> ast.Node_ID {
 
 // Conditions.
 
-// condition_type applies what one test proved. bind has already erased `!`, `&&`, `||` and `??`, so
-// the condition node points at what is really tested; `??` is the one that asks about null and
+// condition_type reads a condition bind has already erased `!`, `&&`, `||` and `??` from, so the
+// condition node points at what is really tested; `??` is the one that asks about null and
 // undefined rather than about truth.
 @(private)
 condition_type :: proc(
@@ -471,8 +461,6 @@ condition_type :: proc(
 	return truthy_type(c, node.condition, node.assume_true, reference, before)
 }
 
-// truthy_type applies a test for truth: the reference used as a condition of its own, or a
-// comparison of a place with one value.
 @(private)
 truthy_type :: proc(
 	c: ^Checker,
@@ -511,9 +499,8 @@ truthy_type :: proc(
 	return narrow_by_place(c, before, place, unit, equals, reference)
 }
 
-// unit_side splits a comparison into the value it tests against and the expression that is tested.
-// A unit type is a type with one value: a literal type, `null` or `undefined`, which is how
-// requirements 2.2 writes all three kinds of narrowing.
+// unit_side takes a unit type to be a type with one value: a literal type, `null` or `undefined`,
+// which is how requirements 2.2 writes all three kinds of narrowing.
 @(private)
 unit_side :: proc(c: ^Checker, node: ast.Binary) -> (unit: Type_ID, place: ast.Node_ID) {
 	if type := unit_type(c, recorded_type(c, node.right)); type != ERROR {
@@ -525,7 +512,6 @@ unit_side :: proc(c: ^Checker, node: ast.Binary) -> (unit: Type_ID, place: ast.N
 	return ERROR, ast.NO_NODE
 }
 
-// unit_type is the type itself where it has one value, and the error type otherwise.
 @(private)
 unit_type :: proc(c: ^Checker, id: Type_ID) -> Type_ID {
 	if id == NULL || id == UNDEFINED {
@@ -574,9 +560,9 @@ narrow_by_place :: proc(
 
 // The `switch` statement.
 
-// switch_clause_type applies a `switch` to the reference its value names. A clause range holds the
-// cases that lead to one group of statements, so the value is one of theirs; the empty range is the
-// path taken when nothing matched, and rules out every case at once.
+// switch_clause_type reads a clause range as the cases that lead to one group of statements, so the
+// value is one of theirs; the empty range is the path taken when nothing matched, and rules out
+// every case at once.
 @(private)
 switch_clause_type :: proc(
 	c: ^Checker,
@@ -607,10 +593,9 @@ switch_clause_type :: proc(
 	return union_type(&c.table, parts[:])
 }
 
-// unmatched_type is what a place can still hold where no case of a `switch` matched: what it held
-// before, with every unit case of the whole statement ruled out. It is both the path bind draws for
-// "nothing matched" and what a `default` leaves, which is what makes `const x: never = s` in a
-// `default` the exhaustiveness check TypeScript users write.
+// unmatched_type is both the path bind draws for "nothing matched" and what a `default` leaves,
+// which is what makes `const x: never = s` in a `default` the exhaustiveness check TypeScript users
+// write.
 @(private)
 unmatched_type :: proc(
 	c: ^Checker,
@@ -627,7 +612,6 @@ unmatched_type :: proc(
 	return answer
 }
 
-// case_unit is the one value a case matches, if it has one. A `default` has no value at all.
 @(private)
 case_unit :: proc(c: ^Checker, id: ast.Node_ID) -> (unit: Type_ID, ok: bool) {
 	clause := c.at.tree.nodes[id].variant.(ast.Case)
@@ -638,7 +622,6 @@ case_unit :: proc(c: ^Checker, id: ast.Node_ID) -> (unit: Type_ID, ok: bool) {
 	return unit, unit != ERROR
 }
 
-// is_default reports whether a clause is the `default` one, which has no value to match against.
 @(private)
 is_default :: proc(c: ^Checker, id: ast.Node_ID) -> bool {
 	return c.at.tree.nodes[id].variant.(ast.Case).value == ast.NO_NODE
@@ -646,9 +629,9 @@ is_default :: proc(c: ^Checker, id: ast.Node_ID) -> bool {
 
 // Reachability.
 
-// switch_exhausted reports whether the cases of a `switch` cover every value its subject can hold.
-// Both the subject and the place the subject tests are asked: `switch (s.kind)` rules out members
-// of `s` rather than values of `s.kind`, and either one running out means no value is left.
+// switch_exhausted asks both the subject and the place the subject tests: `switch (s.kind)` rules
+// out members of `s` rather than values of `s.kind`, and either one running out means no value is
+// left.
 //
 // A subject check has not typed yet reads the error type and is not exhaustive, which is the wider
 // and safer answer.
@@ -661,7 +644,6 @@ switch_exhausted :: proc(c: ^Checker, node: bind.Flow_Switch_Clause) -> bool {
 	return nothing_left(c, statement, tested_place(c, statement.value))
 }
 
-// nothing_left reports whether the cases of a `switch` rule out every value one place can hold.
 @(private)
 nothing_left :: proc(c: ^Checker, statement: ast.Switch, place: ast.Node_ID) -> bool {
 	before := recorded_type(c, place)
@@ -750,7 +732,6 @@ reaches_start :: proc(c: ^Checker, flow: bind.Flow_ID, reference := ast.NO_NODE)
 	return false
 }
 
-// walk_back puts one antecedent on the work list, once.
 @(private)
 walk_back :: proc(work: ^[dynamic]bind.Flow_ID, seen: []bool, flow: bind.Flow_ID) {
 	if flow == bind.UNREACHABLE || seen[flow] {
@@ -762,10 +743,9 @@ walk_back :: proc(work: ^[dynamic]bind.Flow_ID, seen: []bool, flow: bind.Flow_ID
 
 // Filters over the members of a union.
 
-// narrow_by_unit keeps the members that can equal one value, or drops the one member that is that
-// value. A member wider than the value survives `!==`, because it can still hold another one:
-// `string | undefined` without `undefined` is `string`, while `string` without `"a"` is still
-// `string`.
+// narrow_by_unit lets a member wider than the value survive `!==`, because it can still hold
+// another one: `string | undefined` without `undefined` is `string`, while `string` without `"a"`
+// is still `string`.
 @(private)
 narrow_by_unit :: proc(c: ^Checker, id: Type_ID, unit: Type_ID, equals: bool) -> Type_ID {
 	members := union_members(c, id)
@@ -779,10 +759,9 @@ narrow_by_unit :: proc(c: ^Checker, id: Type_ID, unit: Type_ID, equals: bool) ->
 	return union_type(&c.table, kept[:])
 }
 
-// narrow_by_discriminant keeps the members whose field could hold one value. It is the
-// discriminated union of requirements 2.2: `s.kind === "circle"` picks the member whose `kind` is
-// written `"circle"`. A member with no such field is left alone, since the test says nothing about
-// it.
+// narrow_by_discriminant is the discriminated union of requirements 2.2: `s.kind === "circle"`
+// picks the member whose `kind` is written `"circle"`. A member with no such field is left alone,
+// since the test says nothing about it.
 //
 // The field is worth what a read of it is worth, so `kind?: "a"` is compared as `"a" | undefined`
 // and survives `s.kind === undefined`.
@@ -810,8 +789,7 @@ narrow_by_discriminant :: proc(
 	return union_type(&c.table, kept[:])
 }
 
-// narrow_by_typeof keeps the members whose `typeof` answer is that word. A member whose answer is
-// not fixed, such as `any`, survives either way.
+// narrow_by_typeof lets a member whose answer is not fixed, such as `any`, survive either way.
 @(private)
 narrow_by_typeof :: proc(c: ^Checker, id: Type_ID, answer: string, equals: bool) -> Type_ID {
 	members := union_members(c, id)
@@ -825,8 +803,8 @@ narrow_by_typeof :: proc(c: ^Checker, id: Type_ID, answer: string, equals: bool)
 	return union_type(&c.table, kept[:])
 }
 
-// typeof_answer is the word `typeof` gives for a type, and "" where the answer is not fixed. The
-// words are the ones TYPEOF_ANSWERS lists, which is what the type of the operator is built from.
+// typeof_answer is "" where the answer is not fixed. The words are the ones TYPEOF_ANSWERS lists,
+// which is what the type of the operator is built from.
 @(private)
 typeof_answer :: proc(c: ^Checker, id: Type_ID) -> string {
 	switch v in c.table.types[id] {
@@ -856,8 +834,8 @@ typeof_answer :: proc(c: ^Checker, id: Type_ID) -> string {
 	return ""
 }
 
-// union_members is the members of a union, or the type itself as a list of one. It is a copy, so a
-// loop over it stays safe while its body interns new types into the table.
+// union_members answers with a copy, so a loop over it stays safe while its body interns new types
+// into the table.
 @(private)
 union_members :: proc(c: ^Checker, id: Type_ID) -> []Type_ID {
 	if type, is_union := c.table.types[id].(Union); is_union {
@@ -881,8 +859,8 @@ literal_text :: proc(c: ^Checker, id: Type_ID) -> (text: string, ok: bool) {
 
 // Places.
 
-// same_reference reports whether two expressions name one place. It is the check side of bind's
-// is_narrowable: a name, a field of a place, or an element of one at a fixed index.
+// same_reference is the check side of bind's is_narrowable: a name, a field of a place, or an
+// element of one at a fixed index.
 @(private)
 same_reference :: proc(c: ^Checker, a, b: ast.Node_ID) -> bool {
 	left_id, right_id := unwrap_reference(c, a), unwrap_reference(c, b)
@@ -920,8 +898,8 @@ same_reference :: proc(c: ^Checker, a, b: ast.Node_ID) -> bool {
 	return false
 }
 
-// same_index reports whether two index expressions pick the same element. bind allows a literal, a
-// name or a field there; a name picks one element only while nothing writes to it.
+// same_index relies on bind allowing only a literal, a name or a field there; a name picks one
+// element only while nothing writes to it.
 @(private)
 same_index :: proc(c: ^Checker, a, b: ast.Node_ID) -> bool {
 	#partial switch left in c.at.tree.nodes[a].variant {
@@ -947,7 +925,6 @@ unwrap_reference :: proc(c: ^Checker, id: ast.Node_ID) -> ast.Node_ID {
 	return id
 }
 
-// declares_reference reports whether a declaring node introduces the name a reference is a use of.
 @(private)
 declares_reference :: proc(c: ^Checker, declaration, reference: ast.Node_ID) -> bool {
 	if declaration == ast.NO_NODE {
@@ -968,9 +945,8 @@ declares_reference :: proc(c: ^Checker, declaration, reference: ast.Node_ID) -> 
 	return resolve_name(c, reference, use.name, .Value) == declared
 }
 
-// assigned_anywhere reports whether anything in the file writes to the name a reference is built
-// on. bind's Assigned flag covers the whole file rather than a point in it, which is the question a
-// closure has to ask.
+// assigned_anywhere reads bind's Assigned flag, which covers the whole file rather than a point in
+// it: the question a closure has to ask.
 @(private)
 assigned_anywhere :: proc(c: ^Checker, reference: ast.Node_ID) -> bool {
 	root := root_name(c, reference)
@@ -1004,10 +980,10 @@ root_name :: proc(c: ^Checker, id: ast.Node_ID) -> ast.Node_ID {
 	return ast.NO_NODE
 }
 
-// recorded_type is the type check already gave a node, and the error type where it has not typed it
-// yet. The walk only ever goes backwards, so the one way to meet an untyped node is through the
-// back edge of a loop, where the write below the use has not been read; an answer that says nothing
-// narrows nothing, which is the wider and safer direction.
+// recorded_type is the error type for a node check has not typed yet. The walk only ever goes
+// backwards, so the one way to meet an untyped node is through the back edge of a loop, where the
+// write below the use has not been read; an answer that says nothing narrows nothing, which is the
+// wider and safer direction.
 @(private)
 recorded_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	if id == ast.NO_NODE || c.at.node_types == nil {

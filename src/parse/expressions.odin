@@ -20,8 +20,7 @@ ADDITIVE :: 10
 MULTIPLICATIVE :: 11
 POWER :: 12
 
-// parse_expression parses an expression. The comma operator is outside the subset: `a, b` is one
-// Bad node.
+// parse_expression turns `a, b` into one Bad node: the comma operator is outside the subset.
 parse_expression :: proc(p: ^Parser) -> ast.Node_ID {
 	m := mark(p)
 	start := token_start(p)
@@ -78,8 +77,8 @@ parse_assignment :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, ast.Assign{op = op, target = target, value = value})
 }
 
-// assignment_operator is the assignment operator at the current token and the number of tokens it
-// takes: `>>=` and `>>>=` are several `>` and `=` tokens.
+// assignment_operator counts the tokens the operator takes: `>>=` and `>>>=` are several `>` and
+// `=` tokens.
 assignment_operator :: proc(p: ^Parser) -> (op: ast.Assign_Op, token_count: int, ok: bool) {
 	#partial switch peek(p).kind {
 	case .Equal:
@@ -142,14 +141,11 @@ greater_run :: proc(p: ^Parser) -> (run: Greater_Run) {
 	return
 }
 
-// touches_next reports whether the token ahead tokens after the current one starts right where
-// the one before it ends, with no space between them.
 touches_next :: proc(p: ^Parser, ahead: int) -> bool {
 	return peek(p, ahead - 1).span.end == peek(p, ahead).span.start
 }
 
-// is_assignable reports whether a node can be assigned to: a variable, a field or an element. A
-// Bad node counts too: it has been reported already.
+// is_assignable takes a Bad node too: it has been reported already.
 is_assignable :: proc(node: ast.Node) -> bool {
 	#partial switch _ in node.variant {
 	case ast.Ident, ast.Member, ast.Index, ast.Non_Null, ast.Bad:
@@ -242,8 +238,6 @@ parse_binary :: proc(p: ^Parser, min_precedence: int) -> ast.Node_ID {
 	}
 }
 
-// binary_operator is the binary operator at the current token, its precedence and the number of
-// tokens it takes.
 binary_operator :: proc(
 	p: ^Parser,
 ) -> (
@@ -406,7 +400,6 @@ unary_op :: proc(kind: Token_Kind) -> ast.Unary_Op {
 	unreachable()
 }
 
-// parse_unsupported_unary reports a unary operator outside the subset and parses its operand.
 parse_unsupported_unary :: proc(p: ^Parser, code: diag.Code, arg: string) -> ast.Node_ID {
 	m := mark(p)
 	operator := advance(p)
@@ -430,7 +423,6 @@ parse_angle_brackets :: proc(p: ^Parser) -> ast.Node_ID {
 	return discard(p, m, less.span.start)
 }
 
-// check_update_target reports the operand of `++` or `--` when it cannot be assigned to.
 check_update_target :: proc(p: ^Parser, operand: ast.Node_ID) {
 	node := p.nodes[operand]
 	if !is_assignable(node) {
@@ -527,7 +519,6 @@ try_type_arguments :: proc(p: ^Parser) -> bool {
 	return false
 }
 
-// parse_member_name parses the name after `.`: any name, a reserved word included.
 parse_member_name :: proc(p: ^Parser) -> ast.Name {
 	if is_name_token(peek(p)) {
 		return name_of(advance(p))
@@ -536,7 +527,6 @@ parse_member_name :: proc(p: ^Parser) -> ast.Name {
 	return missing_name(p)
 }
 
-// parse_arguments parses the `(a, b)` of a call.
 parse_arguments :: proc(p: ^Parser) -> []ast.Node_ID {
 	advance(p) // (
 	first := len(p.scratch)
@@ -628,8 +618,7 @@ parse_primary :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_missing(p)
 }
 
-// can_start_expression reports the tokens that start an expression, the ones parse_primary and
-// parse_unary take.
+// can_start_expression lists the tokens parse_primary and parse_unary take.
 can_start_expression :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
 	case .Identifier,
@@ -668,8 +657,6 @@ can_start_expression :: proc(kind: Token_Kind) -> bool {
 	return false
 }
 
-// add_identifier adds the node for a use of a name: an Ident, or a Bad node for `arguments` and
-// `eval`, which are outside the subset.
 add_identifier :: proc(p: ^Parser, token: Token) -> ast.Node_ID {
 	name := token.value.(string)
 	switch name {
@@ -836,9 +823,8 @@ parse_property :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, token.span.start, ast.Property{name = name, value = value})
 }
 
-// skip_property reports a member of an object literal that is outside the subset, at span, and
-// skips it up to the `,` after it or the closing `}`: a value may go on over several lines. The
-// result is NO_NODE: the member is left out of its list.
+// skip_property skips the member up to the `,` after it or the closing `}`: a value may go on over
+// several lines. The result is NO_NODE: the member is left out of its list.
 skip_property :: proc(p: ^Parser, code: diag.Code, span: source.Span, arg: string) -> ast.Node_ID {
 	report_subset(p, code, span, arg)
 	for {
@@ -939,8 +925,7 @@ parse_regular_expression :: proc(p: ^Parser) -> ast.Node_ID {
 
 // Arrow functions.
 
-// try_arrow parses an arrow function if one starts at the current token. Otherwise it returns
-// NO_NODE and reads nothing.
+// try_arrow returns NO_NODE and reads nothing when no arrow function starts at the current token.
 try_arrow :: proc(p: ^Parser) -> ast.Node_ID {
 	token := peek(p)
 	next := peek(p, 1)

@@ -2,7 +2,6 @@ package parse
 
 import "../source"
 
-// Token is one token of a file, as tokenize returns it and parse_tokens reads it.
 Token :: struct {
 	kind:              Token_Kind,
 	// A line terminator lies between the previous token (or the start of the file) and this one,

@@ -524,8 +524,8 @@ returned :: proc(body: ir.Func) -> []ir.Value_ID {
 	return out[:]
 }
 
-// count_of is how many instructions of one kind a function holds. Counting the IR rather than the
-// dump keeps a test from breaking when the printer changes a word.
+// count_of counts the IR rather than the dump, which keeps a test from breaking when the printer
+// changes a word.
 @(private = "file")
 count_of :: proc(body: ir.Func, $Variant: typeid) -> int {
 	total := 0

@@ -58,7 +58,6 @@ Symbol_Ref :: struct {
 	symbol: bind.Symbol_ID,
 }
 
-// Typed_File is what check learned about one file.
 Typed_File :: struct {
 	file:            source.File_ID,
 	node_types:      []Type_ID, // as long as tree.nodes; ERROR where a node has no type of its own
@@ -81,17 +80,15 @@ Facts :: struct {
 	node_signatures: []Type_ID,
 }
 
-// Check_Result is the frozen answer of one call. Its Type_ID values index its own types and mean
-// nothing in another call's.
+// Check_Result holds Type_ID values that index its own types and mean nothing in another call's.
 Check_Result :: struct {
-	partition: []source.File_ID, // the files this call typed, in the order they were given
-	types:     []Type, // the type table of this call, indexed by Type_ID
+	partition: []source.File_ID, // in the order they were given
+	types:     []Type, // indexed by Type_ID
 	files:     []Typed_File, // one per partition entry, in the same order
 }
 
-// check types the files of partition and returns their facts together with every diagnostic it
-// found. It reports every mistake it sees rather than stopping at the first, and always returns a
-// whole result: a node it could not type holds the error type.
+// check reports every mistake it sees rather than stopping at the first, and always returns a whole
+// result: a node it could not type holds the error type.
 @(require_results)
 check :: proc(
 	prog: ^program.Program,
@@ -127,7 +124,6 @@ check :: proc(
 	return freeze(&c, partition, files), c.diagnostics[:]
 }
 
-// typed_file is the facts of one file, when that file belongs to this result.
 typed_file :: proc(result: Check_Result, file: source.File_ID) -> (^Typed_File, bool) {
 	for &typed in result.files {
 		if typed.file == file {
@@ -137,7 +133,6 @@ typed_file :: proc(result: Check_Result, file: source.File_ID) -> (^Typed_File, 
 	return nil, false
 }
 
-// Checker is the state of one check call.
 @(private)
 Checker :: struct {
 	program:      ^program.Program,
@@ -168,9 +163,7 @@ Checker :: struct {
 	aliases:      map[Decl_Ref]bool,
 	// The lib declarations check has to know by name rather than by use. Filled on first use.
 	lib:          Lib_Types,
-	// The buffer fits compares object types in. See Trail.
 	trail:        Trail,
-	// The buffer narrow_reference walks the flow graph in. See Narrowing.
 	narrowing:    Narrowing,
 	diagnostics:  [dynamic]diag.Diagnostic,
 	at:           Place,
@@ -195,9 +188,8 @@ Place :: struct {
 	returns:         ^[dynamic]Type_ID,
 }
 
-// check_file types one file of the partition from its root down. A declaration of the file that an
-// earlier file already asked for is typed once: its facts are in the file's tables already, and the
-// walk over the statements finds the answer in the symbol cache.
+// check_file types a declaration that an earlier file already asked for only once: its facts are in
+// the file's tables already, and the walk over the statements finds the answer in the symbol cache.
 @(private)
 check_file :: proc(c: ^Checker, file: source.File_ID) -> Typed_File {
 	previous := move_to(c, file)
@@ -216,8 +208,8 @@ check_file :: proc(c: ^Checker, file: source.File_ID) -> Typed_File {
 	}
 }
 
-// move_to points the checker at a file and answers with the place to move back to. It is how the
-// type of a symbol declared elsewhere gets worked out.
+// move_to is how the type of a symbol declared elsewhere gets worked out. The caller restores the
+// place it returns.
 @(private)
 move_to :: proc(c: ^Checker, file: source.File_ID) -> (previous: Place) {
 	facts := facts_of(c, file)
@@ -234,9 +226,8 @@ move_to :: proc(c: ^Checker, file: source.File_ID) -> (previous: Place) {
 	return previous
 }
 
-// facts_of is the fact tables of one file, built the first time the checker reads it. A file of the
-// partition takes them from the checker's allocator, because they become its Typed_File; a file the
-// checker only reads takes scratch, which free_scratch gives back.
+// facts_of gives a file of the partition tables from the checker's allocator, because they become
+// its Typed_File; a file the checker only reads takes scratch, which free_scratch gives back.
 @(private)
 facts_of :: proc(c: ^Checker, file: source.File_ID) -> Facts {
 	if c.facts[file].node_types != nil {
@@ -253,7 +244,6 @@ facts_of :: proc(c: ^Checker, file: source.File_ID) -> Facts {
 	return c.facts[file]
 }
 
-// freeze turns the checker's growing tables into the slices of the result.
 @(private)
 freeze :: proc(c: ^Checker, partition: []source.File_ID, files: []Typed_File) -> Check_Result {
 	owned := make([]source.File_ID, len(partition), c.allocator)
@@ -261,9 +251,8 @@ freeze :: proc(c: ^Checker, partition: []source.File_ID, files: []Typed_File) ->
 	return {partition = owned, types = c.table.types[:], files = files}
 }
 
-// free_scratch gives back what only the check needed. The temporary allocator of an arena keeps its
-// pages until its owner resets them, so this returns memory only to an allocator that frees, such
-// as the tracking allocator of the tests.
+// free_scratch matters only to an allocator that frees, such as the tracking allocator of the
+// tests: the temporary allocator of an arena keeps its pages until its owner resets them.
 @(private)
 free_scratch :: proc(c: ^Checker) {
 	// A slice remembers no allocator, so every one has to be named: delete would otherwise hand
@@ -292,9 +281,9 @@ free_scratch :: proc(c: ^Checker) {
 
 // Facts of a node.
 
-// set_type records the type of a node and hands it back, so a caller can end on it. The tables are
-// nil only while a generic lib declaration is being instantiated, and the fact is then dropped so
-// that the instance does not overwrite what the declaration recorded. See Place.
+// set_type hands the type back so that a caller can end on it. The tables are nil only while a
+// generic lib declaration is being instantiated, and the fact is then dropped so that the instance
+// does not overwrite what the declaration recorded. See Place.
 @(private)
 set_type :: proc(c: ^Checker, id: ast.Node_ID, type: Type_ID) -> Type_ID {
 	if c.at.node_types != nil {
@@ -303,7 +292,6 @@ set_type :: proc(c: ^Checker, id: ast.Node_ID, type: Type_ID) -> Type_ID {
 	return type
 }
 
-// set_symbol records what a name refers to.
 @(private)
 set_symbol :: proc(c: ^Checker, id: ast.Node_ID, ref: Symbol_Ref) {
 	if c.at.node_symbols != nil {
@@ -311,7 +299,6 @@ set_symbol :: proc(c: ^Checker, id: ast.Node_ID, ref: Symbol_Ref) {
 	}
 }
 
-// set_signature records the signature a call settled on.
 @(private)
 set_signature :: proc(c: ^Checker, id: ast.Node_ID, signature: Type_ID) {
 	if c.at.node_signatures != nil {
@@ -321,8 +308,8 @@ set_signature :: proc(c: ^Checker, id: ast.Node_ID, signature: Type_ID) {
 
 // Diagnostics.
 
-// report records a diagnostic at span. Arguments past diag.MAX_ARGS are dropped: a text that needs
-// more than the registry holds is a text to rewrite.
+// report drops arguments past diag.MAX_ARGS: a text that needs more than the registry holds is a
+// text to rewrite.
 //
 // A diagnostic about a file outside this partition is dropped. A checker reads such a file to learn
 // the type of a name used in its own, and would otherwise report what it finds there, which the
@@ -347,28 +334,25 @@ report :: proc(c: ^Checker, code: diag.Code, span: source.Span, args: ..string) 
 	append(&c.diagnostics, d)
 }
 
-// report_types records a diagnostic whose two arguments are types, which is most of them.
 @(private)
 report_types :: proc(c: ^Checker, code: diag.Code, span: source.Span, a, b: Type_ID) {
 	report(c, code, span, text_of(c, a), text_of(c, b))
 }
 
-// text_of is how a type reads in a message. It comes from the checker's allocator, because a
-// diagnostic borrows its arguments and outlives any scratch.
+// text_of allocates from the checker's allocator, because a diagnostic borrows its arguments and
+// outlives any scratch.
 @(private)
 text_of :: proc(c: ^Checker, id: Type_ID) -> string {
 	return type_text(c.table.types[:], id, c.allocator)
 }
 
-// span_of is where a diagnostic about a node stands.
 @(private)
 span_of :: proc(c: ^Checker, id: ast.Node_ID) -> source.Span {
 	return c.at.tree.nodes[id].span
 }
 
-// fits reports whether a value of source may stand where target is expected. One trail serves the
-// whole check: assignable reads the frozen rows and never calls back here, so no second comparison
-// can be running while this one is.
+// fits shares one trail across the whole check: assignable reads the frozen rows and never calls
+// back here, so no second comparison can be running while this one is.
 @(private)
 fits :: proc(c: ^Checker, source, target: Type_ID) -> bool {
 	clear(&c.trail)
@@ -399,8 +383,6 @@ comparable :: proc(c: ^Checker, a, b: Type_ID) -> bool {
 	return false
 }
 
-// union_of is the canonical union of two types, which is what a ternary, a logical operator and an
-// optional parameter all come down to.
 @(private)
 union_of :: proc(c: ^Checker, a, b: Type_ID) -> Type_ID {
 	pair := [2]Type_ID{a, b}

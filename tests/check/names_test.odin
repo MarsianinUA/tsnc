@@ -115,7 +115,6 @@ the_well_known_types_are_where_the_constants_say :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(c.result.partition), 1)
 	testing.expect_value(t, c.result.partition[0], MAIN)
 
-	// The lib file was read but not typed, so it has no facts here.
 	_, typed := check.typed_file(c.result, LIB)
 	testing.expectf(t, !typed, "the lib file is not in this partition, so it has no Typed_File")
 }

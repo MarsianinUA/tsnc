@@ -555,7 +555,6 @@ Expected_Token :: struct {
 	value: string,
 }
 
-// expect_template checks the kind, span and string value of every token of text.
 expect_template :: proc(
 	t: ^testing.T,
 	text: string,
@@ -582,7 +581,7 @@ expect_template :: proc(
 	}
 }
 
-// expect_kinds checks that text has no diagnostics and returns its tokens, EOF included.
+// expect_kinds returns the tokens with EOF included, which expected leaves out.
 expect_kinds :: proc(
 	t: ^testing.T,
 	text: string,
@@ -595,8 +594,7 @@ expect_kinds :: proc(
 	return tokens
 }
 
-// expect_token_kinds checks the kinds of tokens, which must end with EOF, the one kind expected
-// leaves out.
+// expect_token_kinds needs tokens to end with EOF, the one kind expected leaves out.
 expect_token_kinds :: proc(
 	t: ^testing.T,
 	text: string,
@@ -643,8 +641,7 @@ expect_diagnostics :: proc(
 	)
 }
 
-// tokenize tokenizes text as file 0 into the temp allocator, which the test runner frees before
-// each test, and sorts the diagnostics into print order.
+// tokenize allocates from the temp allocator, which the test runner frees before each test.
 tokenize :: proc(text: string) -> ([]parse.Token, []diag.Diagnostic) {
 	tokens, diagnostics := parse.tokenize(text, 0, context.temp_allocator)
 	diag.sort(diagnostics)

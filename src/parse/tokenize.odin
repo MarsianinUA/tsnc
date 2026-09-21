@@ -40,8 +40,8 @@ import "core:unicode/utf8"
 import "../diag"
 import "../source"
 
-// tokenize splits text, the text of file, into tokens. It reports every problem it finds as a
-// diagnostic, in the order it finds them, and always returns the whole token array.
+// tokenize reports every problem it finds as a diagnostic, in the order it finds them, and always
+// returns the whole token array.
 tokenize :: proc(
 	text: string,
 	file: source.File_ID,
@@ -76,7 +76,6 @@ tokenize :: proc(
 	return t.tokens[:], t.diagnostics[:]
 }
 
-// Tokenizer is the state of one tokenize call.
 @(private)
 Tokenizer :: struct {
 	text:              string,
@@ -164,7 +163,7 @@ PUNCTUATORS := [?]Punctuator {
 	{"^", .Caret},
 }
 
-// scan_token reads one token at t.offset, which is not trivia and not the end of the text.
+// scan_token needs t.offset to be neither trivia nor the end of the text.
 @(private)
 scan_token :: proc(t: ^Tokenizer) {
 	start := t.offset
@@ -216,7 +215,6 @@ scan_token :: proc(t: ^Tokenizer) {
 	add_token(t, kind, start)
 }
 
-// match_punctuator finds the longest punctuator at the start of rest; size is its length.
 @(private)
 match_punctuator :: proc(rest: string) -> (kind: Token_Kind, size: int, found: bool) {
 	for p in PUNCTUATORS {
@@ -232,8 +230,8 @@ match_punctuator :: proc(rest: string) -> (kind: Token_Kind, size: int, found: b
 	return
 }
 
-// scan_number reads a number literal. Everything glued to it (a name, more digits) goes into the
-// one token, so a malformed number is one diagnostic.
+// scan_number puts everything glued to the literal (a name, more digits) into the one token, so a
+// malformed number is one diagnostic.
 @(private)
 scan_number :: proc(t: ^Tokenizer) {
 	start := t.offset
@@ -293,8 +291,6 @@ scan_number :: proc(t: ^Tokenizer) {
 	add_token(t, .Number, start, value)
 }
 
-// radix_prefix_base returns 16, 8 or 2 for text that starts with `0x`, `0o` or `0b` in either
-// case, and 0 otherwise.
 @(private)
 radix_prefix_base :: proc(text: string) -> int {
 	if len(text) < 2 || text[0] != '0' {
@@ -311,8 +307,7 @@ radix_prefix_base :: proc(text: string) -> int {
 	return 0
 }
 
-// scan_digits reads digits of base and the `_` separators between them. ok is false when a `_`
-// does not stand between two digits.
+// scan_digits answers ok = false when a `_` does not stand between two digits.
 @(private)
 scan_digits :: proc(t: ^Tokenizer, base: int) -> (count: int, ok: bool) {
 	ok = true
@@ -334,7 +329,6 @@ scan_digits :: proc(t: ^Tokenizer, base: int) -> (count: int, ok: bool) {
 	return
 }
 
-// radix_value is the value of the digits and `_` separators of a `0x`, `0o` or `0b` literal.
 @(private)
 radix_value :: proc(digits: string, base: int) -> f64 {
 	exact: u64
@@ -360,8 +354,6 @@ radix_value :: proc(digits: string, base: int) -> f64 {
 	return f64(exact) if is_exact else rounded
 }
 
-// scan_string reads a string literal. It ends at the closing quote, or unterminated at the end of
-// its line or of the text.
 @(private)
 scan_string :: proc(t: ^Tokenizer) {
 	start := t.offset
@@ -398,8 +390,8 @@ scan_string :: proc(t: ^Tokenizer) {
 	add_token(t, .String, start, value)
 }
 
-// scan_template_part reads the text of a template up to a backtick or a `${`. start is the opening
-// backtick or the `}` that closed the substitution before this part; t.offset is just past it.
+// scan_template_part takes start at the opening backtick or at the `}` that closed the substitution
+// before this part; t.offset is just past it.
 @(private)
 scan_template_part :: proc(t: ^Tokenizer, start: int) {
 	opens_template := t.text[start] == '`'
@@ -446,7 +438,7 @@ scan_template_part :: proc(t: ^Tokenizer, start: int) {
 	add_token(t, last_kind, start, value)
 }
 
-// scan_escape reads the escape sequence at t.offset, a backslash, and adds its value to cooked.
+// scan_escape starts at the backslash, at t.offset.
 @(private)
 scan_escape :: proc(t: ^Tokenizer, cooked: ^Cooked) {
 	start := t.offset
@@ -521,7 +513,6 @@ scan_escape :: proc(t: ^Tokenizer, cooked: ^Cooked) {
 	}
 }
 
-// control_character is the character that `\b`, `\f`, `\n`, `\r`, `\t` or `\v` stands for.
 @(private)
 control_character :: proc(letter: byte) -> byte {
 	switch letter {
@@ -578,8 +569,8 @@ read_unicode_escape :: proc(text: string, start: int) -> (r: rune, end: int, ok:
 	return rune(value), i, true
 }
 
-// append_code_point appends r in UTF-8. A lone surrogate keeps its three-byte WTF-8 form, which
-// utf8.encode_rune would turn into U+FFFD.
+// append_code_point keeps the three-byte WTF-8 form of a lone surrogate, which utf8.encode_rune
+// would turn into U+FFFD.
 @(private)
 append_code_point :: proc(buffer: ^[dynamic]u8, r: rune) {
 	if 0xD800 <= r && r <= 0xDFFF {
@@ -590,8 +581,6 @@ append_code_point :: proc(buffer: ^[dynamic]u8, r: rune) {
 	append(buffer, ..bytes[:size])
 }
 
-// copy_run starts the buffer of cooked if needed and copies the source text from its run_start to
-// t.offset into it.
 @(private)
 copy_run :: proc(t: ^Tokenizer, cooked: ^Cooked) {
 	if cooked.buffer == nil {
@@ -600,7 +589,6 @@ copy_run :: proc(t: ^Tokenizer, cooked: ^Cooked) {
 	append(&cooked.buffer, t.text[cooked.run_start:t.offset])
 }
 
-// cooked_value ends the value of cooked at t.offset.
 @(private)
 cooked_value :: proc(t: ^Tokenizer, cooked: ^Cooked) -> string {
 	if cooked.buffer == nil {
@@ -610,7 +598,6 @@ cooked_value :: proc(t: ^Tokenizer, cooked: ^Cooked) -> string {
 	return string(cooked.buffer[:])
 }
 
-// skip_trivia skips spaces, line breaks and comments, and notes a line break for the next token.
 @(private)
 skip_trivia :: proc(t: ^Tokenizer) {
 	for t.offset < len(t.text) {
@@ -637,8 +624,7 @@ skip_trivia :: proc(t: ^Tokenizer) {
 	}
 }
 
-// skip_line_comment skips to the line terminator that ends the comment and leaves it for
-// skip_trivia.
+// skip_line_comment leaves the line terminator that ends the comment for skip_trivia.
 @(private)
 skip_line_comment :: proc(t: ^Tokenizer) {
 	for t.offset < len(t.text) && source.line_terminator_size(t.text, t.offset) == 0 {
@@ -701,7 +687,6 @@ is_name_part :: proc(r: rune) -> bool {
 	return is_other_digit || unicode.is_nonspacing_mark(r) || unicode.is_spacing_mark(r)
 }
 
-// name_end is where the run of name characters that starts at text[start] ends.
 @(private)
 name_end :: proc(text: string, start: int) -> int {
 	for r, i in text[start:] {
@@ -712,7 +697,6 @@ name_end :: proc(text: string, start: int) -> int {
 	return len(text)
 }
 
-// reserved_word_kind is the kind of a name: its reserved word, or Identifier.
 @(private)
 reserved_word_kind :: proc(name: string) -> Token_Kind {
 	switch name {
@@ -812,7 +796,7 @@ reserved_word_kind :: proc(name: string) -> Token_Kind {
 	return .Identifier
 }
 
-// digit_value is the value of a hexadecimal digit, or 16 for any other byte.
+// digit_value is 16 for a byte that is not a hexadecimal digit.
 @(private)
 digit_value :: proc(c: byte) -> int {
 	switch c {
@@ -831,13 +815,11 @@ is_decimal_digit :: proc(c: byte) -> bool {
 	return '0' <= c && c <= '9'
 }
 
-// byte_at is text[i], or 0 past the end.
 @(private)
 byte_at :: proc(text: string, i: int) -> byte {
 	return text[i] if i < len(text) else 0
 }
 
-// add_token appends a token that spans text[start:t.offset].
 @(private)
 add_token :: proc(t: ^Tokenizer, kind: Token_Kind, start: int, value: Token_Value = nil) {
 	token := Token {

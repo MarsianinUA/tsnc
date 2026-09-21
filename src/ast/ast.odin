@@ -33,10 +33,8 @@ package ast
 
 import "../source"
 
-// Node_ID indexes File_AST.nodes.
 Node_ID :: distinct u32
 
-// ROOT is the ID of the Module node.
 ROOT :: Node_ID(0)
 
 // NO_NODE in a child field means the child is absent. It equals ROOT, which is never a child.
@@ -130,7 +128,6 @@ Variant :: union #no_nil {
 // Bad covers the text parse skipped after reporting it.
 Bad :: struct {}
 
-// Module is the root: the statements of the file.
 Module :: struct {
 	statements: []Node_ID,
 }

@@ -2,9 +2,8 @@ package bind
 
 import "../ast"
 
-// bind_node binds one node: the names it uses, the scope it opens and its place in the flow graph.
-// It is the one exhaustive switch over the shapes of ast, and every case binds its children in
-// source order. The names a scope declares are already in place: declare_statements runs first.
+// bind_node is the one exhaustive switch over the shapes of ast, and every case binds its children
+// in source order. The names a scope declares are already in place: declare_statements runs first.
 @(private)
 bind_node :: proc(b: ^Binder, id: ast.Node_ID) {
 	if id == ast.NO_NODE {
@@ -192,10 +191,8 @@ bind_statements :: proc(b: ^Binder, statements: []ast.Node_ID) {
 	}
 }
 
-// bind_function binds a function declaration or an arrow: its own scope holds the type
-// parameters, the parameters and the names of its body, and its flow graph stands on its own.
-// outer is the flow where an arrow is created, so that check keeps a narrowing inside it, and
-// UNREACHABLE for a function declaration, which is hoisted and may run at any point.
+// bind_function takes in outer the flow where an arrow is created, so that check keeps a narrowing
+// inside it, and UNREACHABLE for a function declaration, which is hoisted and may run at any point.
 @(private)
 bind_function :: proc(
 	b: ^Binder,
@@ -247,8 +244,6 @@ bind_function :: proc(
 	close_scope(b, previous_scope)
 }
 
-// open_type_scope opens the scope of a declaration's type parameters, and nothing when it has
-// none.
 @(private)
 open_type_scope :: proc(
 	b: ^Binder,
@@ -273,8 +268,8 @@ declare_type_params :: proc(b: ^Binder, type_params: []ast.Node_ID) {
 	}
 }
 
-// bind_type_ref resolves the name of a type. In `m.T` only `m` is a name of this file: check looks
-// T up among the exports of the module m stands for.
+// bind_type_ref resolves only `m` of `m.T`, the one name of this file in it: check looks T up among
+// the exports of the module m stands for.
 @(private)
 bind_type_ref :: proc(b: ^Binder, id: ast.Node_ID, node: ast.Type_Ref) {
 	if node.qualifier.text != "" {
@@ -368,7 +363,6 @@ bind_for_of :: proc(b: ^Binder, id: ast.Node_ID, node: ast.For_Of) {
 	close_scope(b, previous)
 }
 
-// bind_loop_body binds the body of a loop with its jump targets in place.
 @(private)
 bind_loop_body :: proc(b: ^Binder, body: ast.Node_ID, break_label, continue_label: Label_ID) {
 	previous_break, previous_continue := b.break_target, b.continue_target
@@ -377,9 +371,9 @@ bind_loop_body :: proc(b: ^Binder, body: ast.Node_ID, break_label, continue_labe
 	b.break_target, b.continue_target = previous_break, previous_continue
 }
 
-// bind_switch binds a `switch`: every case is a path from the head, plus the path that falls
-// through from the case before it. Cases that hold no statements share the path of the next one,
-// so `case 2: case 3: b()` is one range. All the cases share one scope, as a block does.
+// bind_switch makes every case a path from the head, plus the path that falls through from the
+// case before it. Cases that hold no statements share the path of the next one, so
+// `case 2: case 3: b()` is one range. All the cases share one scope, as a block does.
 @(private)
 bind_switch :: proc(b: ^Binder, id: ast.Node_ID, node: ast.Switch) {
 	post_label := new_branch_label(b)
@@ -423,8 +417,8 @@ bind_switch :: proc(b: ^Binder, id: ast.Node_ID, node: ast.Switch) {
 	b.current = finish_label(b, post_label)
 }
 
-// bind_case binds one case. Its value is read at the head of the `switch`, while a case is being
-// picked, whatever falls through from the case before it; only its statements follow that path.
+// bind_case reads the value of a case at the head of the `switch`, while a case is being picked,
+// whatever falls through from the case before it; only its statements follow that path.
 @(private)
 bind_case :: proc(b: ^Binder, id: ast.Node_ID, head: Flow_ID) {
 	clause := b.tree.nodes[id].variant.(ast.Case)
@@ -447,8 +441,8 @@ is_default_case :: proc(b: ^Binder, id: ast.Node_ID) -> bool {
 	return clause.value == ast.NO_NODE
 }
 
-// bind_conditional binds `c ? a : b`. When neither side wrote anything, the flow after it is the
-// flow before it: a join that narrows nothing would only make check walk further.
+// bind_conditional leaves the flow as it was when neither side wrote anything: a join that narrows
+// nothing would only make check walk further.
 @(private)
 bind_conditional :: proc(b: ^Binder, node: ast.Conditional) {
 	true_label := new_branch_label(b)

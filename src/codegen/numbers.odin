@@ -177,8 +177,7 @@ build_power :: proc(m: ^Module, base, exponent: llvm.LLVMValueRef) -> llvm.LLVMV
 	)
 }
 
-// Number_Function is how one number function is emitted: the llvm intrinsic that inlines it, empty
-// when LLVM has none, and the libm symbol to call instead.
+// Number_Function leaves intrinsic empty when LLVM has none; libm is the symbol to call instead.
 @(private)
 Number_Function :: struct {
 	intrinsic: string,
@@ -224,9 +223,8 @@ build_number_call :: proc(
 	return build_double_call(m, row.intrinsic, row.libm, args)
 }
 
-// build_double_call calls a function of doubles that answers a double: the intrinsic when this LLVM
-// knows the name, a libm call otherwise. Asking LLVM rather than trusting the table means a name
-// that moves between LLVM versions falls back to libm instead of breaking the build.
+// build_double_call asks LLVM whether it knows the intrinsic rather than trusting the table, so a
+// name that moves between LLVM versions falls back to libm instead of breaking the build.
 @(private)
 build_double_call :: proc(
 	m: ^Module,
@@ -251,8 +249,8 @@ build_double_call :: proc(
 	)
 }
 
-// intrinsic_function declares one overload of an LLVM intrinsic. LLVM interns the declaration by
-// its mangled name, so asking twice answers the same function and no cache is needed.
+// intrinsic_function needs no cache: LLVM interns the declaration by its mangled name, so asking
+// twice answers the same function.
 @(private)
 intrinsic_function :: proc(
 	m: ^Module,
@@ -272,7 +270,6 @@ intrinsic_function :: proc(
 	return {signature, function}, true
 }
 
-// libm_function declares a C library function of doubles, once per module.
 @(private)
 libm_function :: proc(m: ^Module, symbol: string, arity: int) -> Function {
 	if declared, found := m.libm[symbol]; found {

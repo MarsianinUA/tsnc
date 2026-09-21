@@ -44,7 +44,6 @@ init_llvm :: proc "contextless" () {
 	codegen.init_global_options()
 }
 
-// compile_text lowers one source and fails the test if any layer under codegen reported anything.
 compile_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> ir.Program_IR {
 	texts := [?]string{LIB_TEXT, text}
 	count := len(texts)
@@ -106,8 +105,7 @@ compile_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> ir
 	return output
 }
 
-// llvm_text emits the module as text into dist/ and answers it. An empty answer means emit or the
-// read failed, and the test has already been told.
+// llvm_text answers an empty text when emit or the read failed, and the test has already been told.
 llvm_text :: proc(
 	t: ^testing.T,
 	output: ^ir.Program_IR,
@@ -127,7 +125,6 @@ llvm_text :: proc(
 	return string(text)
 }
 
-// expect_text fails with the whole module when a line the test asked for is missing.
 expect_text :: proc(t: ^testing.T, text: string, wants: []string, loc := #caller_location) {
 	for want in wants {
 		testing.expectf(
@@ -146,7 +143,7 @@ at :: proc(offset: i32) -> source.Span {
 	return {file = MAIN, start = offset, end = offset + 1}
 }
 
-// declare_main adds the tsnc_main every program needs, with a body that returns at once.
+// declare_main adds the tsnc_main every program needs.
 declare_main :: proc(p: ^ir.Program_Builder) -> ir.Func_ID {
 	main := ir.declare_func(p, abi.MAIN_SYMBOL, nil, ir.VOID, at(0))
 	f := ir.begin_func(p, main)
@@ -175,8 +172,8 @@ finish_program :: proc(
 	return output
 }
 
-// hello_program is a program whose tsnc_main prints one line through the runtime. It stands in for
-// the hello world stub codegen used to carry, for the tests that link and run a real executable.
+// hello_program stands in for the hello world stub codegen used to carry, for the tests that link
+// and run a real executable.
 hello_program :: proc(text: string) -> ir.Program_IR {
 	p := ir.make_builder(context.temp_allocator)
 	line := ir.intern_string(&p, text)

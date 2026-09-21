@@ -44,18 +44,16 @@ import "../program"
 import "../source"
 import "../target"
 
-// OBJECT_SUFFIX names the intermediate object file of an executable build. It is `.obj` on every
-// platform, the spelling target.SPECS already gives the runtime object, because the system C
-// compiler reads a file's role from its extension on Linux and macOS and link hands it a `.obj`
-// there on every smoke run.
+// OBJECT_SUFFIX is `.obj` on every platform, the spelling target.SPECS already gives the runtime
+// object, because the system C compiler reads a file's role from its extension on Linux and macOS
+// and link hands it a `.obj` there on every smoke run.
 @(private = "file")
 OBJECT_SUFFIX :: ".obj"
 
-// build runs the pipeline and writes one artifact. It answers everything it learned; main prints
-// the diagnostics and turns the answer into an exit code. Three endings are possible: an error,
-// which stopped the build before it could say anything about the program; a report with
-// diagnostics and an empty output, which is a program that does not compile; and a report with an
-// output, which is the artifact on disk.
+// build answers everything it learned; main prints the diagnostics and turns the answer into an
+// exit code. Three endings are possible: an error, which stopped the build before it could say
+// anything about the program; a report with diagnostics and an empty output, which is a program
+// that does not compile; and a report with an output, which is the artifact on disk.
 @(require_results)
 build :: proc(
 	options: Options,
@@ -147,10 +145,9 @@ build :: proc(
 	return report, {}
 }
 
-// run starts the program the build wrote, with the compiler's own standard streams, and waits for
-// it. The program's exit code is what run answers, so `tsnc run` is as transparent as node: a
-// program that exits with 3 makes tsnc exit with 3. A program that crashed comes back as whatever
-// the OS reported, the same number tests/runner/smoke.odin prints.
+// run answers the program's exit code, so `tsnc run` is as transparent as node: a program that
+// exits with 3 makes tsnc exit with 3. A program that crashed comes back as whatever the OS
+// reported, the same number tests/runner/smoke.odin prints.
 @(require_results)
 run :: proc(report: Build_Report) -> (code: int, err: Driver_Error) {
 	ensure(report.output != "", "run needs the artifact of a build that wrote one")
@@ -180,7 +177,6 @@ run :: proc(report: Build_Report) -> (code: int, err: Driver_Error) {
 	return state.exit_code, {}
 }
 
-// artifact_of reads the command line into the one artifact the build will write.
 @(private = "file")
 artifact_of :: proc(options: Options) -> (artifact: Artifact, err: Driver_Error) {
 	switch {
@@ -204,9 +200,9 @@ artifact_of :: proc(options: Options) -> (artifact: Artifact, err: Driver_Error)
 	return artifact, {}
 }
 
-// output_path answers where the artifact goes. -out: is taken exactly as it was written; without it
-// the name comes from the entry file, in the current directory, the way `odin build x.odin -file`
-// leaves x.exe where it was started.
+// output_path takes -out: exactly as it was written; without it the name comes from the entry
+// file, in the current directory, the way `odin build x.odin -file` leaves x.exe where it was
+// started.
 @(private = "file")
 output_path :: proc(
 	options: Options,
@@ -242,11 +238,10 @@ output_path :: proc(
 	return path, {}
 }
 
-// source_at answers the source file of the program that already lives at path, if one does. -out:
-// is taken as written, and a compiler that writes over its own input destroys it, as gcc and rustc
-// refuse to. The file system decides rather than the spelling, so another case, a `..` or a link
-// still names the file, and an imported module counts as much as the entry file. The lib is
-// embedded and has no file.
+// source_at guards the sources: -out: is taken as written, and a compiler that writes over its own
+// input destroys it, as gcc and rustc refuse to. The file system decides rather than the spelling,
+// so another case, a `..` or a link still names the file, and an imported module counts as much as
+// the entry file. The lib is embedded and has no file.
 @(private = "file")
 source_at :: proc(path: string, files: []source.File) -> (source_path: string, found: bool) {
 	output, exists := identity_of(path)
@@ -264,16 +259,15 @@ source_at :: proc(path: string, files: []source.File) -> (source_path: string, f
 	return "", false
 }
 
-// File_Identity is what the file system calls a file: the volume and the file's number on it.
 @(private = "file")
 File_Identity :: struct {
 	device: u64,
 	inode:  u128,
 }
 
-// identity_of reads the identity of a file through a handle. os.stat by name will not do on
-// Windows: it records the full path as spelled and no file number, and os.same_file compares that
-// path, so `MAIN.TS` and `main.ts` would be two files there.
+// identity_of goes through a handle because os.stat by name will not do on Windows: it records the
+// full path as spelled and no file number, and os.same_file compares that path, so `MAIN.TS` and
+// `main.ts` would be two files there.
 @(private = "file")
 identity_of :: proc(path: string) -> (identity: File_Identity, ok: bool) {
 	file, open_err := os.open(path)
@@ -311,8 +305,8 @@ RENAME_ATTEMPTS :: 10
 @(private = "file")
 RENAME_PAUSE :: 10 * time.Millisecond
 
-// rename_into_place moves the finished artifact over whatever stood at the path. This move is what
-// makes a build atomic: it replaces the file whole or leaves it exactly as it was.
+// rename_into_place is what makes a build atomic: the move replaces the file whole or leaves it
+// exactly as it was.
 @(private = "file")
 rename_into_place :: proc(paths: Paths) -> os.Error {
 	err := os.rename(paths.temporary, paths.output)
@@ -326,8 +320,8 @@ rename_into_place :: proc(paths: Paths) -> os.Error {
 	return err
 }
 
-// Paths is where an artifact is written and what it is going to be called. A failure names the
-// output: the other two are names the user never asked for and would only have to decipher.
+// Paths carries the output beside the temporary names because a failure names the output: the
+// other two are names the user never asked for and would only have to decipher.
 @(private = "file")
 Paths :: struct {
 	directory: string, // the temporary directory, beside the output
@@ -343,9 +337,8 @@ Paths :: struct {
 @(private = "file")
 LINKED_NAME :: "a.out"
 
-// artifact_paths names the directory an artifact is written in and the file inside it. The
-// directory carries the process id, so that two compilers writing beside one output cannot take
-// each other's files.
+// artifact_paths puts the process id into the directory name, so that two compilers writing beside
+// one output cannot take each other's files.
 @(private = "file")
 artifact_paths :: proc(output: string, allocator: runtime.Allocator) -> Paths {
 	directory := fmt.aprintf("%s.%d.tmp", output, os.get_pid(), allocator = allocator)
@@ -353,8 +346,8 @@ artifact_paths :: proc(output: string, allocator: runtime.Allocator) -> Paths {
 	return {directory = directory, temporary = temporary, output = output}
 }
 
-// write_dump writes the tsnc IR of -emit-ir. The dump is a line per instruction and each line is a
-// handful of small writes, so it goes out through a buffered writer.
+// write_dump goes through a buffered writer: the dump is a line per instruction and each line is a
+// handful of small writes.
 @(private = "file")
 write_dump :: proc(
 	paths: Paths,
@@ -384,9 +377,8 @@ write_dump :: proc(
 	return {}
 }
 
-// run_codegen writes what codegen makes of the program: an object file on the way to an executable,
-// or the textual LLVM IR of -emit-llvm. codegen explains an LLVM failure through context.logger,
-// and this sentence is what reaches a user who installed no logger.
+// run_codegen names the failure in the detail, because codegen explains an LLVM failure through
+// context.logger and the detail is all that reaches a user who installed no logger.
 @(private = "file")
 run_codegen :: proc(
 	p: ^ir.Program_IR,
@@ -416,8 +408,6 @@ run_codegen :: proc(
 	return {.Codegen_Failed, fmt.aprintf("%v", err, allocator = allocator)}
 }
 
-// build_executable makes the program: an object file from codegen, then the linker over it and the
-// runtime object.
 @(private = "file")
 build_executable :: proc(
 	p: ^ir.Program_IR,
@@ -446,8 +436,8 @@ build_executable :: proc(
 	return {}
 }
 
-// link_failure_text turns what link answered into a sentence. Each kind gets one, because a user
-// reading `tsnc build` has no reason to know the names of link's own enum.
+// link_failure_text gives each kind a sentence, because a user reading `tsnc build` has no reason
+// to know the names of link's own enum.
 @(private = "file")
 link_failure_text :: proc(err: link.Link_Error, allocator: runtime.Allocator) -> string {
 	switch err.kind {
@@ -467,9 +457,9 @@ link_failure_text :: proc(err: link.Link_Error, allocator: runtime.Allocator) ->
 	return ""
 }
 
-// violations_text renders everything the verifier found. A violation is a bug in the compiler
-// rather than a mistake in the program, so it has no diagnostic code and no place in the sorted
-// list; it goes out as the detail of one error, a line per violation.
+// violations_text exists because a violation is a bug in the compiler rather than a mistake in the
+// program: it has no diagnostic code and no place in the sorted list, so it goes out as the detail
+// of one error, a line per violation.
 @(private = "file")
 violations_text :: proc(
 	files: []source.File,
@@ -486,16 +476,14 @@ violations_text :: proc(
 	return strings.to_string(text)
 }
 
-// reason_text is how a failure of the file system prints: the path, then why, the shape
-// Entry_Unreadable already uses. failure_text may answer out of a buffer the C library reuses, so
-// the text is copied here.
+// reason_text follows the shape Entry_Unreadable already uses: the path, then why. failure_text may
+// answer out of a buffer the C library reuses, so the text is copied here.
 @(private = "file")
 reason_text :: proc(path: string, err: os.Error, allocator: runtime.Allocator) -> string {
 	return strings.concatenate({path, ": ", failure_text(path, err)}, allocator)
 }
 
-// remove_directory drops the temporary directory and whatever is still in it: the object file, and
-// the artifact when the build failed. The build is already going one way or the other, and a
+// remove_directory ignores a failure: the build is already going one way or the other, and a
 // temporary that could not be removed is not worth a second message.
 @(private = "file")
 remove_directory :: proc(path: string) {

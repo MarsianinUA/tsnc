@@ -182,7 +182,6 @@ NAN :: f64(0h7FF8_0000_0000_0000)
 INFINITY :: f64(0h7FF0_0000_0000_0000)
 NEG_INFINITY :: f64(0hFFF0_0000_0000_0000)
 
-// lib_strategy answers the row for a name, or false when the lib declares no such thing.
 lib_strategy :: proc(owner: Owner, root, member: string) -> (Strategy, bool) {
 	for entry in LIB_STRATEGIES {
 		if entry.owner == owner && entry.root == root && entry.member == member {

@@ -16,13 +16,13 @@ and records what it settled on in Typed_File.node_signatures, so lower reads the
 working it out again.
 */
 
-// Subst is what a call has worked out about the type variables of the signature it chose.
+// Subst maps a type variable of the signature a call chose to what the call worked out for it.
 @(private)
 Subst :: map[Type_ID]Type_ID
 
-// substitute is a type with every type variable the call has bound replaced by what it stands for.
-// A variable nothing has bound is left alone, which is how what one argument settled survives into
-// the next. A signature loses the type parameters that were bound, because it is no longer generic.
+// substitute leaves a variable nothing has bound alone, which is how what one argument settled
+// survives into the next. A signature loses the type parameters that were bound, because it is no
+// longer generic.
 @(private)
 substitute :: proc(c: ^Checker, type: Type_ID, subst: Subst) -> Type_ID {
 	if len(subst) == 0 {
@@ -82,9 +82,8 @@ substitute :: proc(c: ^Checker, type: Type_ID, subst: Subst) -> Type_ID {
 	return type
 }
 
-// unify binds the type variables of a parameter to whatever the argument put in their place. It is a
-// plain walk down the two types together: a free variable takes the argument, and everything else
-// only has to line up for the walk to go on, because fits is what judges the argument afterwards.
+// unify never reports a mismatch: a free variable takes the argument, and everything else only has
+// to line up for the walk to go on, because fits is what judges the argument afterwards.
 //
 // A variable takes the widened argument type, as tsc does: `reduce(f, 0)` works `U` out as `number`
 // and not as the literal type `0`, which the callback would then be unable to return.
@@ -126,13 +125,11 @@ unify :: proc(c: ^Checker, param, argument: Type_ID, subst: ^Subst) {
 	}
 }
 
-// check_signature_call checks the arguments of a call against one signature and works out its type
-// variables while it is there.
-//
-// The arguments that already carry a type go first, so `reduce(f, 0)` knows `U` from the initial
-// value before it reads the arrow. The arrows whose parameters have no annotation go second: by then
-// every parameter type the call can work out is known, so the arrow gets its parameters, and what
-// its body gives binds whatever is still free. That is how `map<U>` reads `U` out of `x => x * 2`.
+// check_signature_call reads the arguments that already carry a type first, so `reduce(f, 0)` knows
+// `U` from the initial value before it reads the arrow. The arrows whose parameters have no
+// annotation go second: by then every parameter type the call can work out is known, so the arrow
+// gets its parameters, and what its body gives binds whatever is still free. That is how `map<U>`
+// reads `U` out of `x => x * 2`.
 @(private)
 check_signature_call :: proc(
 	c: ^Checker,
@@ -176,7 +173,6 @@ check_signature_call :: proc(
 	return c.table.types[instantiated].(Function).result
 }
 
-// is_open_arrow reports whether an argument is an arrow still waiting for its parameter types.
 @(private)
 is_open_arrow :: proc(c: ^Checker, id: ast.Node_ID) -> bool {
 	arrow, is_arrow := c.at.tree.nodes[id].variant.(ast.Arrow)

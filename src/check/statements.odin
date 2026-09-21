@@ -3,7 +3,6 @@ package check
 import "../ast"
 import "../bind"
 
-// check_statements types a list of statements in source order.
 @(private)
 check_statements :: proc(c: ^Checker, statements: []ast.Node_ID) {
 	for id in statements {
@@ -11,9 +10,9 @@ check_statements :: proc(c: ^Checker, statements: []ast.Node_ID) {
 	}
 }
 
-// check_statement types one statement. A statement slot may hold an expression instead — the header
-// of a `for` is written either way — so anything this does not name goes to check_expression, which
-// is the exhaustive switch over the shapes of ast.
+// check_statement sends anything it does not name to check_expression, which is the exhaustive
+// switch over the shapes of ast: a statement slot may hold an expression instead, since the header
+// of a `for` is written either way.
 //
 // A declaration is typed through its symbol rather than here, so that a name used above its
 // declaration, a name used below it and a name never used at all all get the work done exactly
@@ -93,7 +92,6 @@ check_statement :: proc(c: ^Checker, id: ast.Node_ID) {
 	}
 }
 
-// check_declarator types one `let` or `const` binding through its symbol.
 @(private)
 check_declarator :: proc(c: ^Checker, id: ast.Node_ID) {
 	symbol := c.at.bound.node_symbols[id]
@@ -118,9 +116,8 @@ check_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	type_of_symbol(c, {file = c.at.file, symbol = symbol})
 }
 
-// check_type_declaration types an `interface` or a `type` alias that a statement reached. A generic
-// one is read only where it is used, with its arguments in force: on its own there is nothing to put
-// in place of its type parameters.
+// check_type_declaration skips a generic declaration, which is read only where it is used, with its
+// arguments in force: on its own there is nothing to put in place of its type parameters.
 @(private)
 check_type_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	symbol := c.at.bound.node_symbols[id]
@@ -142,9 +139,9 @@ check_type_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	named_type(c, {file = c.at.file, symbol = symbol}, nil, c.at.bound.symbols[symbol].name)
 }
 
-// for_of_element is what one turn of a `for...of` gives its variable. Requirements 2.2 loops over an
-// array and over a string, and the lib file declares no iterator, so check knows the two by itself,
-// exactly as check_index knows that `a[i]` is an element and `s[i]` a string.
+// for_of_element knows an array and a string by itself, exactly as check_index knows that `a[i]` is
+// an element and `s[i]` a string: requirements 2.2 loops over the two, and the lib file declares no
+// iterator.
 //
 // A union is refused rather than taken apart: requirements 3.4 keeps a union as a tagged value, so
 // `number[] | string[]` would need a tag test on every turn of the loop. Narrowing the value first is
@@ -164,9 +161,8 @@ for_of_element :: proc(c: ^Checker, iterable: ast.Node_ID, type: Type_ID) -> Typ
 	return ERROR
 }
 
-// for_of_variable gives the loop variable of a `for...of` the element type of the iterable. It must
-// not go through the usual path, which would see a `let` with neither an annotation nor an
-// initializer and ask for one: the `of` is where the type comes from.
+// for_of_variable must not go through the usual path, which would see a `let` with neither an
+// annotation nor an initializer and ask for one: the `of` is where the type comes from.
 @(private)
 for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID, element: Type_ID) {
 	if declaration == ast.NO_NODE {
@@ -184,8 +180,7 @@ for_of_variable :: proc(c: ^Checker, declaration: ast.Node_ID, element: Type_ID)
 	}
 }
 
-// check_return checks a `return` against the declared result, or records what it gives so that the
-// result can be worked out from all of them together. A bare `return` leaves VOID as a marker:
+// check_return leaves VOID as the marker of a bare `return` while a result is being inferred:
 // inferred_result reads it as `void` where every `return` is bare, which is what tsc infers for a
 // body that returns no value at all, and as `undefined` where one of them does return a value.
 //

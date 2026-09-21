@@ -11,8 +11,8 @@ import "driver"
 // never mix with the output of a program under `tsnc run`, and only main prints at all: a phase
 // answers with data and driver answers with a report.
 
-// print_diagnostics writes the diagnostics to stderr through one buffered writer, since rendering
-// each of them is a dozen small writes.
+// print_diagnostics goes through one buffered writer, since rendering each diagnostic is a dozen
+// small writes.
 print_diagnostics :: proc(report: driver.Check_Report) {
 	buf: [4096]byte
 	stderr: bufio.Writer
@@ -26,10 +26,9 @@ print_diagnostics :: proc(report: driver.Check_Report) {
 	_ = bufio.writer_flush(&stderr)
 }
 
-// error_text is the one message a failure that has no place in the source prints as. A failure a
-// user can act on carries the next step on a hint line, the shape diag.render already gives a
-// diagnostic. The switch has no default, so an error kind added to driver fails the build here
-// until it has a sentence.
+// error_text gives a failure a user can act on its next step on a hint line, the shape diag.render
+// already gives a diagnostic. The switch has no default, so an error kind added to driver fails the
+// build here until it has a sentence.
 error_text :: proc(err: driver.Driver_Error) -> string {
 	switch err.kind {
 	case .None:

@@ -56,9 +56,8 @@ check_signature_type_params :: proc(c: ^Checker, type_params: []ast.Node_ID) {
 	report(c, .Generic_Declaration, span_of(c, type_params[0]))
 }
 
-// check_member_name reports a member name that names the prototype chain, and answers whether the
-// member may be used at all. Requirements 2.2 never supports prototypes: an object of tsnc is its
-// fields and nothing behind them.
+// check_member_name rejects the names of the prototype chain. Requirements 2.2 never supports
+// prototypes: an object of tsnc is its fields and nothing behind them.
 @(private)
 check_member_name :: proc(c: ^Checker, name: ast.Name) -> (allowed: bool) {
 	switch name.text {
@@ -69,8 +68,8 @@ check_member_name :: proc(c: ^Checker, name: ast.Name) -> (allowed: bool) {
 	return true
 }
 
-// report_unknown_name is what a name nothing declares gets. `Symbol` is one of those names on
-// purpose, so it reads as a rule of the subset rather than as a name the reader forgot to import.
+// report_unknown_name gives `Symbol` a code of its own, so that it reads as a rule of the subset
+// rather than as a name the reader forgot to import.
 @(private)
 report_unknown_name :: proc(c: ^Checker, name: string, span: source.Span) {
 	if name == "Symbol" {

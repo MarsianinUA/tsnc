@@ -51,14 +51,14 @@ import "../source"
 // ENTRY is the file the program starts from: driver puts the lib in first, then the input file.
 ENTRY :: source.File_ID(1)
 
-// Decl_Key names a declaration anywhere in the program: the node is dense within its file.
+// Decl_Key carries the file because an ast.Node_ID is dense only within its file.
 Decl_Key :: struct {
 	file: source.File_ID,
 	node: ast.Node_ID,
 }
 
-// Facts is where the typing of one file lives. Both fields are nil for the lib, which no partition
-// contains, and for a file no checker typed.
+// Facts has both fields nil for the lib, which no partition contains, and for a file no checker
+// typed.
 Facts :: struct {
 	result: ^check.Check_Result,
 	typed:  ^check.Typed_File,
@@ -75,8 +75,8 @@ Lowering :: struct {
 	allocator:   runtime.Allocator,
 }
 
-// lower turns the typed program into IR. It borrows the program and the check results, which must
-// outlive the answer, and reports every construct of the v1 language this build cannot compile yet.
+// lower borrows the program and the check results, which must outlive the answer, and reports every
+// construct of the v1 language this build cannot compile yet.
 @(require_results)
 lower :: proc(
 	prog: ^program.Program,
@@ -133,8 +133,8 @@ lower :: proc(
 	return ir.finish(&low.builder, main, inits), low.diagnostics[:]
 }
 
-// report adds a diagnostic. A construct the slice does not build yet is reported once, where it
-// stands; what depends on it answers a poison value and says nothing more.
+// report is called once for a construct the slice does not build yet, where it stands; what depends
+// on it answers a poison value and says nothing more.
 report :: proc(low: ^Lowering, code: diag.Code, span: source.Span, args: ..string) {
 	d := diag.Diagnostic {
 		code = code,
@@ -160,8 +160,8 @@ index_facts :: proc(low: ^Lowering, results: []check.Check_Result) {
 	}
 }
 
-// mark_reachable walks the value imports from the entry file. An `import type` edge is erased
-// before the program runs, so a module only it reaches never loads and never initializes.
+// mark_reachable skips an `import type` edge: it is erased before the program runs, so a module
+// only it reaches never loads and never initializes.
 @(private)
 mark_reachable :: proc(low: ^Lowering) {
 	queue := make([dynamic]source.File_ID, 0, len(low.prog.files), context.temp_allocator)
@@ -196,9 +196,8 @@ module_span :: proc(low: ^Lowering, file: source.File_ID) -> source.Span {
 	return low.prog.trees[file].nodes[ast.ROOT].span
 }
 
-// function_decls lists every function declaration of a file, the ones nested inside another
-// function included. Declaring them all before any body is built is what lets two of them call
-// each other.
+// function_decls includes the declarations nested inside another function. Declaring them all
+// before any body is built is what lets two of them call each other.
 @(private)
 function_decls :: proc(tree: ^ast.File_AST) -> []ast.Node_ID {
 	out := make([dynamic]ast.Node_ID, 0, 16, context.temp_allocator)
@@ -212,9 +211,8 @@ function_decls :: proc(tree: ^ast.File_AST) -> []ast.Node_ID {
 	return out[:]
 }
 
-// declare_functions reserves an IR function for every function declaration of the module, nested
-// ones included. A declaration whose body captures a variable, or whose signature this slice cannot
-// represent, is reported and left out; a call to it then finds nothing and stays quiet.
+// declare_functions reports and leaves out a declaration whose body captures a variable, or whose
+// signature this slice cannot represent; a call to it then finds nothing and stays quiet.
 @(private)
 declare_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
@@ -304,8 +302,8 @@ function_name :: proc(
 	return fmt.aprintf("m%d.%s$%d", file, decl.name.text, id, allocator = low.allocator)
 }
 
-// declare_globals gives every module-level binding a cell of the program. The module scope lists
-// its symbols in source order, so the globals of a program are numbered the same way on every run.
+// declare_globals numbers the globals of a program the same way on every run, because the module
+// scope lists its symbols in source order.
 @(private)
 declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
@@ -330,7 +328,6 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 	}
 }
 
-// build_main is the entry point: the module init functions in order, and nothing else.
 @(private)
 build_main :: proc(low: ^Lowering, main: ir.Func_ID, inits: []ir.Func_ID) {
 	span := module_span(low, ENTRY)

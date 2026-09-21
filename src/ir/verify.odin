@@ -24,7 +24,6 @@ statements that follow a return land somewhere. Its instructions are still check
 types; only the dominance question is skipped there, because it has no answer.
 */
 
-// Violation_Kind names one way a Program_IR breaks its contract.
 Violation_Kind :: enum u8 {
 	Missing_Body, // a function that was declared and never built
 	Missing_Terminator, // a block that is empty or does not end in a terminator
@@ -43,8 +42,8 @@ Violation_Kind :: enum u8 {
 	Entry_Signature, // an entry point that does not take nothing and return void
 }
 
-// Violation is one finding. block is NO_BLOCK and value is NO_VALUE when nothing smaller than the
-// function is at fault, as for an entry point with the wrong signature.
+// Violation has block NO_BLOCK and value NO_VALUE when nothing smaller than the function is at
+// fault, as for an entry point with the wrong signature.
 Violation :: struct {
 	kind:  Violation_Kind,
 	func:  Func_ID,
@@ -70,9 +69,8 @@ verify :: proc(p: Program_IR, allocator := context.allocator) -> []Violation {
 	return c.found[:]
 }
 
-// Checker holds the program, the findings, and the tables of the one function being checked. The
-// last three fields are where a violation found below is reported: an instruction check names no
-// place of its own, so the walk sets the place before it runs the check.
+// Checker keeps in func, block and value the place a violation found below is reported at: an
+// instruction check names no place of its own, so the walk sets the place before it runs the check.
 @(private)
 Checker :: struct {
 	program:  Program_IR,
@@ -350,8 +348,8 @@ dominates :: proc(c: ^Checker, head, block: Block_ID) -> bool {
 	}
 }
 
-// verify_instruction checks one instruction against the closed set. It is the same exhaustive
-// switch codegen is: a variant added to the union without a case here fails the build.
+// verify_instruction is the same exhaustive switch codegen is: a variant added to the union without
+// a case here fails the build.
 @(private)
 verify_instruction :: proc(c: ^Checker) {
 	instruction := c.body.values[c.value]
@@ -595,8 +593,8 @@ verify_instruction :: proc(c: ^Checker) {
 	}
 }
 
-// verify_edge checks one edge of a phi. The value has to be there at the end of the block the edge
-// names, which is the block control came through, rather than before the phi itself.
+// verify_edge wants the value to be there at the end of the block the edge names, which is the
+// block control came through, rather than before the phi itself.
 @(private)
 verify_edge :: proc(c: ^Checker, edge: Incoming, want: Type) {
 	if int(edge.block) >= len(c.body.blocks) {
@@ -833,9 +831,8 @@ layout_of :: proc(c: ^Checker, id: Layout_ID) -> (table: abi.Type_Table, known: 
 	return c.program.layouts[id], true
 }
 
-// slot_fits says whether a value of this type can be written into a slot of this kind. A Ref slot
-// takes a reference to any layout: abi.Field carries a slot kind and not a table of its own, so the
-// layout behind a traced slot is not knowable here.
+// slot_fits lets a Ref slot take a reference to any layout: abi.Field carries a slot kind and not a
+// table of its own, so the layout behind a traced slot is not knowable here.
 @(private)
 slot_fits :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	switch kind {
@@ -864,8 +861,7 @@ is_reference :: proc(type: Type) -> bool {
 	return type.kind == .Str || type.kind == .Ref || type.kind == .Closure
 }
 
-// c_type_fits says whether a value of this IR type suits a parameter or result the runtime declares
-// as this C type. A Ptr takes any reference, because an export names no layout of its own.
+// c_type_fits lets a Ptr take any reference, because an export names no layout of its own.
 @(private)
 c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 	switch kind {

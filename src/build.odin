@@ -4,10 +4,8 @@ import "core:fmt"
 
 import "driver"
 
-// build runs `tsnc build` and answers with the process exit code: 0 once the artifact is on disk,
-// 1 for a program that does not compile and for every failure that stopped the build before it
-// could say anything about the program. A build that failed wrote nothing, so whatever stood at
-// the output path before is still there.
+// build answers the process exit code of `tsnc build`. A build that failed wrote nothing, so
+// whatever stood at the output path before is still there.
 build :: proc(options: driver.Options) -> int {
 	report, err := driver.build(options)
 	defer driver.destroy(&report.check)

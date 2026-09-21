@@ -9,14 +9,14 @@ import "../../src/driver"
 import "../../src/source"
 import "../../src/target"
 
-// PROJECTS is where the fixture programs live, found from this file's own location. The older test
-// packages spell their paths relative to the repository root, which ties them to the directory the
-// runner was started from; these tests read real files, so they ask the compiler instead.
+// PROJECTS is found from this file's own location. The older test packages spell their paths
+// relative to the repository root, which ties them to the directory the runner was started from;
+// these tests read real files, so they ask the compiler instead.
 PROJECTS :: #directory + "projects/"
 
-// Error is a diagnostic the way a user reads it: which file it is in, its code, and the 1-based
-// line and column where it starts. The file is the name alone, since the directory the fixtures
-// happen to sit in is not part of what the test is about.
+// Error is a diagnostic the way a user reads it, with a 1-based line and column. The file is the
+// name alone, since the directory the fixtures happen to sit in is not part of what the test is
+// about.
 Error :: struct {
 	file:   string,
 	code:   diag.Code,
@@ -30,8 +30,7 @@ Checked :: struct {
 	errors: []Error, // in print order, the order main prints them in
 }
 
-// Built is what a build answered. Its report holds a Check_Report, so the same errors_of serves
-// both kinds of test.
+// Built holds a Check_Report inside its report, so the same errors_of serves both kinds of test.
 Built :: struct {
 	report: driver.Build_Report,
 	err:    driver.Driver_Error,
@@ -43,8 +42,7 @@ Built :: struct {
 // fails, so a fresh clone gets the fix rather than a missing file.
 RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
-// check_project runs `tsnc check` over one fixture program, the way main does. The caller owns the
-// result and must call driver.destroy on its report.
+// check_project leaves the result to the caller, who must call driver.destroy on its report.
 //
 // Only input is filled in: check_only reads nothing else out of Options, and the fields that carry
 // a target or a thread count first mean something in T4.5 and T6.1.
@@ -78,14 +76,13 @@ build_options :: proc(project, entry, output: string) -> driver.Options {
 	}
 }
 
-// build_project runs one build the way main does. The caller owns the result and must call
-// driver.destroy on the report inside it.
+// build_project leaves the result to the caller, who must call driver.destroy on the Check_Report
+// inside it.
 build_project :: proc(options: driver.Options) -> Built {
 	report, err := driver.build(options)
 	return {report = report, err = err, errors = errors_of(report.check)}
 }
 
-// expect_built checks a build that must have written its artifact and said nothing.
 expect_built :: proc(t: ^testing.T, b: Built, loc := #caller_location) -> bool {
 	no_error := testing.expectf(
 		t,
@@ -101,7 +98,6 @@ expect_built :: proc(t: ^testing.T, b: Built, loc := #caller_location) -> bool {
 	return no_error && no_diagnostics && wrote
 }
 
-// expect_clean checks a program that must produce no diagnostic at all.
 expect_clean :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 	testing.expectf(
 		t,
@@ -114,7 +110,7 @@ expect_clean :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 	testing.expectf(t, len(c.errors) == 0, "errors %v", c.errors, loc = loc)
 }
 
-// file_names lists the files of the program in File_ID order, by name.
+// file_names answers in File_ID order.
 file_names :: proc(c: Checked) -> []string {
 	names := make([]string, len(c.report.program.files), context.temp_allocator)
 	for file, i in c.report.program.files {
@@ -123,12 +119,10 @@ file_names :: proc(c: Checked) -> []string {
 	return names
 }
 
-// init_names lists the modules in the order their top-level code runs, by name.
 init_names :: proc(c: Checked) -> []string {
 	return names_of(c, c.report.program.init_order)
 }
 
-// cycle_names lists the modules of one ring the program found, by name.
 cycle_names :: proc(c: Checked, cycle: int) -> []string {
 	return names_of(c, c.report.program.cycles[cycle].modules)
 }

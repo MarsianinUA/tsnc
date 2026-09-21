@@ -72,7 +72,6 @@ Command :: enum {
 	check,
 }
 
-// Options is what main parses the command line into and the only thing driver takes from it.
 Options :: struct {
 	command:      Command `args:"pos=0,required" usage:"build, run or check"`,
 	input:        string `args:"pos=1,required" usage:"entry .ts file"`,
@@ -112,15 +111,14 @@ Error_Kind :: enum u8 {
 	Program_Unrunnable, // detail: the path, then why
 }
 
-// Driver_Error is a failure that stops the build before it starts. A failure with a place in the
-// source is a diag.Diagnostic instead.
+// Driver_Error is a failure with no place in the source. One that has a place is a diag.Diagnostic
+// instead.
 Driver_Error :: struct {
 	kind:   Error_Kind,
 	detail: string, // owned by the report's memory; empty for None
 }
 
-// Check_Report is the frozen result of check_only. It outlives nothing: destroy invalidates the
-// whole program at once.
+// Check_Report outlives nothing: destroy invalidates the whole program at once.
 Check_Report :: struct {
 	// Files, trees, names and the module graph, all indexed by File_ID with the lib at zero. It is
 	// empty when err says the build never started.
@@ -132,19 +130,17 @@ Check_Report :: struct {
 	memory:      ^Build_Memory, // owns the arenas the program lives in
 }
 
-// Build_Report is what a build answers: everything check learned, plus what was written and where.
-// It holds a Check_Report rather than replacing it, so that destroy keeps owning every arena in one
-// place and main renders the diagnostics of all three commands the same way.
+// Build_Report holds a Check_Report rather than replacing it, so that destroy keeps owning every
+// arena in one place and main renders the diagnostics of all three commands the same way.
 Build_Report :: struct {
 	check:    Check_Report,
 	artifact: Artifact,
-	output:   string, // the path written; empty when the build stopped before it wrote anything
+	output:   string, // empty when the build stopped before it wrote anything
 }
 
-// Build_Memory holds every arena of one build. Only driver touches it; a caller passes it back to
-// destroy. It is heap-allocated because an arena must not move: virtual.arena_allocator captures
-// the arena by pointer, so a copied or reallocated arena leaves its allocator pointing at the old
-// address.
+// Build_Memory is touched by driver alone; a caller passes it back to destroy. It is heap-allocated
+// because an arena must not move: virtual.arena_allocator captures the arena by pointer, so a
+// copied or reallocated arena leaves its allocator pointing at the old address.
 Build_Memory :: struct {
 	arena:     virtual.Arena, // the file table, the paths, the file texts, the merged diagnostics
 	lowering:  virtual.Arena, // the IR and lower's diagnostics; empty until build reaches lower
@@ -153,9 +149,8 @@ Build_Memory :: struct {
 	allocator: runtime.Allocator, // where the struct above came from, for destroy
 }
 
-// check_only reads the entry file, follows its imports, and parses and binds every file it finds.
-// It reports every error it can rather than stopping at the first: a file that fails to parse
-// still gets bound, and a module that cannot be found does not end the walk.
+// check_only reports every error it can rather than stopping at the first: a file that fails to
+// parse still gets bound, and a module that cannot be found does not end the walk.
 @(require_results)
 check_only :: proc(
 	options: Options,
@@ -227,15 +222,15 @@ check_only :: proc(
 	return {program = built, results = results, diagnostics = diagnostics, memory = memory}, {}
 }
 
-// has_errors reports whether the program has a mistake in it. Every diagnostic tsnc makes is an
-// error, so one is enough. This is the "go to lower only without errors" policy: build asks it
-// between check and lower, and main turns the same answer into the exit code.
+// has_errors needs only one diagnostic, because every diagnostic tsnc makes is an error. This is
+// the "go to lower only without errors" policy: build asks it between check and lower, and main
+// turns the same answer into the exit code.
 has_errors :: proc(report: Check_Report) -> bool {
 	return len(report.diagnostics) > 0
 }
 
-// destroy releases every arena of the build. Nothing the report points at is valid afterwards,
-// including the text of its diagnostics. Calling it twice is safe.
+// destroy leaves nothing the report points at valid, including the text of its diagnostics. Calling
+// it twice is safe.
 destroy :: proc(report: ^Check_Report) {
 	memory := report.memory
 	if memory == nil {

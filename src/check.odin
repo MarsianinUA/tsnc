@@ -4,9 +4,7 @@ import "core:fmt"
 
 import "driver"
 
-// check runs `tsnc check` and answers with the process exit code: 0 when the program has no
-// errors, 1 when it has any. It writes nothing to stdout, so the diagnostics of a build never mix
-// with the output of a program under `tsnc run`.
+// check answers the process exit code of `tsnc check`.
 check :: proc(options: driver.Options) -> int {
 	report, err := driver.check_only(options)
 	defer driver.destroy(&report)

@@ -25,8 +25,8 @@ prints unit by unit with everything outside printable ASCII as an escape, and no
 replacement character on the way out.
 */
 
-// write_program writes the whole program. files is the file table, indexed by source.File_ID, and
-// is what turns the span of an instruction into a line and a column.
+// write_program takes the file table, indexed by source.File_ID, to turn the span of an instruction
+// into a line and a column.
 write_program :: proc(w: io.Writer, files: []source.File, p: Program_IR) -> io.Error {
 	io.write_string(w, "; tsnc ir\n") or_return
 
@@ -92,7 +92,6 @@ write_program :: proc(w: io.Writer, files: []source.File, p: Program_IR) -> io.E
 	return nil
 }
 
-// write_func writes one function: the signature line, then each block and its instructions.
 write_func :: proc(w: io.Writer, files: []source.File, p: Program_IR, id: Func_ID) -> io.Error {
 	func := p.funcs[id]
 	io.write_string(w, "func ") or_return
@@ -216,8 +215,8 @@ write_instruction :: proc(
 	return nil
 }
 
-// write_variant writes the operation and its operands. It is the same exhaustive switch codegen is:
-// a variant added to the union without a case here fails the build.
+// write_variant is the same exhaustive switch codegen is: a variant added to the union without a
+// case here fails the build.
 @(private)
 write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error {
 	switch v in variant {
@@ -493,9 +492,8 @@ write_position :: proc(w: io.Writer, files: []source.File, span: source.Span) ->
 	return nil
 }
 
-// placed says whether the file table can turn a span into a line and a column. source.position
-// asserts on an offset outside its file, and a dump is read precisely when a layer is broken, so
-// the printer asks first instead of trusting the span.
+// placed is asked first instead of trusting the span: source.position asserts on an offset outside
+// its file, and a dump is read precisely when a layer is broken.
 @(private)
 placed :: proc(files: []source.File, span: source.Span) -> bool {
 	if int(span.file) >= len(files) {

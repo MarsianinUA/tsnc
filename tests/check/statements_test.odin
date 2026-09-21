@@ -21,7 +21,6 @@ a_for_of_takes_its_variable_from_an_array :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(t, use_text(c, "name"), "string")
 
-	// An array of objects gives the object, and the fields are readable through it.
 	c = expect_checked(
 		t,
 		lines(

@@ -110,7 +110,6 @@ is_whitespace :: proc "contextless" (r: rune) -> bool {
 	return false
 }
 
-// digit_width is the length of the run of decimal digits at the front of the text.
 @(private)
 digit_width :: proc "contextless" (text: string) -> int {
 	at := 0

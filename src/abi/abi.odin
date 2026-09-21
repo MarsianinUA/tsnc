@@ -57,14 +57,13 @@ Closure_Cell :: struct {
 	env:          ^Environment_Cell, // nil when the function captures nothing
 }
 
-// Environment_Cell holds the variables a closure captured. The slots follow the header at the
-// offsets its type table gives.
+// Environment_Cell has no fields of its own: the slots of the captured variables follow the header
+// at the offsets its type table gives.
 Environment_Cell :: struct {
 	using header: Cell_Header,
 }
 
-// Tag says what a Tagged value holds. Undefined is the zero value, so zeroed memory reads as
-// undefined.
+// Tag has Undefined as its zero value, so zeroed memory reads as undefined.
 Tag :: enum u64 {
 	Undefined,
 	Null,

@@ -135,8 +135,6 @@ broken_variants_of_a_file_keep_the_tree_whole :: proc(t: ^testing.T) {
 	parse_broken_variants(t, outside_subset)
 }
 
-// parse_broken_variants parses every token prefix of text and every copy of it with one token
-// missing, and checks each tree.
 parse_broken_variants :: proc(t: ^testing.T, text: string, loc := #caller_location) {
 	tokens, _ := parse.tokenize(text, 0, context.temp_allocator)
 	for token in tokens {

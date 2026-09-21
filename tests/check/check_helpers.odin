@@ -13,30 +13,28 @@ import "../../src/parse"
 import "../../src/program"
 import "../../src/source"
 
-// LIB_TEXT is the real lib.d.ts, embedded the way driver embeds it. A stub would drift away from
-// the file the compiler ships, and one of the things these tests have to prove is that the real one
-// types without a single diagnostic.
+// LIB_TEXT is the real lib.d.ts rather than a stub: a stub would drift away from the file the
+// compiler ships, and one of the things these tests have to prove is that the real one types
+// without a single diagnostic.
 //
 // Nothing here goes through driver: driver owns Options, which names an optimization level, so it
 // links codegen and llvm, and these tests would then need LLVM-C.dll on PATH to run at all.
 LIB_TEXT :: #load("../../src/lib/lib.d.ts", string)
 
-// LIB is the lib module, File_ID zero of every program, as program.LIB says.
+// LIB mirrors program.LIB: the lib module is File_ID zero of every program.
 LIB :: source.File_ID(0)
 
 // MAIN is the File_ID of the first source a test passes, the one it usually asks about.
 MAIN :: source.File_ID(1)
 
-// Error is a diagnostic the way a user reads it: its code, and the 1-based line and column where it
-// starts.
+// Error holds the 1-based line and column where a diagnostic starts, the way a user reads them.
 Error :: struct {
 	code:   diag.Code,
 	line:   i32,
 	column: i32,
 }
 
-// File_Error is an Error that also says which file it stands in, which a test over several sources
-// has to say. It is a second shape rather than a field on Error, so that the many tests of one source
+// File_Error is a second shape rather than a field on Error, so that the many tests of one source
 // keep reading as `{.Code, line, column}`.
 File_Error :: struct {
 	file:   source.File_ID,
@@ -49,15 +47,14 @@ Checked :: struct {
 	program:     program.Program,
 	result:      check.Check_Result,
 	diagnostics: []diag.Diagnostic, // check's own, in print order
-	errors:      []Error, // the same, as a test reads them
-	file_errors: []File_Error, // the same again, for a test over several sources
+	errors:      []Error, // the same, one for one
+	file_errors: []File_Error, // the same, one for one
 }
 
-// check_sources parses and binds the lib file as module zero and each source as the next File_ID,
-// builds the program, and checks the files that partition names. A source names another with the
-// path check_sources gave it, `"./m2.ts"` or `"./m2"`, and make_edges resolves both spellings the way
-// driver does. Everything lives in the temp allocator, which the test runner frees before each test,
-// so a test frees nothing.
+// check_sources makes the lib file module zero and each source the next File_ID. A source names
+// another with the path check_sources gave it, `"./m2.ts"` or `"./m2"`, and make_edges resolves
+// both spellings the way driver does. Everything lives in the temp allocator, which the test
+// runner frees before each test, so a test frees nothing.
 check_sources :: proc(
 	t: ^testing.T,
 	sources: []string,
@@ -120,8 +117,8 @@ check_sources :: proc(
 	return checked
 }
 
-// every_source is the partition of a whole program: every file but the lib, which is module zero and
-// is read rather than typed, exactly as driver will pass it in T3.6.
+// every_source is the partition of a whole program: every file but the lib, which is module zero
+// and is read rather than typed, exactly as driver's source_partition passes it.
 every_source :: proc(count: int) -> []source.File_ID {
 	partition := make([]source.File_ID, count, context.temp_allocator)
 	for i in 0 ..< count {
@@ -130,15 +127,13 @@ every_source :: proc(count: int) -> []source.File_ID {
 	return partition
 }
 
-// expect_program checks a program of several sources that has to type without a single diagnostic.
 expect_program :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Checked {
 	c := check_sources(t, sources, every_source(len(sources)), loc)
 	testing.expectf(t, len(c.file_errors) == 0, "%v: %v", sources, c.file_errors, loc = loc)
 	return c
 }
 
-// expect_program_errors checks a program of several sources and compares the diagnostics, in print
-// order, one for one.
+// expect_program_errors wants the diagnostics in print order, one for one.
 expect_program_errors :: proc(
 	t: ^testing.T,
 	sources: []string,
@@ -221,22 +216,21 @@ module_named :: proc(specifier: string, paths: []string) -> (module: source.File
 	return 0, false
 }
 
-// check_text checks one source, with the lib as module zero and outside the partition, which is
-// what a checker over a partition of a real program sees.
+// check_text keeps the lib outside the partition, which is what a checker over a partition of a
+// real program sees.
 check_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Checked {
 	one := [1]string{text}
 	partition := [1]source.File_ID{MAIN}
 	return check_sources(t, one[:], partition[:], loc)
 }
 
-// expect_checked checks a source that has to type without a single diagnostic.
 expect_checked :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Checked {
 	c := check_text(t, text, loc)
 	testing.expectf(t, len(c.errors) == 0, "%q: %v", text, c.errors, loc = loc)
 	return c
 }
 
-// expect_errors checks a source and compares the diagnostics, in print order, one for one.
+// expect_errors wants the diagnostics in print order, one for one.
 expect_errors :: proc(
 	t: ^testing.T,
 	text: string,
@@ -282,7 +276,6 @@ declared_text :: proc(
 	return "<no such name>"
 }
 
-// declared_type_text is what an `interface` or a `type` alias declares, printed.
 declared_type_text :: proc(c: Checked, name: string, file := MAIN) -> string {
 	return declared_text(c, name, file, .Type)
 }
@@ -539,7 +532,6 @@ file_errors_of :: proc(files: []source.File, diagnostics: []diag.Diagnostic) -> 
 	return errors
 }
 
-// lines joins the parts of a multi-line program, so that a test reads the way the source does.
 lines :: proc(parts: ..string) -> string {
 	return strings.join(parts, "\n", context.temp_allocator)
 }

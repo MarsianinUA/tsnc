@@ -136,7 +136,6 @@ children_come_in_source_order :: proc(t: ^testing.T) {
 	expect_children(t, ast.Template{parts = {"a", "b", "c"}, expressions = {2, 1}}, {2, 1})
 }
 
-// visit_order returns the IDs that walk visits from root.
 visit_order :: proc(nodes: []ast.Node, root: ast.Node_ID) -> [dynamic]ast.Node_ID {
 	stack: [dynamic]ast.Node_ID
 	defer delete(stack)

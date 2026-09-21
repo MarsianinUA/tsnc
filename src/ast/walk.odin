@@ -2,8 +2,8 @@ package ast
 
 import "core:slice"
 
-// append_children appends the IDs of the direct children of node to out, in source order, and
-// skips absent ones (NO_NODE). Names and literal values are not nodes, so they are not children.
+// append_children appends in source order and skips absent children (NO_NODE). Names and literal
+// values are not nodes, so they are not children.
 //
 // This is the one place that knows which fields hold children. A phase that walks the tree with its
 // own recursion, such as bind with its scopes, handles the kinds it cares about and calls this for
@@ -145,8 +145,7 @@ walk :: proc(nodes: []Node, stack: ^[dynamic]Node_ID) -> (id: Node_ID, ok: bool)
 	return id, true
 }
 
-// append_present appends the IDs that are not NO_NODE. A list field never holds NO_NODE, so only
-// single child fields go through here.
+// append_present takes only single child fields: a list field never holds NO_NODE.
 @(private)
 append_present :: proc(out: ^[dynamic]Node_ID, ids: ..Node_ID) {
 	for id in ids {

@@ -3,9 +3,8 @@ package ir
 import "../abi"
 import "../source"
 
-// Instruction is one step of a function. Every one carries the span it came from: a failure of the
-// runtime names a place in the source, the dump of -emit-ir points at one, and v2 builds debug
-// information out of them.
+// Instruction carries the span it came from: a failure of the runtime names a place in the source,
+// the dump of -emit-ir points at one, and v2 builds debug information out of them.
 Instruction :: struct {
 	span:    source.Span,
 	type:    Type, // VOID when the instruction defines no value
@@ -111,9 +110,8 @@ Compare :: struct {
 	right: Value_ID,
 }
 
-// Phi is the value a block receives from whichever predecessor control came through. It stands
-// before every other instruction of its block. Build it with phi and phi_incoming: a loop header
-// learns its back edge only once the body is built.
+// Phi stands before every other instruction of its block. Build it with phi and phi_incoming: a
+// loop header learns its back edge only once the body is built.
 Phi :: struct {
 	incoming: []Incoming,
 }
@@ -212,7 +210,6 @@ Call_Closure :: struct {
 	args:   []Value_ID,
 }
 
-// Call_Runtime calls one of the procedures the runtime exports, from the abi table.
 Call_Runtime :: struct {
 	export: abi.Runtime_Proc,
 	args:   []Value_ID,
@@ -250,7 +247,7 @@ Fail :: struct {
 // verifier tell that block from one whose terminator is missing.
 Unreachable :: struct {}
 
-// terminates says whether a variant ends its block. Every block ends with exactly one of them.
+// terminates names the terminators: every block ends with exactly one of them.
 terminates :: proc(variant: Variant) -> bool {
 	switch _ in variant {
 	case Jump, Branch, Return, Fail, Unreachable:

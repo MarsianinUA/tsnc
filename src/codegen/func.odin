@@ -6,7 +6,6 @@ import "core:slice"
 import "../ir"
 import "../llvm"
 
-// Body is the state of one function while its blocks are emitted.
 @(private)
 Body :: struct {
 	func:     ir.Func,
@@ -15,8 +14,8 @@ Body :: struct {
 	values:   []llvm.LLVMValueRef, // by ir.Value_ID
 }
 
-// build_func emits the body of one function. It stops at the first instruction codegen cannot emit
-// and leaves the reason in the module.
+// build_func stops at the first instruction codegen cannot emit and leaves the reason in the
+// module.
 @(private)
 build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	func := m.program.funcs[func_id]
@@ -63,8 +62,8 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	patch_phis(m, &body, phis[:])
 }
 
-// patch_phis gives every phi its edges once all of them exist. An edge out of a block that cannot
-// run is left out: it is not an edge of the LLVM function either.
+// patch_phis leaves out an edge out of a block that cannot run: it is not an edge of the LLVM
+// function either.
 @(private)
 patch_phis :: proc(m: ^Module, body: ^Body, phis: []ir.Value_ID) {
 	for value in phis {
@@ -128,8 +127,8 @@ block_order :: proc(func: ir.Func) -> []ir.Block_ID {
 	return order[:]
 }
 
-// successors are the blocks the terminator of this one can jump to. The verifier promises that
-// every block ends in exactly one terminator.
+// successors reads the last instruction unchecked: the verifier promises that every block ends in
+// exactly one terminator.
 @(private)
 successors :: proc(func: ir.Func, block: ir.Block_ID) -> (targets: [2]ir.Block_ID, count: int) {
 	instructions := func.blocks[block].instructions

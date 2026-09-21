@@ -26,9 +26,9 @@ Options :: struct {
 	mode: Mode `args:"pos=0,required" usage:"smoke, negative or diff"`,
 }
 
-// COMPILER is the compiler negative and diff run, and COMPILER_BUILD is the command that builds it.
-// Both paths are relative to the current directory, as smoke's dist/ paths already are: the runner
-// is started from the repository root. smoke needs neither, since it calls codegen and link itself.
+// COMPILER and the path in COMPILER_BUILD are relative to the current directory, as smoke's dist/
+// paths already are: the runner is started from the repository root. smoke needs neither, since it
+// calls codegen and link itself.
 COMPILER :: "dist/tsnc.exe"
 COMPILER_BUILD :: "odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style"
 
@@ -54,9 +54,9 @@ main :: proc() {
 	}
 }
 
-// compiler_path answers where the compiler is. The path is absolute, so that running it does not
-// depend on how the OS resolves a relative one, as smoke already found. A mode that cannot find the
-// compiler prints the command that builds it, so a fresh clone gets the fix rather than a riddle.
+// compiler_path answers an absolute path, so that running it does not depend on how the OS resolves
+// a relative one, as smoke already found. A mode that cannot find the compiler prints the command
+// that builds it, so a fresh clone gets the fix rather than a riddle.
 compiler_path :: proc(mode: string) -> (path: string, ok: bool) {
 	if !os.is_file(COMPILER) {
 		fmt.eprintfln("%s: %s is missing", mode, COMPILER)

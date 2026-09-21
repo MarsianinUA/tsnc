@@ -21,7 +21,6 @@ import "core:os"
 
 import "../../abi"
 
-// write_message writes the failure line. Each detail part follows the error name after ": ".
 write_message :: proc(w: io.Writer, site: abi.Fail_Site, detail: ..string) -> io.Error {
 	io.write_string(w, "error: ") or_return
 	io.write_string(w, error_name(site.error)) or_return
@@ -40,7 +39,6 @@ write_message :: proc(w: io.Writer, site: abi.Fail_Site, detail: ..string) -> io
 	return io.write_byte(w, '\n')
 }
 
-// at writes the failure line to stderr and exits the process with code 1.
 at :: proc(site: abi.Fail_Site, detail: ..string) -> ! {
 	// An assertion inside the writes below must not come back here through assertion_failure.
 	context.assertion_failure_proc = runtime.default_assertion_failure_proc

@@ -22,8 +22,8 @@ init_llvm :: proc "contextless" () {
 // before these tests run.
 RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
-// HELLO is what the linked program prints. These tests say nothing about the front end, so the IR
-// is built by hand rather than compiled from a source.
+// HELLO is printed by IR built by hand rather than compiled from a source: these tests say nothing
+// about the front end.
 HELLO :: "Hello, world!"
 
 @(test)

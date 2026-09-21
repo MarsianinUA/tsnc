@@ -53,7 +53,6 @@ enter_loop :: proc(b: ^Binder) -> Label_ID {
 	return label
 }
 
-// add_antecedent records that flow reaches label. A path that cannot be taken adds nothing.
 @(private)
 add_antecedent :: proc(b: ^Binder, label: Label_ID, flow: Flow_ID) {
 	if label == NO_LABEL || flow == UNREACHABLE {
@@ -66,8 +65,6 @@ add_antecedent :: proc(b: ^Binder, label: Label_ID, flow: Flow_ID) {
 	append(antecedents, flow)
 }
 
-// finish_label is the flow after a branch label: nothing reaches it, one path does and stays
-// itself, or several join in a node of their own.
 @(private)
 finish_label :: proc(b: ^Binder, label: Label_ID) -> Flow_ID {
 	antecedents := b.labels[label].antecedents
@@ -83,9 +80,8 @@ finish_label :: proc(b: ^Binder, label: Label_ID) -> Flow_ID {
 	return b.labels[label].flow
 }
 
-// bind_jump sends a `break` or a `continue` to its target and ends the flow of its branch. One
-// with nowhere to go is reported with the code outside, and the flow goes on past it. A function
-// starts with no targets, so a jump never leaves the function it is written in.
+// bind_jump reports a jump with nowhere to go with the code outside, and the flow goes on past it.
+// A function starts with no targets, so a jump never leaves the function it is written in.
 @(private)
 bind_jump :: proc(b: ^Binder, id: ast.Node_ID, target: Label_ID, outside: diag.Code) {
 	if target == NO_LABEL {
@@ -96,7 +92,6 @@ bind_jump :: proc(b: ^Binder, id: ast.Node_ID, target: Label_ID, outside: diag.C
 	b.current = UNREACHABLE
 }
 
-// add_assignment records a write to a variable, a field or an element.
 @(private)
 add_assignment :: proc(b: ^Binder, node: ast.Node_ID) {
 	b.has_flow_effects = true
@@ -120,8 +115,6 @@ bind_call_statement :: proc(b: ^Binder, expression: ast.Node_ID) {
 	b.current = add_flow(b, Flow_Call{call = expression, antecedent = b.current})
 }
 
-// switch_clause_flow is the path from the head of a `switch` to the cases [start, end). An empty
-// range is the path where no case matched.
 @(private)
 switch_clause_flow :: proc(
 	b: ^Binder,
@@ -175,9 +168,9 @@ bind_condition :: proc(b: ^Binder, id: ast.Node_ID, true_label, false_label: Lab
 	add_antecedent(b, false_label, condition_flow(b, id, .Truthy, false))
 }
 
-// condition_flow is the path a condition takes when the answer is assume_true. A condition that is
-// `true` or `false` in the source takes one path and leaves the other unreachable, which is how
-// `while (true)` and a `for` without a condition leave the code after them to `break` alone.
+// condition_flow gives a condition that is `true` or `false` in the source one path and leaves the
+// other unreachable, which is how `while (true)` and a `for` without a condition leave the code
+// after them to `break` alone.
 @(private)
 condition_flow :: proc(
 	b: ^Binder,
@@ -261,8 +254,6 @@ bind_logical_value :: proc(b: ^Binder, id: ast.Node_ID) {
 	b.has_flow_effects ||= had_effects
 }
 
-// bind_logical binds `a && b`, `a || b`, `a ?? b` or one of their assignments with the two answers
-// it leads to.
 @(private)
 bind_logical :: proc(b: ^Binder, id: ast.Node_ID, true_label, false_label: Label_ID) {
 	#partial switch v in b.tree.nodes[id].variant {
@@ -360,8 +351,6 @@ is_fixed_index :: proc(b: ^Binder, id: ast.Node_ID) -> bool {
 	return false
 }
 
-// is_dotted_name reports whether an expression is a name or a chain of fields, such as
-// `process.exit`.
 @(private)
 is_dotted_name :: proc(b: ^Binder, id: ast.Node_ID) -> bool {
 	if id == ast.NO_NODE {

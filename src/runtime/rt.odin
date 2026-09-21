@@ -30,9 +30,9 @@ main :: proc() {
 	tsnc_main()
 }
 
-// export_context is the context every export runs in. The thread's temp arena is the scratch
-// arena of the call: the export rewinds it on return, so core code may allocate freely inside the
-// call. The GC heap never becomes context.allocator (requirements 4.5).
+// export_context makes the thread's temp arena the scratch arena of the call: the export rewinds
+// it on return, so core code may allocate freely inside the call. The GC heap never becomes
+// context.allocator (requirements 4.5).
 @(private)
 export_context :: proc "contextless" () -> runtime.Context {
 	context = runtime.default_context()

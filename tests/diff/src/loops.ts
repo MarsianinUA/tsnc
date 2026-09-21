@@ -19,7 +19,6 @@ function countdown(n: number): number {
   return steps;
 }
 
-// A do...while runs its body before it ever looks at the condition.
 function atLeastOnce(n: number): number {
   let steps = 0;
   do {
