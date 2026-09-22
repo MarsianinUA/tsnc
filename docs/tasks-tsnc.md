@@ -332,7 +332,7 @@ Done: diff tests for discriminated unions and `typeof` branches; a failed `x!` p
 
 ### [ ] T5.10 ASan, stress mode in CI, full v1 corpus
 
-What: a runtime build with `-sanitize:address` for a separate run; `runner diff` in GC stress mode; corpus: one program for each §2.2 v1 construct plus programs with allocations and closures in a loop; a `bench/` starter with hello world (startup time, exe size).
+What: a runtime build with `-sanitize:address` for a separate run; `runner diff` in GC stress mode; corpus: one program for each §2.2 v1 construct plus programs with allocations and closures in a loop; a `bench/` starter with hello world (startup time, exe size). One leftover of T5.2 belongs here. ASan's fake stack (`detect_stack_use_after_return`, on by default on Linux since LLVM 15) moves every local whose address is taken off the thread stack, where the collector never looks: the stack base `rt.main` passes lands there, so the scan reads past the real stack, and a live cell kept only in such a local would be freed. The ASan run turns the fake stack off (an `__asan_default_options` that answers `detect_stack_use_after_return=0`) or the scan learns the fake frames.
 Where: [Milestones](architecture-plan-tsnc.md#milestones), row 5; [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools); requirements §10 (v1 acceptance criterion, ASan, stress, benchmarks).
 After: T5.9, T5.2.
 Done: the whole corpus is green on three OSes in normal, stress and ASan mode.

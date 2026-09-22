@@ -143,6 +143,13 @@ BUILTIN_TABLES := [Builtin_Table]Type_Table {
 	.String = {kind = .String, size = size_of(String_Cell)},
 }
 
+// Root is a module global that holds a reference. The compiler lists them (ROOTS_SYMBOL): nothing
+// else tells the collector where in the data segment they are.
+Root :: struct {
+	slot: rawptr,
+	kind: Slot_Kind, // Ref or Tagged
+}
+
 #assert(size_of(rawptr) == 8, "a reference must be 8 bytes: v1 targets are 64-bit")
 #assert(size_of(Cell_Header) == 8)
 #assert(size_of(Tagged) == 16)
@@ -155,5 +162,6 @@ BUILTIN_TABLES := [Builtin_Table]Type_Table {
 #assert(size_of(Field) == 32 && offset_of(Field, offset) == 16 && offset_of(Field, kind) == 24)
 #assert(size_of(Type_Table) == 40 && offset_of(Type_Table, size) == 8)
 #assert(offset_of(Type_Table, fields) == 16 && offset_of(Type_Table, element) == 32)
+#assert(size_of(Root) == 16 && offset_of(Root, kind) == 8)
 #assert(size_of(Fail_Site) == 32 && offset_of(Fail_Site, line) == 16)
 #assert(offset_of(Fail_Site, column) == 20 && offset_of(Fail_Site, error) == 24)

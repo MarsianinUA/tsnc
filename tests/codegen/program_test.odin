@@ -178,3 +178,32 @@ layouts_become_the_type_tables_the_runtime_reads :: proc(t: ^testing.T) {
 	no_tables := []string{"@type_tables.slice = private constant { ptr, i64 } zeroinitializer"}
 	expect_text(t, llvm_text(t, &empty, "program-no-tables"), no_tables)
 }
+
+// A program without roots still hands the runtime a slice.
+@(test)
+globals_that_hold_a_reference_become_roots :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	array := ir.array_layout(&p, .Number)
+	ir.add_global(&p, "g.number", ir.F64)
+	ir.add_global(&p, "g.text", ir.STR)
+	ir.add_global(&p, "g.flag", ir.BOOL)
+	ir.add_global(&p, "g.value", ir.TAGGED)
+	ir.add_global(&p, "g.closure", ir.CLOSURE)
+	ir.add_global(&p, "g.array", ir.Type{kind = .Ref, layout = array})
+	output := finish_program(t, &p, declare_main(&p))
+	// Slot kinds: Ref 2, Tagged 3.
+	wants := []string {
+		"define ptr @tsnc_roots()",
+		"ret ptr @roots.slice",
+		"@roots.slice = private constant { ptr, i64 } { ptr @roots, i64 4 }",
+		"{ ptr @g.text, i8 2 }",
+		"{ ptr @g.value, i8 3 }",
+		"{ ptr @g.closure, i8 2 }",
+		"{ ptr @g.array, i8 2 }",
+	}
+	expect_text(t, llvm_text(t, &output, "program-roots"), wants)
+
+	empty := hello_program("no roots")
+	no_roots := []string{"@roots.slice = private constant { ptr, i64 } zeroinitializer"}
+	expect_text(t, llvm_text(t, &empty, "program-no-roots"), no_roots)
+}

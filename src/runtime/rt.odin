@@ -16,6 +16,7 @@ The subpackages are plain Odin; proc "c" lives only in this package.
 package rt
 
 import "base:runtime"
+import "core:os"
 
 import "../abi"
 import "fail"
@@ -26,6 +27,8 @@ foreign _ {
 	tsnc_main :: proc "c" () ---
 	@(link_name = abi.TYPE_TABLES_SYMBOL)
 	tsnc_type_tables :: proc "c" () -> ^[]abi.Type_Table ---
+	@(link_name = abi.ROOTS_SYMBOL)
+	tsnc_roots :: proc "c" () -> ^[]abi.Root ---
 }
 
 // heap is the one piece of state the runtime keeps. The exports reach it here, since generated code
@@ -33,14 +36,26 @@ foreign _ {
 @(private)
 heap: gc.Heap
 
+// An environment variable, so that stress mode needs no rebuild (requirements 10).
+@(private)
+STRESS_VARIABLE :: "TSNC_GC_STRESS"
+
 main :: proc() {
 	context.assertion_failure_proc = fail.assertion_failure
-	switch gc.heap_init(&heap, tsnc_type_tables()^) {
+	// Every frame of tsnc_main lies below this local, so its address is where the stack scan stops.
+	stack_base: uintptr
+	mode := gc.Heap_Mode.Normal
+	if os.get_env(STRESS_VARIABLE, context.temp_allocator) == "1" {
+		mode = .Stress
+	}
+	switch gc.heap_init(&heap, tsnc_type_tables()^, tsnc_roots()^, &stack_base, mode) {
 	case .None:
 	case .Out_Of_Memory:
 		fail.at({error = .Out_Of_Memory})
 	case .Bad_Table:
 		fail.at({error = .Internal}, "malformed type table")
+	case .Bad_Root:
+		fail.at({error = .Internal}, "malformed root table")
 	}
 	tsnc_main()
 }

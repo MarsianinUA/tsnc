@@ -11,6 +11,10 @@ MAIN_SYMBOL :: "tsnc_main"
 // that a symbol of the program object is imported.
 TYPE_TABLES_SYMBOL :: "tsnc_type_tables"
 
+// ROOTS_SYMBOL names a proc "c" () -> ^[]Root that the compiler emits. A procedure for the reason
+// TYPE_TABLES_SYMBOL is one.
+ROOTS_SYMBOL :: "tsnc_roots"
+
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
 // maps each to one LLVM type. A boolean is b64 here, the width the package uses for a boolean slot,
 // so no export depends on how a C compiler widens a narrower one.
