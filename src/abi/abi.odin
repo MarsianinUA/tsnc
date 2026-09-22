@@ -137,6 +137,12 @@ Builtin_Table :: enum u32 {
 	String,
 }
 
+// BUILTIN_TABLES is @(rodata) for the reason SLOT_SIZE is: the runtime indexes it by a table id.
+@(rodata)
+BUILTIN_TABLES := [Builtin_Table]Type_Table {
+	.String = {kind = .String, size = size_of(String_Cell)},
+}
+
 #assert(size_of(rawptr) == 8, "a reference must be 8 bytes: v1 targets are 64-bit")
 #assert(size_of(Cell_Header) == 8)
 #assert(size_of(Tagged) == 16)

@@ -19,14 +19,29 @@ import "base:runtime"
 
 import "../abi"
 import "fail"
+import "gc"
 
 foreign _ {
 	@(link_name = abi.MAIN_SYMBOL)
 	tsnc_main :: proc "c" () ---
+	@(link_name = abi.TYPE_TABLES_SYMBOL)
+	tsnc_type_tables :: proc "c" () -> ^[]abi.Type_Table ---
 }
+
+// heap is the one piece of state the runtime keeps. The exports reach it here, since generated code
+// passes them no heap.
+@(private)
+heap: gc.Heap
 
 main :: proc() {
 	context.assertion_failure_proc = fail.assertion_failure
+	switch gc.heap_init(&heap, tsnc_type_tables()^) {
+	case .None:
+	case .Out_Of_Memory:
+		fail.at({error = .Out_Of_Memory})
+	case .Bad_Table:
+		fail.at({error = .Internal}, "malformed type table")
+	}
 	tsnc_main()
 }
 

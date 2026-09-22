@@ -106,6 +106,8 @@ only_the_host_target_links :: proc(t: ^testing.T) {
 }
 
 // hello_program is the smallest program there is: tsnc_main prints one line through the runtime.
+// Its layouts are there for the runtime's main, which registers the type tables codegen wrote for
+// them before it calls tsnc_main: a table the runtime cannot read ends the run with exit code 1.
 @(private = "file")
 hello_program :: proc() -> ir.Program_IR {
 	span := source.Span {
@@ -114,6 +116,11 @@ hello_program :: proc() -> ir.Program_IR {
 		end   = 1,
 	}
 	p := ir.make_builder(context.temp_allocator)
+	fields := [?]ir.Slot{{name = "next", kind = .Ref}, {name = "value", kind = .Tagged}}
+	ir.object_layout(&p, fields[:])
+	captured := [?]abi.Slot_Kind{.Number, .Boolean}
+	ir.environment_layout(&p, captured[:])
+	ir.array_layout(&p, .Tagged)
 	line := ir.intern_string(&p, HELLO)
 	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, span)
 	f := ir.begin_func(&p, main)
