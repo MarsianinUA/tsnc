@@ -267,7 +267,7 @@ Done: the corpus is green on three OSes in CI.
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 5.
 
-### [ ] T5.1 `gc`: size-class allocator and type tables
+### [x] T5.1 `gc`: size-class allocator and type tables
 
 What: reserving and committing pages through `core:mem/virtual`; size classes; an object start map (a pointer into a cell finds its owner); allocation with a header by type table ID; registration of the type tables that the compiler places in the object file (a symbol with the table, read at startup); heap integrity check; no collection yet; the only state is `Heap`, initialized in `rt.main`.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `gc`; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Runtime memory"; requirements §6 (consequences of conservative scanning), §4.5 (row "GC heap pages").
@@ -311,7 +311,7 @@ Done: output tests against Node values on a set of simple values.
 
 ### [ ] T5.7 `lower`: objects and arrays
 
-What: canonical layout key from a TS type (fields by name, optional ones as tagged slots, recursive types per the plan's assumption); GC type tables in `Program_IR` and their emission in `codegen`; `alloc` and field access by offset; `store_ref` for reference slots; arrays: literals, indexing with `bounds_check`, a write at `i === length` as `push`, `length`; `map`, `filter`, `forEach`, `reduce` as inlined loops, the rest as runtime calls; `for...of`.
+What: canonical layout key from a TS type (fields by name, optional ones as tagged slots, recursive types per the plan's assumption); GC type tables in `Program_IR` (`codegen` emits every layout as a type table since T5.1, so the tables only need interning in `lower`); `alloc` and field access by offset; `store_ref` for reference slots; arrays: literals, indexing with `bounds_check`, a write at `i === length` as `push`, `length`; `map`, `filter`, `forEach`, `reduce` as inlined loops, the rest as runtime calls; `for...of`.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`; [Contracts → Program_IR](architecture-plan-tsnc.md#program_ir-package-ir), invariants; [Assumptions](architecture-plan-tsnc.md#assumptions), the item on recursive types; requirements §3.3, §3.6, §3.8, §4.5 (what the compiler emits).
 After: T4.5, T5.5.
 Done: diff tests for objects and arrays pass in normal and stress mode.

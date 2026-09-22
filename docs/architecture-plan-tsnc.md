@@ -64,7 +64,7 @@ Eight rules. Every package and every milestone is checked against them.
 7. **Three type worlds, three owners.** TS types belong to `check`, IR layouts and types belong to `ir`, LLVM types belong to `codegen`. A layout is a pure function of the canonical structure of a TS type, so two checkers that built `Point` and `Vec2` independently get one layout without sharing data.
 8. **A subset rule lives in the earliest phase that can decide it.** `parse` rejects `var` and decorators, `check` rejects `==` between different types and an extra object field, all with a code from the `diag` registry.
 
-The runtime follows the same rules with one documented exception: it has exactly one piece of package-level state, the heap in `gc`. The `proc "c"` exports do not receive a heap parameter, and a v1 program is single-threaded.
+The runtime follows the same rules with one documented exception: it has exactly one piece of package-level state, the heap: a `gc.Heap` that `rt` holds, while `gc` itself keeps no state and its procedures take the heap as a parameter. The `proc "c"` exports do not receive a heap parameter, and a v1 program is single-threaded.
 
 ## Precedents
 
@@ -232,7 +232,7 @@ Only what the linked sources do not already cover. In words, without code.
 
 - Purpose: everything that generated code and the runtime must understand identically.
 - Callers: `ir`, `lower`, `codegen`, `rt` and all its subpackages.
-- Contents: the cell header (type table identifier, mark bits); tags and the 16-byte tagged value, with numbers and booleans stored inside without memory allocation; cells for strings (header, length, `u16` data right after), arrays (header, length, capacity, buffer), closures (code, environment), environments (captured slots); the type table: size, the kind of each slot (pointer, tagged, scalar), field names, the array element kind; the `Runtime_Proc` enum with the symbol name and the parameter and result kinds; the closure calling convention (`proc "c"`, environment as the first parameter); the entry point name `tsnc_main`; runtime error codes.
+- Contents: the cell header (type table identifier, mark bits); tags and the 16-byte tagged value, with numbers and booleans stored inside without memory allocation; cells for strings (header, length, `u16` data right after), arrays (header, length, capacity, buffer), closures (code, environment), environments (captured slots); the type table: size, the kind of each slot (pointer, tagged, scalar), field names, the array element kind; the `Runtime_Proc` enum with the symbol name and the parameter and result kinds; the closure calling convention (`proc "c"`, environment as the first parameter); the entry point name `tsnc_main`; the name `tsnc_type_tables` of the procedure that hands the runtime the program's type tables at startup; runtime error codes.
 - Ownership: in v1 the host equals the target, so `codegen` takes sizes and offsets from `size_of` and `offset_of` of the same structs. In v2, for `wasm32`, a procedure of `Target` computes sizes and offsets, and the runtime checks its structs against it with `#assert`.
 - Invariants: the compiler knows the cell layout in full and the runtime knows it in full; a change here is a simultaneous change to both sides, and linking and differential tests catch any mismatch.
 

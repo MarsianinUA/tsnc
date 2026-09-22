@@ -88,6 +88,7 @@ build_module :: proc(
 
 	add_string_cells(&m)
 	add_fail_sites(&m)
+	add_type_tables(&m)
 	add_globals(&m)
 	declare_funcs(&m, unit)
 
@@ -354,6 +355,99 @@ add_fail_sites :: proc(m: ^Module) {
 		llvm.LLVMSetAlignment(global, align_of(abi.Fail_Site))
 		m.fail_sites[i] = global
 	}
+}
+
+// add_type_tables writes the layouts as the type tables the collector and console read, in
+// Type_Table_ID order after the builtin ones, and the procedure tsnc_type_tables that hands the
+// runtime's main a slice of them. A Field is { ptr, i64, i64, i8 } and a Type_Table is
+// { i8, i64, ptr, i64, i8 }: a string and a slice are a pointer and a length, and LLVM pads the
+// tails the way Odin does, which the #asserts at the end of abi.odin pin. The names are shared: an
+// environment has none, and objects repeat theirs.
+@(private)
+add_type_tables :: proc(m: ^Module) {
+	types := m.types
+	field_types := [?]llvm.LLVMTypeRef{types.ptr, types.int64, types.int64, types.int8}
+	field_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
+	table_types := [?]llvm.LLVMTypeRef{types.int8, types.int64, types.ptr, types.int64, types.int8}
+	table_type := llvm.LLVMStructTypeInContext(m.ctx, &table_types[0], len(table_types), false)
+	names := make(map[string]llvm.LLVMValueRef, context.temp_allocator)
+
+	// Layout row 0 is reserved for NO_LAYOUT; the rows after it are the tables ir.table_id numbers.
+	rows := m.program.layouts[1:]
+	tables := make([]llvm.LLVMValueRef, len(rows), context.temp_allocator)
+	for table, i in rows {
+		fields := make([]llvm.LLVMValueRef, len(table.fields), context.temp_allocator)
+		for field, j in table.fields {
+			name := llvm.LLVMConstNull(types.ptr)
+			if field.name != "" {
+				known: bool
+				name, known = names[field.name]
+				if !known {
+					name = add_text(m, field.name)
+					names[field.name] = name
+				}
+			}
+			values := [?]llvm.LLVMValueRef {
+				name,
+				llvm.LLVMConstInt(types.int64, u64(len(field.name)), false),
+				llvm.LLVMConstInt(types.int64, u64(field.offset), false),
+				llvm.LLVMConstInt(types.int8, u64(field.kind), false),
+			}
+			fields[j] = llvm.LLVMConstStructInContext(m.ctx, &values[0], len(values), false)
+		}
+
+		values := [?]llvm.LLVMValueRef {
+			llvm.LLVMConstInt(types.int8, u64(table.kind), false),
+			llvm.LLVMConstInt(types.int64, u64(table.size), false),
+			add_constant_array(m, field_type, fields, "fields"),
+			llvm.LLVMConstInt(types.int64, u64(len(fields)), false),
+			llvm.LLVMConstInt(types.int8, u64(table.element), false),
+		}
+		tables[i] = llvm.LLVMConstStructInContext(m.ctx, &values[0], len(values), false)
+	}
+
+	slice := [?]llvm.LLVMValueRef {
+		add_constant_array(m, table_type, tables, "type_tables"),
+		llvm.LLVMConstInt(types.int64, u64(len(tables)), false),
+	}
+	slice_types := [?]llvm.LLVMTypeRef{types.ptr, types.int64}
+	slice_type := llvm.LLVMStructTypeInContext(m.ctx, &slice_types[0], len(slice_types), false)
+	global := llvm.LLVMAddGlobal(m.module, slice_type, "type_tables.slice")
+	llvm.LLVMSetInitializer(
+		global,
+		llvm.LLVMConstStructInContext(m.ctx, &slice[0], len(slice), false),
+	)
+	llvm.LLVMSetGlobalConstant(global, true)
+	llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
+	llvm.LLVMSetAlignment(global, align_of([]abi.Type_Table))
+
+	signature := llvm.LLVMFunctionType(types.ptr, nil, 0, false)
+	answer := llvm.LLVMAddFunction(m.module, abi.TYPE_TABLES_SYMBOL, signature)
+	llvm.LLVMPositionBuilderAtEnd(m.builder, llvm.LLVMAppendBasicBlockInContext(m.ctx, answer, ""))
+	llvm.LLVMBuildRet(m.builder, global)
+}
+
+// add_constant_array answers the address of a private constant holding the elements, or a null
+// pointer when there are none, which is the data pointer of an empty Odin slice. The elements are
+// abi structs, and every one of them is word aligned.
+@(private)
+add_constant_array :: proc(
+	m: ^Module,
+	element_type: llvm.LLVMTypeRef,
+	elements: []llvm.LLVMValueRef,
+	name: cstring,
+) -> llvm.LLVMValueRef {
+	if len(elements) == 0 {
+		return llvm.LLVMConstNull(m.types.ptr)
+	}
+	count := u64(len(elements))
+	global := llvm.LLVMAddGlobal(m.module, llvm.LLVMArrayType2(element_type, count), name)
+	llvm.LLVMSetInitializer(global, llvm.LLVMConstArray2(element_type, raw_data(elements), count))
+	llvm.LLVMSetGlobalConstant(global, true)
+	llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
+	llvm.LLVMSetUnnamedAddress(global, .LLVMGlobalUnnamedAddr)
+	llvm.LLVMSetAlignment(global, align_of(rawptr))
+	return global
 }
 
 // add_text adds the bytes of an Odin string, without a terminator: the runtime reads the length
