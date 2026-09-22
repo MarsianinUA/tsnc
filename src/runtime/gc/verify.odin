@@ -12,6 +12,17 @@ Heap_Problem :: enum u8 {
 	Dangling_Reference, // a reference into the heap that is not the start of a live cell
 }
 
+@(private, rodata)
+PROBLEM_TEXT := [Heap_Problem]string {
+	.None               = "none",
+	.Bad_Page           = "bad page",
+	.Bad_Free_List      = "bad free list",
+	.Unknown_Table      = "unknown type table",
+	.Bad_Cell           = "bad cell",
+	.Stray_Mark         = "stray mark",
+	.Dangling_Reference = "dangling reference",
+}
+
 // verify walks the whole heap and answers the first broken invariant with the cell, page or free
 // list where it found it. It only reads. A reference out of the heap is taken as it is: that is
 // where the compiler's static cells live.
@@ -21,6 +32,9 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 		page := heap.pages[index]
 		switch page.kind {
 		case .Free:
+			if index < heap.first_free {
+				return .Bad_Page, &heap.base[index * PAGE_SIZE]
+			}
 		case .Small:
 			if int(page.class) >= CLASS_COUNT {
 				return .Bad_Page, &heap.base[index * PAGE_SIZE]
@@ -66,6 +80,13 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 			if problem = verify_cell(heap, cell, int(page.run) * PAGE_SIZE); problem != .None {
 				return problem, cell
 			}
+		}
+	}
+
+	// --- Every root: a module global holds a live cell, a static one or none.
+	for root in heap.roots {
+		if problem = verify_slot(heap, root.slot, root.kind); problem != .None {
+			return problem, root.slot
 		}
 	}
 

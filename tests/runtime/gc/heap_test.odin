@@ -60,7 +60,8 @@ classes_ascend_in_steps_of_16_up_to_max_small :: proc(t: ^testing.T) {
 
 @(test)
 a_cell_takes_the_smallest_class_that_holds_it :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	for size, class in gc.CLASS_SIZE {
@@ -76,7 +77,8 @@ a_cell_takes_the_smallest_class_that_holds_it :: proc(t: ^testing.T) {
 
 @(test)
 a_cell_is_zero_past_its_header :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	// Every slot of a fresh page held a free list link at the offset a string keeps its length.
@@ -92,7 +94,8 @@ a_cell_is_zero_past_its_header :: proc(t: ^testing.T) {
 
 @(test)
 cells_of_a_class_come_in_address_order_and_fill_pages :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	first := gc.alloc(&heap, POINT, POINT_SIZE)
@@ -112,7 +115,8 @@ cells_of_a_class_come_in_address_order_and_fill_pages :: proc(t: ^testing.T) {
 
 @(test)
 a_large_cell_takes_a_run_of_whole_pages :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	one := gc.alloc(&heap, BLOB, gc.MAX_SMALL + 1)
@@ -131,7 +135,8 @@ a_large_cell_takes_a_run_of_whole_pages :: proc(t: ^testing.T) {
 
 @(test)
 an_address_inside_a_cell_finds_the_cell :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	point := gc.alloc(&heap, POINT, POINT_SIZE)
@@ -147,7 +152,8 @@ an_address_inside_a_cell_finds_the_cell :: proc(t: ^testing.T) {
 
 @(test)
 an_address_outside_every_live_cell_has_no_owner :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	point := gc.alloc(&heap, POINT, POINT_SIZE)
@@ -169,7 +175,7 @@ an_address_outside_every_live_cell_has_no_owner :: proc(t: ^testing.T) {
 program_tables_follow_the_builtin_ones :: proc(t: ^testing.T) {
 	// The reservation the runtime makes, so every OS in CI grants it.
 	heap: gc.Heap
-	testing.expect_value(t, gc.heap_init(&heap, TABLES), gc.Heap_Error.None)
+	testing.expect_value(t, gc.heap_init(&heap, TABLES, nil, &heap), gc.Heap_Error.None)
 	defer gc.heap_destroy(&heap)
 
 	text, text_ok := gc.type_table(&heap, STRING)
@@ -232,10 +238,32 @@ a_malformed_table_is_refused :: proc(t: ^testing.T) {
 		tables := []abi.Type_Table{c.table}
 		testing.expectf(
 			t,
-			gc.heap_init(&heap, tables, RESERVE) == .Bad_Table,
+			gc.heap_init(&heap, tables, nil, &heap, reserve = RESERVE) == .Bad_Table,
 			"%s: accepted",
 			c.name,
 		)
+	}
+}
+
+@(test)
+a_malformed_root_is_refused :: proc(t: ^testing.T) {
+	slot: [2]u64
+	Case :: struct {
+		name: string,
+		root: abi.Root,
+	}
+	cases := [?]Case {
+		{"number slot", {slot = &slot[0], kind = .Number}},
+		{"boolean slot", {slot = &slot[0], kind = .Boolean}},
+		{"kind outside the enum", {slot = &slot[0], kind = abi.Slot_Kind(9)}},
+		{"no slot", {kind = .Ref}},
+		{"misaligned slot", {slot = &([^]byte)(&slot[0])[4], kind = .Ref}},
+	}
+	for c in cases {
+		heap: gc.Heap
+		roots := []abi.Root{c.root}
+		err := gc.heap_init(&heap, TABLES, roots, &heap, reserve = RESERVE)
+		testing.expectf(t, err == .Bad_Root, "%s: %v", c.name, err)
 	}
 }
 
@@ -244,19 +272,24 @@ a_reservation_the_os_cannot_give_is_out_of_memory :: proc(t: ^testing.T) {
 	heap: gc.Heap
 	testing.expect_value(
 		t,
-		gc.heap_init(&heap, nil, gc.PAGE_SIZE - 1),
+		gc.heap_init(&heap, nil, nil, &heap, reserve = gc.PAGE_SIZE - 1),
 		gc.Heap_Error.Out_Of_Memory,
 	)
 	// core:mem/virtual asserts on darwin that mmap failed with ENOMEM, and nothing promises that
 	// XNU answers a size past the address space that way.
 	when ODIN_OS != .Darwin {
-		testing.expect_value(t, gc.heap_init(&heap, nil, 1 << 62), gc.Heap_Error.Out_Of_Memory)
+		testing.expect_value(
+			t,
+			gc.heap_init(&heap, nil, nil, &heap, reserve = 1 << 62),
+			gc.Heap_Error.Out_Of_Memory,
+		)
 	}
 }
 
 @(test)
 a_heap_hands_out_every_page_it_reserved :: proc(t: ^testing.T) {
-	heap := make_heap(t, 3 * gc.PAGE_SIZE)
+	heap: gc.Heap
+	init_heap(t, &heap, reserve = 3 * gc.PAGE_SIZE)
 	defer gc.heap_destroy(&heap)
 
 	gc.alloc(&heap, BLOB, gc.PAGE_SIZE + 1)
@@ -265,10 +298,20 @@ a_heap_hands_out_every_page_it_reserved :: proc(t: ^testing.T) {
 	testing.expect_value(t, heap.page_count, heap.page_limit)
 }
 
-make_heap :: proc(t: ^testing.T, reserve := RESERVE, loc := #caller_location) -> (heap: gc.Heap) {
-	err := gc.heap_init(&heap, TABLES, reserve)
+// init_heap makes `heap`, a local of the test procedure, the heap under test. Its address is the
+// stack base, as a local of rt.main is for the runtime. So a test that collects keeps its cells in
+// a procedure it calls: the test procedure's own locals may lie above the heap, where the scan
+// does not look.
+init_heap :: proc(
+	t: ^testing.T,
+	heap: ^gc.Heap,
+	roots: []abi.Root = nil,
+	mode := gc.Heap_Mode.Normal,
+	reserve := RESERVE,
+	loc := #caller_location,
+) {
+	err := gc.heap_init(heap, TABLES, roots, heap, mode, reserve)
 	testing.expect_value(t, err, gc.Heap_Error.None, loc = loc)
-	return
 }
 
 expect_zero :: proc(t: ^testing.T, bytes: []byte, loc := #caller_location) {

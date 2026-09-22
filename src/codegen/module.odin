@@ -90,6 +90,7 @@ build_module :: proc(
 	add_fail_sites(&m)
 	add_type_tables(&m)
 	add_globals(&m)
+	add_roots(&m)
 	declare_funcs(&m, unit)
 
 	for id in unit.funcs {
@@ -271,6 +272,42 @@ add_globals :: proc(m: ^Module) {
 	}
 }
 
+// A row is { ptr, i8 }, which LLVM pads to the 16 bytes of abi.Root. Since a root's address leaves
+// the module, LLVM can no longer fold the global away or keep it in a register, and the collector
+// reads what the program stored.
+@(private)
+add_roots :: proc(m: ^Module) {
+	row_types := [?]llvm.LLVMTypeRef{m.types.ptr, m.types.int8}
+	row_type := llvm.LLVMStructTypeInContext(m.ctx, &row_types[0], len(row_types), false)
+	rows := make([dynamic]llvm.LLVMValueRef, 0, len(m.program.globals), context.temp_allocator)
+	for binding, i in m.program.globals {
+		kind, is_root := root_kind(binding.type)
+		if !is_root {
+			continue
+		}
+		values := [?]llvm.LLVMValueRef {
+			m.globals[i],
+			llvm.LLVMConstInt(m.types.int8, u64(kind), false),
+		}
+		append(&rows, llvm.LLVMConstStructInContext(m.ctx, &values[0], len(values), false))
+	}
+	roots := add_constant_array(m, row_type, rows[:], "roots")
+	add_slice_procedure(m, abi.ROOTS_SYMBOL, roots, len(rows), "roots.slice")
+}
+
+@(private)
+root_kind :: proc(type: ir.Type) -> (kind: abi.Slot_Kind, is_root: bool) {
+	switch type.kind {
+	case .Void, .F64, .Bool:
+		return {}, false
+	case .Tagged:
+		return .Tagged, true
+	case .Str, .Closure, .Ref:
+		return .Ref, true
+	}
+	unreachable()
+}
+
 // add_string_cells emits the units as the pool holds them: it keeps a lone surrogate that no UTF-8
 // round trip would survive.
 @(private)
@@ -358,7 +395,7 @@ add_fail_sites :: proc(m: ^Module) {
 }
 
 // add_type_tables writes the layouts as the type tables the collector and console read, in
-// Type_Table_ID order after the builtin ones, and the procedure tsnc_type_tables that hands the
+// Type_Table_ID order after the builtin ones, and defines tsnc_type_tables, which hands the
 // runtime's main a slice of them. A Field is { ptr, i64, i64, i8 } and a Type_Table is
 // { i8, i64, ptr, i64, i8 }: a string and a slice are a pointer and a length, and LLVM pads the
 // tails the way Odin does, which the #asserts at the end of abi.odin pin. The names are shared: an
@@ -406,23 +443,33 @@ add_type_tables :: proc(m: ^Module) {
 		tables[i] = llvm.LLVMConstStructInContext(m.ctx, &values[0], len(values), false)
 	}
 
-	slice := [?]llvm.LLVMValueRef {
-		add_constant_array(m, table_type, tables, "type_tables"),
-		llvm.LLVMConstInt(types.int64, u64(len(tables)), false),
-	}
+	type_tables := add_constant_array(m, table_type, tables, "type_tables")
+	add_slice_procedure(m, abi.TYPE_TABLES_SYMBOL, type_tables, len(tables), "type_tables.slice")
+}
+
+@(private)
+add_slice_procedure :: proc(
+	m: ^Module,
+	symbol: cstring,
+	data: llvm.LLVMValueRef,
+	count: int,
+	name: cstring,
+) {
+	types := m.types
+	slice := [?]llvm.LLVMValueRef{data, llvm.LLVMConstInt(types.int64, u64(count), false)}
 	slice_types := [?]llvm.LLVMTypeRef{types.ptr, types.int64}
 	slice_type := llvm.LLVMStructTypeInContext(m.ctx, &slice_types[0], len(slice_types), false)
-	global := llvm.LLVMAddGlobal(m.module, slice_type, "type_tables.slice")
+	global := llvm.LLVMAddGlobal(m.module, slice_type, name)
 	llvm.LLVMSetInitializer(
 		global,
 		llvm.LLVMConstStructInContext(m.ctx, &slice[0], len(slice), false),
 	)
 	llvm.LLVMSetGlobalConstant(global, true)
 	llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
-	llvm.LLVMSetAlignment(global, align_of([]abi.Type_Table))
+	llvm.LLVMSetAlignment(global, align_of([]byte))
 
 	signature := llvm.LLVMFunctionType(types.ptr, nil, 0, false)
-	answer := llvm.LLVMAddFunction(m.module, abi.TYPE_TABLES_SYMBOL, signature)
+	answer := llvm.LLVMAddFunction(m.module, symbol, signature)
 	llvm.LLVMPositionBuilderAtEnd(m.builder, llvm.LLVMAppendBasicBlockInContext(m.ctx, answer, ""))
 	llvm.LLVMBuildRet(m.builder, global)
 }

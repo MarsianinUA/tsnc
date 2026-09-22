@@ -21,7 +21,8 @@ Live :: struct {
 
 @(test)
 an_empty_heap_is_whole :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	expect_problem(t, &heap, .None, nil)
@@ -29,7 +30,8 @@ an_empty_heap_is_whole :: proc(t: ^testing.T) {
 
 @(test)
 a_live_heap_is_whole :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	make_live(&heap)
@@ -39,7 +41,8 @@ a_live_heap_is_whole :: proc(t: ^testing.T) {
 
 @(test)
 a_reference_to_no_live_cell_dangles :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 
@@ -55,8 +58,36 @@ a_reference_to_no_live_cell_dangles :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_root_to_no_live_cell_dangles :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+	live := make_live(&heap)
+
+	// Locals stand in for module globals: nothing collects here, so nothing has to find them.
+	ref: ^abi.Cell_Header = live.first
+	value := abi.Tagged {
+		tag = .String,
+		payload = {ref = &STATIC_TEXT},
+	}
+	heap.roots = []abi.Root{{slot = &ref, kind = .Ref}, {slot = &value, kind = .Tagged}}
+	expect_problem(t, &heap, .None, nil)
+
+	ref = (^abi.Cell_Header)(uintptr(live.second) + 8)
+	expect_problem(t, &heap, .Dangling_Reference, &ref)
+	ref = nil
+
+	value = {
+		tag = .Object,
+		payload = {ref = (^abi.Cell_Header)(heap.free[POINT_CLASS])},
+	}
+	expect_problem(t, &heap, .Dangling_Reference, &value)
+}
+
+@(test)
 a_header_names_its_problems :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 
@@ -70,7 +101,8 @@ a_header_names_its_problems :: proc(t: ^testing.T) {
 
 @(test)
 contents_that_overrun_their_table_are_bad :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 
@@ -87,7 +119,8 @@ contents_that_overrun_their_table_are_bad :: proc(t: ^testing.T) {
 
 @(test)
 array_elements_live_in_a_buffer_cell_with_room :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 	elements := live.array.elements
@@ -120,7 +153,8 @@ array_elements_live_in_a_buffer_cell_with_room :: proc(t: ^testing.T) {
 
 @(test)
 free_lists_hold_exactly_the_free_slots :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 
@@ -150,12 +184,15 @@ free_lists_hold_exactly_the_free_slots :: proc(t: ^testing.T) {
 
 @(test)
 a_page_table_that_disagrees_with_itself_is_bad :: proc(t: ^testing.T) {
-	heap := make_heap(t)
+	heap: gc.Heap
+	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
 	small := page_index(&heap, gc.alloc(&heap, POINT, POINT_SIZE))
 	head := page_index(&heap, gc.alloc(&heap, BLOB, 2 * gc.PAGE_SIZE))
 	testing.expect_value(t, heap.page_count, head + 2)
+	// Past `small`, so the first case below makes a free page where first_free promises none.
+	heap.first_free = head
 
 	Case :: struct {
 		name: string,
@@ -163,6 +200,7 @@ a_page_table_that_disagrees_with_itself_is_bad :: proc(t: ^testing.T) {
 		row:  gc.Page,
 	}
 	cases := [?]Case {
+		{"free page below first_free", small, {kind = .Free}},
 		{"kind outside the enum", small, {kind = gc.Page_Kind(7)}},
 		{"class outside the table", small, {kind = .Small, class = gc.CLASS_COUNT}},
 		{"run of no pages", head, {kind = .Large}},

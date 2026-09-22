@@ -1,11 +1,12 @@
 /*
 The GC heap: the cells of every TS value that needs memory (requirements 6).
 
-One reservation of address space holds the cells. It is handed out in pages of PAGE_SIZE bytes from
-a frontier that only grows, since nothing frees a page before the collector arrives (T5.2). A page
-either holds slots of one size class or belongs to a run of pages that holds one large cell. A
-second reservation holds the page table, one Page per reserved page, committed in step with the
-frontier.
+One reservation of address space holds the cells. It is handed out in pages of PAGE_SIZE bytes: a
+page either holds slots of one size class or belongs to a run of pages that holds one large cell.
+New pages come from a frontier that only grows. A page the collector empties stays committed below
+the frontier and is handed out again before the frontier moves. A second reservation holds the page
+table, one Page per reserved page, committed in step with the frontier, and a third the mark stack
+of the collector (collect.odin).
 
 The page table plus slot arithmetic is the object start map that a conservative stack scan needs:
 owner turns any address inside a live cell into the cell, the way Go finds a span and an object
@@ -32,6 +33,9 @@ MAX_SMALL :: PAGE_SIZE / 2
 CLASS_COUNT :: 40
 // DEFAULT_RESERVE is address space, not memory: only the pages handed out are committed.
 DEFAULT_RESERVE :: 64 << 30
+// Go's defaults: a 4 MB minimum heap, and GOGC=100, so the heap may double between collections.
+MIN_TRIGGER :: 4 << 20
+GROWTH :: 2
 
 // CLASS_SIZE steps by 16 bytes up to 128, then takes four classes per doubling, as Go's classes do,
 // so a cell leaves at most a fifth of its slot unused. Every size is a multiple of 16, which keeps
@@ -102,37 +106,69 @@ Free_Slot :: struct {
 
 Heap :: struct {
 	tables:     []abi.Type_Table, // the program's, numbered after abi.BUILTIN_TABLES; borrowed
+	roots:      []abi.Root, // the module globals that hold a reference; borrowed
+	stack_base: rawptr, // the stack scan stops below it
+	mode:       Heap_Mode,
 	base:       [^]byte, // page_limit pages of address space
 	pages:      [^]Page, // one row per reserved page; the rows below page_count are committed
 	page_limit: int,
 	page_count: int, // the frontier: pages handed out from base
+	first_free: int, // no page below it is Free
 	free:       [CLASS_COUNT]^Free_Slot,
+	marks:      Mark_Stack,
+	used:       int, // bytes of the slots and runs that hold cells
+	trigger:    int,
+}
+
+Heap_Mode :: enum u8 {
+	Normal,
+	Stress, // collect before every allocation and check the heap after every collection
+}
+
+// Mark_Stack never overflows, so a collection needs no fallback for that: its reservation has room
+// for every cell the heap can hold, a cell is pushed once, when it is marked, and takes 16 bytes
+// at least.
+Mark_Stack :: struct {
+	cells:     [^]^abi.Cell_Header,
+	count:     int,
+	committed: int, // entries
 }
 
 Heap_Error :: enum u8 {
 	None,
-	Out_Of_Memory, // the OS refused the reservation, or it is below one page
+	Out_Of_Memory, // the OS refused a reservation, or it is below one page
 	Bad_Table, // a type table from the object file is malformed
+	Bad_Root,
 }
 
 // FREE is the type table a free slot names. heap_init refuses a program with that many tables.
 @(private)
 FREE :: max(abi.Type_Table_ID)
 
-// heap_init borrows `tables`, which must outlive the heap: the runtime passes the ones the compiler
-// emitted into constant data. It reserves the address space and commits nothing; the first
-// allocation does.
+// heap_init borrows `tables` and `roots`, which must outlive the heap: the runtime passes the ones
+// the compiler emitted into constant data. `stack_base` must lie above every frame that may hold a
+// reference: rt.main passes a local of its own, as Ruby's RUBY_INIT_STACK takes one in main.
+// Nothing is committed until the first allocation.
 heap_init :: proc(
 	heap: ^Heap,
 	tables: []abi.Type_Table,
+	roots: []abi.Root,
+	stack_base: rawptr,
+	mode := Heap_Mode.Normal,
 	reserve := DEFAULT_RESERVE,
 ) -> Heap_Error {
+	assert(stack_base != nil, "a heap without the base of the stack it scans")
 	if len(abi.Builtin_Table) + len(tables) >= int(FREE) {
 		return .Bad_Table
 	}
 	for table in tables {
 		if !table_is_valid(table) {
 			return .Bad_Table
+		}
+	}
+	for root in roots {
+		if !root_is_valid(root) {
+			return .Bad_Root
 		}
 	}
 
@@ -149,12 +185,23 @@ heap_init :: proc(
 		virtual.release(raw_data(cells), len(cells))
 		return .Out_Of_Memory
 	}
+	marks, marks_err := virtual.reserve(uint(mark_stack_size(page_limit)))
+	if marks_err != nil {
+		virtual.release(raw_data(cells), len(cells))
+		virtual.release(raw_data(rows), len(rows))
+		return .Out_Of_Memory
+	}
 
 	heap^ = {
-		tables     = tables,
-		base       = raw_data(cells),
-		pages      = ([^]Page)(raw_data(rows)),
+		tables = tables,
+		roots = roots,
+		stack_base = stack_base,
+		mode = mode,
+		base = raw_data(cells),
+		pages = ([^]Page)(raw_data(rows)),
 		page_limit = page_limit,
+		marks = {cells = ([^]^abi.Cell_Header)(raw_data(marks))},
+		trigger = MIN_TRIGGER,
 	}
 	return .None
 }
@@ -164,6 +211,7 @@ heap_init :: proc(
 heap_destroy :: proc(heap: ^Heap) {
 	virtual.release(heap.base, uint(heap.page_limit * PAGE_SIZE))
 	virtual.release(heap.pages, uint(page_table_size(heap.page_limit)))
+	virtual.release(heap.marks.cells, uint(mark_stack_size(heap.page_limit)))
 	heap^ = {}
 }
 
@@ -182,14 +230,31 @@ type_table :: proc(heap: ^Heap, id: abi.Type_Table_ID) -> (table: abi.Type_Table
 // alloc answers a cell of `size` bytes, header included, zero filled but for the header, which
 // names `table`. A string passes its units on top of the table's size. Running out of memory ends
 // the process: no caller could do anything else.
+//
+// alloc may collect first, so a caller keeps every cell it still needs where the collector looks:
+// in a local or a register, in a slot of a live cell, in a root. A reference kept only in memory
+// from core, such as a [dynamic] or the scratch arena, is invisible to it (requirements 4.5).
 alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Header {
 	layout, known := type_table(heap, table)
 	assert(known, "a cell of an unregistered type table")
 	assert(size >= layout.size, "a cell smaller than its type table")
 
+	small := size <= MAX_SMALL
+	class, count, slot_size: int
+	if small {
+		class = class_of(size)
+		slot_size = CLASS_SIZE[class]
+	} else {
+		count = size / PAGE_SIZE + (1 if size % PAGE_SIZE != 0 else 0)
+		slot_size = count * PAGE_SIZE
+	}
+	if heap.mode == .Stress || heap.used + slot_size > heap.trigger {
+		collect(heap)
+	}
+	heap.used += slot_size
+
 	cell: [^]byte
-	if size <= MAX_SMALL {
-		class := class_of(size)
+	if small {
 		if heap.free[class] == nil {
 			carve_page(heap, class)
 		}
@@ -197,7 +262,6 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 		heap.free[class] = slot.next
 		cell = ([^]byte)(slot)
 	} else {
-		count := size / PAGE_SIZE + (1 if size % PAGE_SIZE != 0 else 0)
 		first := take_pages(heap, count)
 		heap.pages[first] = {
 			kind = .Large,
@@ -293,6 +357,13 @@ slot_kind_is_valid :: proc(kind: abi.Slot_Kind) -> bool {
 	return kind >= min(abi.Slot_Kind) && kind <= max(abi.Slot_Kind)
 }
 
+// The compiler lists no number or boolean global: those are no roots.
+@(private)
+root_is_valid :: proc(root: abi.Root) -> bool {
+	aligned := root.slot != nil && uintptr(root.slot) % size_of(u64) == 0
+	return aligned && (root.kind == .Ref || root.kind == .Tagged)
+}
+
 @(private)
 class_of :: proc(size: int) -> int {
 	for class_size, class in CLASS_SIZE {
@@ -326,11 +397,15 @@ carve_page :: proc(heap: ^Heap, class: int) {
 	heap.free[class] = next
 }
 
-// take_pages commits `count` pages at the frontier, and the page table rows that describe them,
-// and answers the index of the first.
 @(private)
 take_pages :: proc(heap: ^Heap, count: int) -> int {
+	if first, found := find_free_run(heap, count); found {
+		return first
+	}
 	first := heap.page_count
+	// direct: fails without a last collection, which only a live heap near half the reservation
+	// meets; Go collects once more before it reports out of memory. That needs carve_page to take a
+	// collection that refills the free lists underneath it.
 	if count > heap.page_limit - first {
 		out_of_memory()
 	}
@@ -349,11 +424,41 @@ take_pages :: proc(heap: ^Heap, count: int) -> int {
 	return first
 }
 
+// direct: a linear scan of the page table from first_free; an index of free runs by length once
+// profiles show large cells waiting on it.
+@(private)
+find_free_run :: proc(heap: ^Heap, count: int) -> (first: int, found: bool) {
+	for heap.first_free < heap.page_count && heap.pages[heap.first_free].kind != .Free {
+		heap.first_free += 1
+	}
+	run := 0
+	for index in heap.first_free ..< heap.page_count {
+		if heap.pages[index].kind != .Free {
+			run = 0
+			continue
+		}
+		run += 1
+		if run == count {
+			return index - count + 1, true
+		}
+	}
+	return 0, false
+}
+
 // page_table_size is the size of the rows for `count` pages, rounded up to whole pages: the table is
 // committed a page at a time, 8192 rows or half a gigabyte of heap per commit.
 @(private)
 page_table_size :: proc(count: int) -> int {
-	size := count * size_of(Page)
+	return round_to_pages(count * size_of(Page))
+}
+
+@(private)
+mark_stack_size :: proc(count: int) -> int {
+	return round_to_pages(count * (PAGE_SIZE / CLASS_SIZE[0]) * size_of(^abi.Cell_Header))
+}
+
+@(private)
+round_to_pages :: proc(size: int) -> int {
 	return (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE
 }
 
