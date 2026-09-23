@@ -42,6 +42,55 @@ from_utf8_counts_utf16_units :: proc(t: ^testing.T) {
 	expect_units(t, str.from_units(&heap, string16(MIXED[:])), MIXED[:])
 }
 
+// Buffer.toString replaces each maximal subpart of an ill-formed sequence with one U+FFFD, and so
+// does from_utf8. The first row is the example of Unicode 17, section 3.9.
+//
+//	node -e 'console.log([...Buffer.from([0x61, 0xe2, 0x82, 0x62]).toString()].map(c => c.codePointAt(0).toString(16)))'
+@(test)
+from_utf8_repairs_bytes_as_node_does :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	cases := [?]struct {
+		bytes: string,
+		units: []u16,
+	} {
+		{
+			"\x61\xf1\x80\x80\xe1\x80\xc2\x62\x80\x63\x80\xbf\x64",
+			{0x61, 0xfffd, 0xfffd, 0xfffd, 0x62, 0xfffd, 0x63, 0xfffd, 0xfffd, 0x64},
+		},
+		{"a\xe2\x82b", {0x61, 0xfffd, 0x62}},
+		// A byte order mark stays.
+		{"\xef\xbb\xbfA", {0xfeff, 0x41}},
+		// A surrogate, an overlong form and a code point past U+10FFFF: no two bytes of these start
+		// a well-formed sequence, so each byte is a subpart of its own.
+		{"\xed\xa0\x80", {0xfffd, 0xfffd, 0xfffd}},
+		{"\xc0\x80", {0xfffd, 0xfffd}},
+		{"\xe0\x9f\x80", {0xfffd, 0xfffd, 0xfffd}},
+		{"\xf4\x90\x80\x80", {0xfffd, 0xfffd, 0xfffd, 0xfffd}},
+		{"\xf8\x88\x80\x80\x80", {0xfffd, 0xfffd, 0xfffd, 0xfffd, 0xfffd}},
+		// A sequence cut short by the end of the text.
+		{"a\xf0\x9f\x98", {0x61, 0xfffd}},
+		{"\xf0\x9f\x98\x80", {0xd83d, 0xde00}},
+	}
+	for c in cases {
+		expect_units(t, str.from_utf8(&heap, c.bytes), c.units)
+	}
+}
+
+// 536,870,888 units is the longest string Node 24 builds:
+//
+//	node -e 'console.log("a".repeat(536870888).length); "a".repeat(536870889)'
+//
+// prints the length, then throws "RangeError: Invalid string length".
+@(test)
+a_string_is_as_long_as_node_allows :: proc(t: ^testing.T) {
+	testing.expect_value(t, str.MAX_LENGTH, 536_870_888)
+	testing.expect(t, str.length_fits(str.MAX_LENGTH))
+	testing.expect(t, !str.length_fits(str.MAX_LENGTH + 1))
+}
+
 @(test)
 the_empty_string_is_one_static_cell :: proc(t: ^testing.T) {
 	heap: gc.Heap
@@ -272,16 +321,15 @@ splitter_matches_node :: proc(t: ^testing.T) {
 	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
-	MISSING :: 4294967295
 	cases := [?]struct {
 		text, separator: string,
 		limit:           f64,
 		pieces:          []string,
 	} {
-		{"", "", MISSING, {}},
-		{"", ",", MISSING, {""}},
-		{"aaa", "aa", MISSING, {"", "a"}},
-		{",a,,b,", ",", MISSING, {"", "a", "", "b", ""}},
+		{"", "", abi.MISSING_LIMIT, {}},
+		{"", ",", abi.MISSING_LIMIT, {""}},
+		{"aaa", "aa", abi.MISSING_LIMIT, {"", "a"}},
+		{",a,,b,", ",", abi.MISSING_LIMIT, {"", "a", "", "b", ""}},
 		{"abc", "", 2, {"a", "b"}},
 		// ToUint32: a fraction goes toward zero, the rest wraps modulo 2^32, and NaN and the
 		// infinities are 0.
@@ -323,7 +371,7 @@ splitter_matches_node :: proc(t: ^testing.T) {
 
 	// An empty separator splits a surrogate pair into its halves.
 	emoji := cell(&heap, {0xd83d, 0xde00, 'x'})
-	s := str.splitter(emoji, str.from_utf8(&heap, ""), MISSING)
+	s := str.splitter(emoji, str.from_utf8(&heap, ""), abi.MISSING_LIMIT)
 	for want in ([?]u16{0xd83d, 0xde00, 'x'}) {
 		piece, ok := str.split_next(&s)
 		testing.expect(t, ok && len(piece) == 1 && piece[0] == want, "a single unit")

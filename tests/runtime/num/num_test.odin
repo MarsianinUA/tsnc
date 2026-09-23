@@ -51,11 +51,43 @@ to_string_matches_node :: proc(t: ^testing.T) {
 		// Two to the fifty-third, where the integers stop being exact.
 		{9007199254740992, "9007199254740992"},
 		{9007199254740994, "9007199254740994"},
+		// The two fixes core:strconv's round_shortest lacks: the round up that carries through 9s
+		// (it answered ...560 for the first), and the decimal points of the bounds aligned.
+		{426147580146789570, "426147580146789570"},
+		{28206292283999998000, "28206292283999998000"},
+		{1.3649515199999999e21, "1.3649515199999999e+21"},
 	}
 	for c in cases {
 		got := text(c.value)
 		testing.expectf(t, got == c.text, "to_string: got %q, want %q", got, c.text)
 	}
+}
+
+// String(x) of every double splitmix64 draws from seed 0, hashed with FNV-1a over the texts, each
+// followed by a newline. The second draw keeps the exponent within [2^58, 2^71), where the old
+// round_shortest of core:strconv differed from Node about once in five hundred. Node gives:
+//
+//	node -e 'const M = (1n << 64n) - 1n; let s = 0n; const next = () => { s = (s + 0x9e3779b97f4a7c15n) & M; let z = s; z = ((z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n) & M; z = ((z ^ (z >> 27n)) * 0x94d049bb133111ebn) & M; return z ^ (z >> 31n) }; const b = new BigUint64Array(1), f = new Float64Array(b.buffer); const run = (n, bits) => { s = 0n; let h = 0x811c9dc5; for (let i = 0; i < n; i++) { b[0] = bits(next()); const t = String(f[0]) + "\n"; for (let j = 0; j < t.length; j++) h = Math.imul(h ^ t.charCodeAt(j), 16777619) >>> 0 } return h.toString(16) }; console.log(run(100000, r => r), run(200000, r => (1081n + (r >> 52n) % 13n) << 52n | r & ((1n << 52n) - 1n)))'
+//
+// A million random doubles matched as well, which takes too long for a unit test.
+@(test)
+to_string_matches_node_over_random_doubles :: proc(t: ^testing.T) {
+	buf: [num.STRING_MAX]byte
+	state: u64
+	h := u32(0x811c9dc5)
+	for _ in 0 ..< 100_000 {
+		hash_text(&h, num.to_string(buf[:], transmute(f64)splitmix(&state)))
+	}
+	testing.expect_value(t, h, 0xe1c55e46)
+
+	state = 0
+	h = 0x811c9dc5
+	for _ in 0 ..< 200_000 {
+		r := splitmix(&state)
+		bits := (1081 + (r >> 52) % 13) << 52 | r & (1 << 52 - 1)
+		hash_text(&h, num.to_string(buf[:], transmute(f64)bits))
+	}
+	testing.expect_value(t, h, 0xe48b7a26)
 }
 
 // Odin folds an untyped constant expression exactly and rounds it once, so a tenth plus a fifth
@@ -272,6 +304,60 @@ parse_float_matches_node :: proc(t: ^testing.T) {
 	}
 }
 
+// parseFloat of literals longer than the 384 digits decimal.Decimal holds, among them the halfway
+// points between two doubles written out in full, where one more digit decides. For example:
+//
+//	node -e 'const five = (5n ** 1075n).toString(); console.log(parseFloat("0." + "0".repeat(1075 - five.length) + five))'
+@(test)
+parse_float_reads_literals_of_any_length :: proc(t: ^testing.T) {
+	zeros :: proc(count: int) -> string {
+		return strings.repeat("0", count, context.temp_allocator)
+	}
+	join :: proc(parts: ..string) -> string {
+		return strings.concatenate(parts, context.temp_allocator)
+	}
+
+	// 2^-1075, halfway between zero and the smallest denormal, is 5^1075 after the point.
+	five := digits_of(1, 5, 1075)
+	tiny := join("0.", zeros(1075 - len(five)), five)
+	// 2^1024 - 2^970, halfway between the largest double and the power of two past it. It is even
+	// and does not end in 0, so one less is its last digit less one.
+	top := digits_of(1 << 54 - 1, 2, 970)
+	below := transmute([]byte)strings.clone(top, context.temp_allocator)
+	below[len(below) - 1] -= 1
+	// 1 + 2^-53, halfway between 1 and the next double.
+	half := "1.00000000000000011102230246251565404236316680908203125"
+
+	cases := [?]struct {
+		text:  string,
+		value: f64,
+	} {
+		{tiny, 0}, // a tie goes to the even mantissa, and zero is even
+		{join(tiny, "1"), 5e-324},
+		{top, INF},
+		{string(below), 1.7976931348623157e308},
+		{join(half, zeros(400)), 1},
+		{join(half, zeros(400), "1"), 1.0000000000000002},
+		// decimal.set counts the point from the 384 digits it keeps and read this as 1e-17.
+		{join("1", zeros(400), "e-400"), 1},
+		// decimal.set stops an exponent from growing at 1e4.
+		{join("0.", zeros(100000), "1e100005"), 10000},
+		{"1e999999999999999999999", INF},
+		{"1e-999999999999999999", 0},
+	}
+	for c in cases {
+		got, want := num.parse_float(c.text), c.value
+		testing.expectf(
+			t,
+			same(got, want),
+			"parse_float of %d characters: got %v, want %v",
+			len(c.text),
+			got,
+			want,
+		)
+	}
+}
+
 // Math.round(x)
 @(test)
 round_takes_a_half_toward_positive_infinity :: proc(t: ^testing.T) {
@@ -411,6 +497,45 @@ fixed :: proc(value, digits: f64) -> (string, bool) {
 	buf: [num.FIXED_MAX]byte
 	got, ok := num.to_fixed(buf[:], value, digits)
 	return strings.clone(got, context.temp_allocator), ok
+}
+
+splitmix :: proc(state: ^u64) -> u64 {
+	state^ += 0x9e3779b97f4a7c15
+	z := state^
+	z = (z ~ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ~ (z >> 27)) * 0x94d049bb133111eb
+	return z ~ (z >> 31)
+}
+
+// hash_text adds the bytes of text and a newline to an FNV-1a hash.
+hash_text :: proc(h: ^u32, text: string) {
+	for i in 0 ..< len(text) {
+		h^ = (h^ ~ u32(text[i])) * 16777619
+	}
+	h^ = (h^ ~ '\n') * 16777619
+}
+
+// digits_of answers the decimal digits of start * factor^times.
+digits_of :: proc(start: u64, factor, times: int) -> string {
+	digits := make([dynamic]byte, context.temp_allocator) // least significant first
+	for n := start; n > 0; n /= 10 {
+		append(&digits, byte(n % 10))
+	}
+	for _ in 0 ..< times {
+		carry := 0
+		for &digit in digits {
+			product := int(digit) * factor + carry
+			digit, carry = byte(product % 10), product / 10
+		}
+		for ; carry > 0; carry /= 10 {
+			append(&digits, byte(carry % 10))
+		}
+	}
+	text := make([]byte, len(digits), context.temp_allocator)
+	for digit, i in digits {
+		text[len(digits) - 1 - i] = '0' + digit
+	}
+	return string(text)
 }
 
 // same is equality for these tables: NaN matches NaN, and the two zeros do not match each other.

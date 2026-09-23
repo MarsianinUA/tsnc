@@ -53,7 +53,7 @@ number_text :: proc(buf: []byte, value: f64) -> string {
 	return num.to_string(buf, value)
 }
 
-// write_line serves the hello world of T1.6, which codegen still builds by hand; T4.4 drops both.
+// write_line backs the Log_String row, which only the hand-built IR programs of the tests call.
 write_line :: proc(w: io.Writer, text: ^abi.String_Cell) -> io.Error {
 	io.write_string16(w, str.units(text)) or_return
 	return io.write_byte(w, '\n')

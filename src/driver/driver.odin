@@ -72,6 +72,7 @@ Command :: enum {
 	check,
 }
 
+// Options is what main parses the command line into and the only thing driver takes from it.
 Options :: struct {
 	command:      Command `args:"pos=0,required" usage:"build, run or check"`,
 	input:        string `args:"pos=1,required" usage:"entry .ts file"`,

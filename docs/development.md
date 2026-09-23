@@ -28,7 +28,9 @@ odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<tar
 
 # test runs (smoke from T1.8, negative from T2.9, diff from T4.7); smoke links against the
 # runtime object in dist/ and the other two run dist/tsnc.exe, so build both first
-odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke | negative | diff
+odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
+odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative
+odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
 
 # the diff corpus needs Node 24 and TypeScript, installed once from tests/diff/package.json
 npm ci --prefix tests/diff
@@ -74,10 +76,10 @@ A program in the corpus stays inside the part of the subset that is lowered, sin
 
 ## GC stress mode
 
-A compiled program runs its collector in stress mode when the environment variable `TSNC_GC_STRESS` is `1`, with no rebuild. It then collects before every allocation and checks the whole heap after every collection. A broken heap ends the program with exit code 1:
+A compiled program runs its collector in stress mode when the environment variable `TSNC_GC_STRESS` is `1`, with no rebuild. It then collects before every allocation and checks the whole heap after every collection. A broken heap ends the program with exit code 1 and the address of the cell, page or free list where the check stopped:
 
 ```
-error: internal error: heap check failed: dangling reference
+error: internal error: heap check failed: dangling reference: 0x1f2c0010040
 ```
 
 The runtime reads the variable once, at startup. Every check walks the whole heap, so a program that allocates a lot runs far slower in this mode.

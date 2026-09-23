@@ -22,12 +22,31 @@ package str
 
 import "core:math"
 import "core:unicode/utf16"
+import "core:unicode/utf8"
 
 import "../../abi"
+import "../fail"
 import "../gc"
 
 @(private)
 STRING :: abi.Type_Table_ID(abi.Builtin_Table.String)
+
+// MAX_LENGTH is the longest string Node 24 builds. One unit more is "RangeError: Invalid string
+// length" there and a runtime failure with Node's text here.
+MAX_LENGTH :: 536_870_888
+
+// ensure_length fails the program when a string of `length` units would be too long. Every string
+// cell comes from new_cell, which checks, and a writer that grows a text before it allocates the
+// cell checks as it goes, so a program fails where Node throws and not after running out of memory.
+ensure_length :: proc(length: int) {
+	if !length_fits(length) {
+		fail.at({error = .Invalid_String_Length})
+	}
+}
+
+length_fits :: proc "contextless" (length: int) -> bool {
+	return length <= MAX_LENGTH
+}
 
 // EMPTY is static because an empty heap cell would cost an allocation, and its units view would
 // point one past its slot, where gc.owner finds the neighboring cell.
@@ -50,19 +69,59 @@ from_units :: proc(heap: ^gc.Heap, text: string16) -> ^abi.String_Cell {
 	return cell
 }
 
-// from_utf8 is for text from outside the program, such as the arguments of the process. A byte
-// that is not UTF-8 becomes U+FFFD.
+// from_utf8 is for text from outside the program, such as the arguments of the process. It decodes
+// as Buffer.toString does: each maximal subpart of an ill-formed sequence becomes one U+FFFD, and a
+// leading byte order mark stays a U+FEFF.
 from_utf8 :: proc(heap: ^gc.Heap, text: string) -> ^abi.String_Cell {
 	length := 0
-	for r in text {
+	for at := 0; at < len(text); {
+		r, width := next_rune(text[at:])
 		length += 2 if r > 0xffff else 1
+		at += width
 	}
 	if length == 0 {
 		return &EMPTY
 	}
 	cell, dst := new_cell(heap, length)
-	utf16.encode_string(dst, text)
+	i := 0
+	for at := 0; at < len(text); {
+		r, width := next_rune(text[at:])
+		at += width
+		if r > 0xffff {
+			high, low := utf16.encode_surrogate_pair(r)
+			dst[i], dst[i + 1] = u16(high), u16(low)
+			i += 2
+		} else {
+			dst[i] = u16(r)
+			i += 1
+		}
+	}
 	return cell
+}
+
+// next_rune decodes the code point at the front of a text that is not empty. A maximal subpart is
+// the longest start of a well-formed sequence (Unicode 17, section 3.9), so "a\xe2\x82b" reads as
+// a, U+FFFD, b. utf8.decode_rune gives one U+FFFD per byte of it instead.
+@(private)
+next_rune :: proc "contextless" (text: string) -> (r: rune, width: int) {
+	x := utf8.accept_sizes[text[0]]
+	// 0xf0 marks ASCII and 0xf1 a byte that starts no sequence.
+	if x >= 0xf0 {
+		return rune(text[0]) if x == 0xf0 else utf8.RUNE_ERROR, 1
+	}
+	size := int(x & 7)
+	r = rune(text[0] & (0x7f >> uint(size)))
+	// The first continuation byte has a range of its own, which keeps out overlong forms,
+	// surrogates and code points past U+10FFFF.
+	accept := utf8.accept_ranges[x >> 4]
+	for i in 1 ..< size {
+		if i >= len(text) || text[i] < accept.lo || text[i] > accept.hi {
+			return utf8.RUNE_ERROR, i
+		}
+		r = r << 6 | rune(text[i] & 0x3f)
+		accept = {utf8.LOCB, utf8.HICB}
+	}
+	return r, size
 }
 
 concat :: proc(heap: ^gc.Heap, a, b: ^abi.String_Cell) -> ^abi.String_Cell {
@@ -116,6 +175,7 @@ unit_slice :: proc "contextless" (text: ^abi.String_Cell) -> []u16 {
 // new_cell's caller fills `dst` before anyone else sees the cell.
 @(private)
 new_cell :: proc(heap: ^gc.Heap, length: int) -> (cell: ^abi.String_Cell, dst: []u16) {
+	ensure_length(length)
 	size := size_of(abi.String_Cell) + length * size_of(u16)
 	cell = (^abi.String_Cell)(gc.alloc(heap, STRING, size))
 	cell.length = length

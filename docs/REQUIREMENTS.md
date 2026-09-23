@@ -72,6 +72,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 - Immutable sequences of 16-bit units (UTF-16). `length`, `charCodeAt`, `slice`, and indexing match TS for any characters, including Cyrillic and emoji.
 - Conversion to UTF-8 happens only at the OS boundary: console, files, arguments.
 - Converting a function to a string (`String(f)`, `` `${f}` ``) is a runtime error: Node prints the function's source text, which a compiled program does not keep. So is converting an object with its own `toString` field, which Node would call.
+- A string holds at most 536,870,888 units, as in Node 24. Building a longer one, by `+`, `join` or any other method, is a runtime error with Node's message, `Invalid string length`, where Node throws a `RangeError`.
 - Inside the runtime, a string is a header in the GC heap followed by `u16` data; operations work through Odin's built-in `string16` type, which points inside the object. A custom "pointer plus length" pair is not needed, `core:io` re-encodes console output to UTF-8 (4.5).
 - v2: hybrid Latin-1 / UTF-16 storage to save memory, as in V8. The semantics do not change.
 
@@ -152,18 +153,18 @@ General rule: the project reuses `core` wherever it conflicts with neither the G
 
 **The runtime uses `core` along the memory-ownership boundary.** All of `core` is built on explicit allocators: what it creates belongs to the caller, and the collector does not trace it. Hence the rule:
 - everything that **holds references to TS values** lives in the GC heap, and the project writes it: objects, array buffers, closures, string cells, `Map` and `Set` hash tables (v2). The runtime never uses Odin's built-in `map` and `[dynamic]` for program data: the collector would not see references inside them;
-- everything that **holds no references** comes from `core`: digit generation and parsing, hashing, UTF conversion, page reservation, the sorting algorithm, console output.
+- everything that **holds no references** comes from `core` where `core` gives Node's answer at the same cost: decimal arithmetic, hashing, page reservation, console output. Where a `core` algorithm answers differently or costs more, the project writes its own: the shortest digits of a number, the repair of broken UTF-8, sorting with a comparator.
 
 The GC heap never becomes `context.allocator`. Allocating a TS value is always an explicit call with a type table; a hidden allocation from `core` in the GC heap would be untyped and invisible to marking. Each exported procedure sets up the runtime `context` on entry (4.3): `allocator` is the call's scratch arena, `temp_allocator` resets when the call ends, `assertion_failure_proc` produces a runtime error per 3.8.
 
-**Semantics always follow ECMAScript.** Where `core` has a procedure with the same name but different rules, `core` works as the engine underneath, and the project writes the TS layer on top. Numbers already work this way: `core:strconv` gives the shortest digits, the `1e21` and `1e-7` thresholds are ours. The same applies to string case (`toUpperCase` by full Unicode rules, where `ß` becomes `SS`), number parsing (`parseFloat`), string comparison by 16-bit units, and sort order.
+**Semantics always follow ECMAScript.** Where `core` has a procedure with the same name but different rules, `core` works as the engine underneath, and the project writes the TS layer on top. Numbers already work this way: `core:strconv/decimal` does the exact decimal arithmetic, and the shortest digits, the `1e21` and `1e-7` thresholds and the reading of long literals are ours. The same applies to string case (`toUpperCase` by full Unicode rules, where `ß` becomes `SS`), number parsing (`parseFloat`), string comparison by 16-bit units, and sort order.
 
 | What | From `core` | Ours |
 |---|---|---|
 | GC heap pages | `mem/virtual.reserve`, `commit` (both `contextless`) | size classes, object-start map, marking and sweeping |
-| Strings | built-in `string16`, `unicode/utf16` | cell in the GC heap, methods from 2.2, full case rules from tables generated from the Unicode Character Database (the tables of `core:unicode` are from an old Unicode version and stop at the BMP) |
-| Numbers to string and back | `strconv.generic_ftoa`, `strconv.parse_f64_prefix` | `Number::toString` rules (3.1), `ToNumber` grammar |
-| Array sorting | `slice.stable_sort_by` over indices into a temporary copy, TS comparator through `context.user_ptr` | comparator rules, `undefined` to the end, the order of strings without a comparator |
+| Strings | built-in `string16`, `unicode/utf16`, the byte ranges of `unicode/utf8` | cell in the GC heap, methods from 2.2, UTF-8 decoding that turns each broken sequence into one U+FFFD as `Buffer.toString` does, full case rules from tables generated from the Unicode Character Database (the tables of `core:unicode` are from an old Unicode version and stop at the BMP) |
+| Numbers to string and back | `strconv/decimal` (exact expansion, shifts, rounding), `strconv.decimal_to_float_bits` | `Number::toString` rules (3.1), `ToNumber` grammar, the shortest digits (Go's current `roundShortest`: the copy in `core:strconv` predates two of its fixes), the digits of a literal past the 384 that `decimal.set` keeps, an exact comparison with the halfway point for a literal of more than 190 significant digits |
+| Array sorting | nothing | a natural merge sort over indices into a temporary copy, in the manner of TimSort: n - 1 comparator calls for sorted or reversed input, as in V8; comparator rules, `undefined` to the end, the order of strings without a comparator |
 | Console | `core:os` for stdout, `io.write_string16` (re-encodes to UTF-8) | output format per 3.9 |
 | Objects, arrays, closures, `Map`, `Set` | nothing | everything, layout shaped for GC type tables |
 | `Math` | nothing, see below | only differences from C |

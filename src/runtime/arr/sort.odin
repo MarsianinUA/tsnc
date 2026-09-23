@@ -1,15 +1,13 @@
 package arr
 
-import core_slice "core:slice"
-
 import "../../abi"
 import "../gc"
 import "../str"
 
 /*
 Array.prototype.sort, with a comparator and without one (requirements 4.5, row "Array sorting").
-Both run the same way: the elements are copied into a new array that nothing else holds,
-slice.stable_sort_by orders a scratch list of indices into the copy, and the order is written back.
+Both run the same way: the elements are copied into a new array that nothing else holds, a merge
+sort orders a scratch list of indices into the copy, and the order is written back.
 
 The copy is what keeps a comparator safe. It is TypeScript code, so it may allocate, and so collect,
 and it may push to the array or pop from it. The collector scans the copy as an array of the same
@@ -18,9 +16,10 @@ only the copy, whose buffer never grows. Indices are what move, never elements, 
 held only in a register of the sort while a comparator runs. The write-back follows the
 specification's Set: an index past a length the comparator shortened appends.
 
-undefined goes last and never reaches a comparator. The sort is stable, as ECMAScript asks; the
-order and the number of comparator calls are not V8's, which a program that prints inside its
-comparator can see.
+undefined goes last and never reaches a comparator. The sort is stable, as ECMAScript asks, and a
+natural merge sort in the manner of TimSort, which V8 runs: a sorted or a reversed array costs
+n - 1 comparator calls, as in V8, and a shuffled one about n log2 n. The order of the calls is not
+V8's, which a program that prints inside its comparator can see.
 */
 
 // The shapes of a comparator's code by the element kind of the array, in the closure convention of
@@ -41,9 +40,7 @@ Compare_Tagged :: #type proc "c" (
 	b_payload: u64,
 ) -> f64
 
-// Sort_State lives on the stack of the sort, where the collector sees the copy and the closure, and
-// reaches the ordering procedure through context.user_ptr: slice.stable_sort_by takes a procedure
-// and no data.
+// Sort_State lives on the stack of the sort, where the collector sees the copy and the closure.
 @(private)
 Sort_State :: struct {
 	items:   ^abi.Array_Cell, // the copy
@@ -53,8 +50,13 @@ Sort_State :: struct {
 	keys:    []string16, // sort_default: ToString of each item, by index into items
 }
 
+// MIN_RUN is the length a shorter run grows to by binary insertion before the merges. TimSort
+// picks it between 32 and 64.
+@(private)
+MIN_RUN :: 32
+
 // sort orders the array by `compare`, a closure whose code has the Compare_ shape of the array's
-// element kind. NaN from the comparator counts as 0.
+// element kind.
 sort :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, compare: ^abi.Closure_Cell) {
 	if array.length < 2 {
 		return
@@ -62,8 +64,7 @@ sort :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, compare: ^abi.Closure_Cell)
 	state := start_sort(heap, array)
 	defer delete(state.order)
 	state.compare = compare
-	context.user_ptr = &state
-	core_slice.stable_sort_by(state.order, by_comparator)
+	merge_sort(&state)
 	write_back(heap, array, &state)
 }
 
@@ -93,8 +94,7 @@ sort_default :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> (ok: bool) {
 		state.keys[index] = string16(pool[spans[index][0]:spans[index][1]])
 	}
 
-	context.user_ptr = &state
-	core_slice.stable_sort_by(state.order, by_key)
+	merge_sort(&state)
 	write_back(heap, array, &state)
 	return true
 }
@@ -115,37 +115,140 @@ start_sort :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> Sort_State {
 	return {items = items, kind = kind, order = order[:]}
 }
 
+// merge_sort leaves a permutation even for a comparator that contradicts itself: every step moves
+// indices and never loses or copies one.
 @(private)
-by_comparator :: proc(i, j: int) -> bool {
-	state := (^Sort_State)(context.user_ptr)
+merge_sort :: proc(state: ^Sort_State) {
+	order := state.order
+	ends := make([dynamic]int)
+	defer delete(ends)
+	for start := 0; start < len(order); {
+		end := run_end(state, order, start)
+		if end - start < MIN_RUN {
+			limit := min(start + MIN_RUN, len(order))
+			insert_sorted(state, order[start:limit], end - start)
+			end = limit
+		}
+		append(&ends, end)
+		start = end
+	}
+	if len(ends) == 1 {
+		return
+	}
+
+	scratch := make([]int, len(order))
+	defer delete(scratch)
+	for len(ends) > 1 {
+		// An odd run out waits for the next round.
+		start, kept := 0, 0
+		for i := 0; i < len(ends); i += 2 {
+			end := ends[i]
+			if i + 1 < len(ends) {
+				end = ends[i + 1]
+				merge(state, order[start:end], ends[i] - start, scratch)
+			}
+			ends[kept] = end
+			kept += 1
+			start = end
+		}
+		resize(&ends, kept)
+	}
+}
+
+// run_end reverses a descending run, and only a strictly descending one: equal elements would
+// change places.
+@(private)
+run_end :: proc(state: ^Sort_State, order: []int, start: int) -> int {
+	end := start + 1
+	if end == len(order) {
+		return end
+	}
+	descending := less(state, order[end], order[start])
+	for end + 1 < len(order) && less(state, order[end + 1], order[end]) == descending {
+		end += 1
+	}
+	end += 1
+	if descending {
+		for i, j := start, end - 1; i < j; i, j = i + 1, j - 1 {
+			order[i], order[j] = order[j], order[i]
+		}
+	}
+	return end
+}
+
+// insert_sorted extends the sorted first `sorted` indices of `part` over all of it. Each index goes
+// after the ones that compare equal to it.
+@(private)
+insert_sorted :: proc(state: ^Sort_State, part: []int, sorted: int) {
+	for i in sorted ..< len(part) {
+		item := part[i]
+		low, high := 0, i
+		for low < high {
+			middle := (low + high) / 2
+			if less(state, item, part[middle]) {
+				high = middle
+			} else {
+				low = middle + 1
+			}
+		}
+		copy(part[low + 1:i + 1], part[low:i])
+		part[low] = item
+	}
+}
+
+// merge takes from the left half on a tie, which keeps the sort stable. Only the left half moves
+// to `scratch`: the merge fills `run` from the front and never passes the next index of the right
+// half it has yet to read.
+@(private)
+merge :: proc(state: ^Sort_State, run: []int, middle: int, scratch: []int) {
+	// Halves already in order cost one comparison.
+	if !less(state, run[middle], run[middle - 1]) {
+		return
+	}
+	left := scratch[:middle]
+	copy(left, run[:middle])
+	i, j, k := 0, middle, 0
+	for i < len(left) && j < len(run) {
+		if less(state, run[j], left[i]) {
+			run[k] = run[j]
+			j += 1
+		} else {
+			run[k] = left[i]
+			i += 1
+		}
+		k += 1
+	}
+	copy(run[k:], left[i:])
+}
+
+// less is whether the item at index a of the copy goes before the one at b.
+@(private)
+less :: proc(state: ^Sort_State, a, b: int) -> bool {
+	if state.compare == nil {
+		return str.compare_units(state.keys[a], state.keys[b]) < 0
+	}
 	code, env := state.compare.code, state.compare.env
-	a, b := slot(state.items, state.kind, i), slot(state.items, state.kind, j)
+	x, y := slot(state.items, state.kind, a), slot(state.items, state.kind, b)
 	order: f64
 	switch state.kind {
 	case .Number:
-		order = Compare_Numbers(code)(env, (^f64)(a)^, (^f64)(b)^)
+		order = Compare_Numbers(code)(env, (^f64)(x)^, (^f64)(y)^)
 	case .Boolean:
-		order = Compare_Booleans(code)(env, (^b64)(a)^, (^b64)(b)^)
+		order = Compare_Booleans(code)(env, (^b64)(x)^, (^b64)(y)^)
 	case .Ref:
-		order = Compare_Refs(code)(env, (^^abi.Cell_Header)(a)^, (^^abi.Cell_Header)(b)^)
+		order = Compare_Refs(code)(env, (^^abi.Cell_Header)(x)^, (^^abi.Cell_Header)(y)^)
 	case .Tagged:
-		x, y := (^abi.Tagged)(a)^, (^abi.Tagged)(b)^
+		v, w := (^abi.Tagged)(x)^, (^abi.Tagged)(y)^
 		order = Compare_Tagged(code)(
 			env,
-			x.tag,
-			transmute(u64)x.payload,
-			y.tag,
-			transmute(u64)y.payload,
+			v.tag,
+			transmute(u64)v.payload,
+			w.tag,
+			transmute(u64)w.payload,
 		)
 	}
 	// NaN is not below 0, which is how the specification reads it as +0.
 	return order < 0
-}
-
-@(private)
-by_key :: proc(i, j: int) -> bool {
-	state := (^Sort_State)(context.user_ptr)
-	return str.compare_units(state.keys[i], state.keys[j]) < 0
 }
 
 // write_back stores the sorted elements, then the undefined ones, over the array from index 0. An

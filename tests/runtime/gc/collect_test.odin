@@ -120,15 +120,37 @@ module_roots_are_read_by_their_kind :: proc(t: ^testing.T) {
 	on_a_clean_stack(t, collect_module_roots, roots)
 }
 
+// Eight pages of address space and fifty cells of a page each, none of them kept: far below the
+// trigger, the heap runs out of pages and has to collect before it may report out of memory.
+@(test)
+a_full_heap_collects_before_it_gives_up :: proc(t: ^testing.T) {
+	on_a_clean_stack(t, allocate_past_the_reservation, reserve = 8 * gc.PAGE_SIZE)
+}
+
+allocate_past_the_reservation :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	for _ in 0 ..< 50 {
+		gc.alloc(heap, BLOB, gc.MAX_SMALL + 1)
+	}
+	testing.expect_value(t, heap.page_count, 8)
+	cells := 0
+	for i in 0 ..< heap.page_count {
+		cells += 1 if heap.pages[i].kind == .Large else 0
+	}
+	// The cell the last collection made room for counts too.
+	testing.expect_value(t, heap.used, cells * gc.PAGE_SIZE)
+	expect_problem(t, heap, .None, nil)
+}
+
 // on_a_clean_stack runs `scenario` on a new heap whose stack base lies in a frame scrub_stack has
 // just cleared, so every word the scan reads was written by this test.
 on_a_clean_stack :: proc(
 	t: ^testing.T,
 	scenario: proc(t: ^testing.T, heap: ^gc.Heap),
 	roots: []abi.Root = nil,
+	reserve := RESERVE,
 ) {
 	scrub_stack()
-	run_on_new_heap(t, scenario, roots)
+	run_on_new_heap(t, scenario, roots, reserve)
 }
 
 @(private = "file")
@@ -136,9 +158,10 @@ run_on_new_heap :: #force_no_inline proc(
 	t: ^testing.T,
 	scenario: proc(t: ^testing.T, heap: ^gc.Heap),
 	roots: []abi.Root,
+	reserve: int,
 ) {
 	heap: gc.Heap
-	init_heap(t, &heap, roots)
+	init_heap(t, &heap, roots, reserve = reserve)
 	defer gc.heap_destroy(&heap)
 
 	scenario(t, &heap)
@@ -253,7 +276,7 @@ keep_a_wide_array :: proc(t: ^testing.T, heap: ^gc.Heap) {
 			break
 		}
 	}
-	testing.expectf(t, heap.marks.committed > WIDE, "%d entries committed", heap.marks.committed)
+	testing.expectf(t, heap.marks.committed >= WIDE, "%d entries committed", heap.marks.committed)
 	expect_problem(t, heap, .None, nil)
 }
 

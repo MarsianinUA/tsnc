@@ -73,10 +73,7 @@ exit_code :: proc "contextless" (code: f64) -> (exit: int, ok: bool) {
 	if math.is_inf(code) || code != math.trunc(code) {
 		return 0, false
 	}
-	// The remainder of an integer by 2^32 is exact, and it lies strictly between -2^32 and 2^32,
-	// so i64 holds it and u32 keeps its low 32 bits, the way ToInt32 wraps a negative one.
-	wrapped := math.mod(code, 4294967296)
-	return int(i32(u32(i64(wrapped)))), true
+	return int(i32(to_uint32(code))), true
 }
 
 // to_integer is ToIntegerOrInfinity, which the String and Array methods apply to a position before
@@ -87,6 +84,17 @@ to_integer :: proc "contextless" (value: f64) -> f64 {
 		return 0
 	}
 	return math.trunc(value)
+}
+
+// to_uint32 is ToUint32: NaN and the infinities are 0, anything else wraps modulo 2^32, so -1 is
+// 4294967295.
+to_uint32 :: proc "contextless" (value: f64) -> u32 {
+	if value != value || math.is_inf(value) {
+		return 0
+	}
+	// The remainder lies strictly between -2^32 and 2^32, so i64 holds it and u32 keeps the low 32
+	// bits of a negative one.
+	return u32(i64(math.mod(math.trunc(value), 4294967296)))
 }
 
 // relative_index is how slice reads start and end, and indexOf and includes of an array read where

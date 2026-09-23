@@ -145,8 +145,8 @@ verify_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header, slot_size: int) -> Heap
 }
 
 // verify_elements reads `elements` as abi describes it: the first of `capacity` slots inside a
-// heap cell of their own, after that cell's header. The buffer is checked even when the array is
-// empty, since the next push writes into it.
+// Buffer cell of their own, right after that cell's header. The buffer is checked even when the
+// array is empty, since the next push writes into it.
 @(private = "file")
 verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind) -> Heap_Problem {
 	if array.length < 0 || array.length > array.capacity {
@@ -160,12 +160,11 @@ verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind
 	if buffer == nil {
 		return .Dangling_Reference
 	}
-	start := uintptr(array.elements)
-	after_header := start >= uintptr(buffer) + size_of(abi.Cell_Header)
-	if !after_header || start % size_of(u64) != 0 {
+	is_buffer := buffer.type_table == abi.Type_Table_ID(abi.Builtin_Table.Buffer)
+	if !is_buffer || uintptr(array.elements) != uintptr(buffer) + size_of(abi.Cell_Header) {
 		return .Bad_Cell
 	}
-	room := int(uintptr(buffer) + uintptr(slot_of(heap, buffer)) - start)
+	room := slot_of(heap, buffer) - size_of(abi.Cell_Header)
 	if array.capacity > room / abi.SLOT_SIZE[kind] {
 		return .Bad_Cell
 	}

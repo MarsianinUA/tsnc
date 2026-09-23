@@ -263,7 +263,7 @@ array_program :: proc() -> ir.Program_IR {
 
 	text := ir.emit(&f, ir.STR, ir.Const_String{text = cab}, SPAN)
 	separator := ir.emit(&f, ir.STR, ir.Const_String{text = comma}, SPAN)
-	no_limit := number(&f, 4294967295)
+	no_limit := number(&f, abi.MISSING_LIMIT)
 	zero := number(&f, 0)
 	pieces := call(&f, .String_Split, strings_type, text, separator, no_limit)
 
