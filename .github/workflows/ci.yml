@@ -70,6 +70,11 @@ jobs:
       - name: Runtime object
         run: odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-${{ matrix.target }}.obj -vet -strict-style
 
+      # The case table generator runs only by hand (docs/development.md), so CI checks that it still
+      # compiles.
+      - name: Case table generator
+        run: odin check src/runtime/str/tools -vet -strict-style
+
       # Every test package: tests/<package> and tests/runtime/<package>. A failing package does not
       # stop the others, so one log shows every failure.
       - name: Unit tests

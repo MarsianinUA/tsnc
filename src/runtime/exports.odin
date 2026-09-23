@@ -7,9 +7,10 @@ import "../abi"
 import "console"
 import "fail"
 import "num"
+import "str"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 9)
+#assert(len(abi.Runtime_Proc) == 24)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -69,6 +70,116 @@ math_min :: proc "c" (a, b: f64) -> f64 {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	return num.min(a, b)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Concat].symbol)
+string_concat :: proc "c" (a, b: ^abi.String_Cell) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.concat(&heap, a, b)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Equal].symbol)
+string_equal :: proc "c" (a, b: ^abi.String_Cell) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(str.equal(a, b))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Less].symbol)
+string_less :: proc "c" (a, b: ^abi.String_Cell) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(str.compare(a, b) < 0)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_At].symbol)
+string_at :: proc "c" (text: ^abi.String_Cell, index: f64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.unit_at(&heap, text, index)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Char_Code_At].symbol)
+string_char_code_at :: proc "c" (text: ^abi.String_Cell, position: f64) -> f64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.char_code_at(text, position)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Slice].symbol)
+string_slice :: proc "c" (text: ^abi.String_Cell, start, end: f64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.slice(&heap, text, start, end)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Index_Of].symbol)
+string_index_of :: proc "c" (text, search: ^abi.String_Cell, position: f64) -> f64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return f64(str.index_of(text, search, position))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Starts_With].symbol)
+string_starts_with :: proc "c" (text, search: ^abi.String_Cell, position: f64) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(str.starts_with(text, search, position))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Ends_With].symbol)
+string_ends_with :: proc "c" (text, search: ^abi.String_Cell, end: f64) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(str.ends_with(text, search, end))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Trim].symbol)
+string_trim :: proc "c" (text: ^abi.String_Cell) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.trim(&heap, text)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_To_Upper].symbol)
+string_to_upper :: proc "c" (text: ^abi.String_Cell) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.to_upper(&heap, text)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_To_Lower].symbol)
+string_to_lower :: proc "c" (text: ^abi.String_Cell) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.to_lower(&heap, text)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Number_To_String].symbol)
+number_to_string :: proc "c" (value: f64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.from_number(&heap, value)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Number_To_Fixed].symbol)
+number_to_fixed :: proc "c" (value, digits: f64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	text, ok := str.to_fixed(&heap, value, digits)
+	if !ok {
+		// A RangeError in Node, which ends the process the way process_exit's does.
+		fail.at({error = .Fraction_Digits_Out_Of_Range})
+	}
+	return text
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Number_Parse_Float].symbol)
+number_parse_float :: proc "c" (text: ^abi.String_Cell) -> f64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.parse_float(text)
 }
 
 // No temp guard below: the process ends inside. The rows tell codegen the same through `diverges`.

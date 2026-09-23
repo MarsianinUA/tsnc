@@ -97,7 +97,7 @@ skip_whitespace :: proc(text: string) -> int {
 // is_whitespace is the whitespace of the ToNumber grammar: the line terminators and the Zs
 // category, plus tab, vertical tab, form feed and the zero width no-break space. It is not the
 // Unicode White_Space property, which also holds U+0085, and parseFloat("\u00853") is NaN.
-@(private)
+// String.prototype.trim strips the same set, so package str reads it from here.
 is_whitespace :: proc "contextless" (r: rune) -> bool {
 	switch r {
 	case '\t', '\n', '\v', '\f', '\r', ' ':

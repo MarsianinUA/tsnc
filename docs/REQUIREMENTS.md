@@ -160,7 +160,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 | What | From `core` | Ours |
 |---|---|---|
 | GC heap pages | `mem/virtual.reserve`, `commit` (both `contextless`) | size classes, object-start map, marking and sweeping |
-| Strings | built-in `string16`, `unicode/utf16`, `unicode` for case | cell in the GC heap, methods from 2.2, full case rules |
+| Strings | built-in `string16`, `unicode/utf16` | cell in the GC heap, methods from 2.2, full case rules from tables generated from the Unicode Character Database (the tables of `core:unicode` are from an old Unicode version and stop at the BMP) |
 | Numbers to string and back | `strconv.generic_ftoa`, `strconv.parse_f64_prefix` | `Number::toString` rules (3.1), `ToNumber` grammar |
 | Array sorting | `slice.stable_sort_by` over a temporary copy, TS comparator through `context.user_ptr` | comparator rules, `undefined` to the end |
 | Console | `core:os` for stdout, `io.write_string16` (re-encodes to UTF-8) | output format per 3.9 |
