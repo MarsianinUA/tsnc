@@ -16,8 +16,9 @@ TYPE_TABLES_SYMBOL :: "tsnc_type_tables"
 ROOTS_SYMBOL :: "tsnc_roots"
 
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
-// maps each to one LLVM type, a Tagged to two. A boolean is b64 here, the width the package uses
-// for a boolean slot, so no export depends on how a C compiler widens a narrower one.
+// maps each to one LLVM type, a Tagged parameter to two words and a Tagged result to a leading
+// slot. A boolean is b64 here, the width the package uses for a boolean slot, so no export depends
+// on how a C compiler widens a narrower one.
 C_Type :: enum u8 {
 	Void,
 	Ptr,
@@ -94,8 +95,14 @@ Runtime_Export :: struct {
 	diverges: bool,
 }
 
+// The numbers the specification treats exactly as `undefined` where a call leaves an argument out.
+// Lower passes the same number for an `undefined` known only at run time. Never NaN: slice(0, NaN)
+// is "", while slice(0) is the whole string.
+MISSING_END :: 0h7ff0_0000_0000_0000 // +Infinity
+MISSING_LIMIT :: 4294967295 // 2^32 - 1, split's limit
+
 // RUNTIME_EXPORTS gives each runtime export its symbol and C signature. The runtime names its
-// exports from it (`@(export, link_name = ...)`) and codegen declares them from the same rows.
+// exports from it (`link_name`) and codegen declares them from the same rows.
 // Every symbol starts with `tsnc_` to stay clear of libc and Odin.
 RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Console_String = {symbol = "tsnc_console_string", params = {.Boolean, .Ptr}, result = .Void},
@@ -119,11 +126,9 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Math_Round = {symbol = "tsnc_math_round", params = {.Number}, result = .Number},
 	.Math_Max = {symbol = "tsnc_math_max", params = {.Number, .Number}, result = .Number},
 	.Math_Min = {symbol = "tsnc_math_min", params = {.Number, .Number}, result = .Number},
-	// An argument TypeScript lets a call leave out still arrives, as the number the specification
-	// treats exactly as `undefined` there: +Infinity for an end, 0 for a start, a position or a
-	// digit count, 4294967295 for a limit. Lower passes the same number for an `undefined` known
-	// only at run time. Never NaN: slice(0, NaN) is "", while slice(0) is the whole string. A
-	// separator join was not given is the string constant ",".
+	// An argument TypeScript lets a call leave out arrives as MISSING_END for an end, MISSING_LIMIT
+	// for a limit, and 0 for a start, a position or a digit count. A separator join was not given
+	// is the string constant ",".
 	.String_Concat = {symbol = "tsnc_string_concat", params = {.Ptr, .Ptr}, result = .Ptr},
 	.String_Equal = {symbol = "tsnc_string_equal", params = {.Ptr, .Ptr}, result = .Boolean},
 	.String_Less = {symbol = "tsnc_string_less", params = {.Ptr, .Ptr}, result = .Boolean},
@@ -199,6 +204,7 @@ Runtime_Error :: enum i32 {
 	// Node prints a function's source text, which a compiled program does not keep, and calls an
 	// object's own toString.
 	Not_Convertible_To_String,
+	Invalid_String_Length, // a string past str.MAX_LENGTH units: Node's RangeError
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

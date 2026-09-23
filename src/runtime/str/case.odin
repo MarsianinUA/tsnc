@@ -206,7 +206,7 @@ code_point_at :: proc "contextless" (source: []u16, at: int) -> (r: rune, width:
 	return rune(source[at]), 1
 }
 
-// code_point_before reads the code point that ends just before `at`.
+// code_point_before follows code_point_at's rule for a lone surrogate.
 @(private)
 code_point_before :: proc "contextless" (source: []u16, at: int) -> (r: rune, width: int) {
 	if at >= 2 {

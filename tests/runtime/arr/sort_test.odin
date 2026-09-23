@@ -143,6 +143,121 @@ a_comparator_that_changes_the_array_sees_node_semantics :: proc(t: ^testing.T) {
 	expect_numbers(t, &heap, shrunk, {1, 2, 3})
 }
 
+// The comparator sorts the same array the other way round on its first call. The outer sort then
+// writes its own order over that, as in Node:
+//
+//	node -e 'const a = [3, 1, 2]; let once = true; a.sort((x, y) => { if (once) { once = false; a.sort((p, q) => q - p) } return x - y }); console.log(a)'
+@(test)
+a_comparator_may_sort_the_same_array :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	a := numbers(&heap, 3, 1, 2)
+	stub := Stub {
+		heap  = &heap,
+		array = a,
+	}
+	arr.sort(&heap, a, &abi.Closure_Cell{code = rawptr(sort_down_once), env = environment(&stub)})
+	expect_numbers(t, &heap, a, {1, 2, 3})
+}
+
+// A sorted and a reversed array cost n - 1 calls each, as in Node; a shuffled one n log2 n at most.
+//
+//	node -e 'let c = 0; Array.from({length: 1000}, (_, i) => 999 - i).sort((a, b) => { c++; return a - b }); console.log(c)'
+@(test)
+a_comparator_is_called_as_often_as_in_node :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	N :: 1000
+	LOG2_N :: 10 // rounded up
+	sorted, reversed, shuffled := numbers(&heap), numbers(&heap), numbers(&heap)
+	state := u64(1)
+	for i in 0 ..< N {
+		arr.push(&heap, sorted, number(f64(i)))
+		arr.push(&heap, reversed, number(f64(N - 1 - i)))
+		arr.push(&heap, shuffled, number(f64(random(&state) % N)))
+	}
+	for a, i in ([?]^abi.Array_Cell{sorted, reversed, shuffled}) {
+		stub := Stub {
+			sign = 1,
+		}
+		arr.sort(
+			&heap,
+			a,
+			&abi.Closure_Cell{code = rawptr(by_difference), env = environment(&stub)},
+		)
+		if i < 2 {
+			testing.expectf(t, stub.calls == N - 1, "array %d: %d calls", i, stub.calls)
+		} else {
+			testing.expectf(t, stub.calls <= N * LOG2_N, "shuffled: %d calls", stub.calls)
+		}
+		expect_ascending(t, &heap, a)
+	}
+}
+
+// 5000 numbers with 50 keys, their integer parts, and each fraction records where its number
+// started: a stable sort by key leaves them in ascending order.
+@(test)
+a_long_sort_keeps_equal_elements_in_order :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	N :: 5000
+	a := numbers(&heap)
+	state := u64(7)
+	for i in 0 ..< N {
+		arr.push(&heap, a, number(f64(random(&state) % 50) + f64(i) / N))
+	}
+	arr.sort(&heap, a, &abi.Closure_Cell{code = rawptr(by_integer_part)})
+	expect_ascending(t, &heap, a)
+}
+
+// A comparator that contradicts itself leaves the order to the implementation, but every element
+// is still there once.
+@(test)
+an_inconsistent_comparator_still_permutes :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	N :: 1000
+	a := numbers(&heap)
+	for i in 0 ..< N {
+		arr.push(&heap, a, number(f64(i)))
+	}
+	stub: Stub
+	arr.sort(&heap, a, &abi.Closure_Cell{code = rawptr(contradict), env = environment(&stub)})
+	testing.expect_value(t, a.length, N)
+	seen: [N]bool
+	for i in 0 ..< N {
+		x := int(arr.element_at(&heap, a, i).payload.number)
+		testing.expectf(t, !seen[x], "%d is there twice", x)
+		seen[x] = true
+	}
+}
+
+// Only the sign of the answer counts, so a fraction or an infinity sorts as 1 does:
+//
+//	node -e 'console.log([0.3, 0.1, 0.25, 0.2].sort((x, y) => (x - y) / 1000), [3, 1, 2, 5, 4].sort((x, y) => x < y ? -Infinity : Infinity))'
+@(test)
+the_sign_of_a_comparator_is_what_counts :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	a := numbers(&heap, 0.3, 0.1, 0.25, 0.2)
+	arr.sort(&heap, a, &abi.Closure_Cell{code = rawptr(by_thousandths)})
+	expect_numbers(t, &heap, a, {0.1, 0.2, 0.25, 0.3})
+
+	b := numbers(&heap, 3, 1, 2, 5, 4)
+	arr.sort(&heap, b, &abi.Closure_Cell{code = rawptr(by_infinity)})
+	expect_numbers(t, &heap, b, {1, 2, 3, 4, 5})
+}
+
 @(test)
 fewer_than_two_elements_call_nothing :: proc(t: ^testing.T) {
 	heap: gc.Heap
@@ -289,6 +404,68 @@ push_nine_once :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
 	}
 	stub.calls += 1
 	return a - b
+}
+
+sort_down_once :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
+	context = runtime.default_context()
+	stub := (^Stub)(env)
+	stub.calls += 1
+	if stub.calls == 1 {
+		down := Stub {
+			sign = -1,
+		}
+		arr.sort(
+			stub.heap,
+			stub.array,
+			&abi.Closure_Cell{code = rawptr(by_difference), env = environment(&down)},
+		)
+	}
+	return a - b
+}
+
+contradict :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
+	stub := (^Stub)(env)
+	stub.calls += 1
+	answers := [?]f64{-1, 1, NAN, -INF}
+	return answers[stub.calls % len(answers)]
+}
+
+by_thousandths :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
+	return (a - b) / 1000
+}
+
+by_infinity :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
+	return -INF if a < b else INF
+}
+
+expect_ascending :: proc(
+	t: ^testing.T,
+	heap: ^gc.Heap,
+	array: ^abi.Array_Cell,
+	loc := #caller_location,
+) {
+	for i in 1 ..< array.length {
+		x, y := arr.element_at(heap, array, i - 1), arr.element_at(heap, array, i)
+		if x.payload.number > y.payload.number {
+			testing.expectf(
+				t,
+				false,
+				"%v comes before %v",
+				x.payload.number,
+				y.payload.number,
+				loc = loc,
+			)
+			return
+		}
+	}
+}
+
+// random is xorshift64, which shuffles a test array the same way on every run.
+random :: proc(state: ^u64) -> u64 {
+	state^ ~= state^ << 13
+	state^ ~= state^ >> 7
+	state^ ~= state^ << 17
+	return state^
 }
 
 pop_two_once :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {

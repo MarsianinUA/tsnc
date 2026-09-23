@@ -149,6 +149,10 @@ read_special_casing :: proc(lines: []string) -> []Special {
 			}
 			fail("SpecialCasing.txt: the runtime has no rule for %q", line)
 		}
+		// str.write_case tells a row that maps to itself by comparing it with {u16(r), 0, 0}.
+		if code > 0xffff {
+			fail("SpecialCasing.txt: %04X has a row and is no BMP character", code)
+		}
 		lower := full_mapping(code, fields[1])
 		upper := full_mapping(code, fields[3])
 		append(&specials, Special{code, lower, upper})

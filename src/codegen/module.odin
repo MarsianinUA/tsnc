@@ -179,7 +179,6 @@ declare_runtime :: proc(
 		params := make([dynamic]llvm.LLVMTypeRef, context.temp_allocator)
 		result := export.result
 		if result == .Tagged {
-			// The caller's slot for it comes first, and the export returns nothing.
 			append(&params, types.ptr)
 			result = .Void
 		}
@@ -216,8 +215,6 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 	case .Number:
 		return types.double
 	case .Boolean:
-		// b64, so the call site widens its i1 and no export depends on how a C ABI passes a
-		// narrower boolean.
 		return types.int64
 	case .Tagged:
 		// Two parameters, or a slot for a result, which declare_runtime spells itself.
@@ -249,8 +246,10 @@ declare_funcs :: proc(m: ^Module, unit: ir.Unit) {
 	}
 }
 
-// func_signature puts the environment of a function that captures ahead of the TypeScript
-// parameters, which is the closure convention of abi.
+// func_signature puts the environment ahead of the TypeScript parameters only when the function
+// captures, a boolean in i1 and a tagged value in one struct. That is not the closure convention of
+// abi.Closure_Cell yet, where the environment always comes first, a boolean is b64 and a tagged
+// value two words: T5.8 brings the two together before a function reaches the runtime.
 @(private)
 func_signature :: proc(m: ^Module, body: ir.Func) -> llvm.LLVMTypeRef {
 	first := 1 if body.env != ir.NO_LAYOUT else 0

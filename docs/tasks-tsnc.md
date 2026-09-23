@@ -304,7 +304,7 @@ Done: tests, including a call to a stub comparator through the calling conventio
 
 ### [ ] T5.6 Full `console` and `process`
 
-What: Node format for objects and arrays in simple cases (`[ 1, 2, 3 ]`, `{ a: 1, b: 'x' }`) through type tables with field names, nesting; `console.error`; `process.argv` as an array of strings from the OS arguments (UTF-8 to UTF-16); `process.exit`. Two leftovers of the milestone 4 review belong here. A `console.log` of N arguments is 2N unbuffered writes (`src/runtime/console/console.odin`), so a loop that prints is several times slower than Node: buffer one statement without adding runtime state. And `process.argv` must come from `GetCommandLineW` on Windows, because Odin's `os.args` is the ANSI `argv` and turns a non-ASCII argument into code page bytes, which `command_line` in `src/main.odin` already works around for the compiler through `os.current_process_info`.
+What: Node format for objects and arrays in simple cases (`[ 1, 2, 3 ]`, `{ a: 1, b: 'x' }`) through type tables with field names, nesting; `console.error`; `process.argv` as an array of strings from the OS arguments (UTF-8 to UTF-16); `process.exit`. Two leftovers of the milestone 4 review belong here. A `console.log` of N arguments is 2N unbuffered writes (`src/runtime/console/console.odin`), so a loop that prints is several times slower than Node: buffer one statement without adding runtime state. And `process.argv` must come from `GetCommandLineW` on Windows, because Odin's `os.args` is the ANSI `argv` and turns a non-ASCII argument into code page bytes, which `command_line` in `src/main.odin` already works around for the compiler through `os.current_process_info`. On POSIX the arguments reach `str.from_utf8`, which already decodes as Node's `Buffer.toString` does: one U+FFFD for each maximal broken sequence, and a leading byte order mark kept.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `console`; requirements §3.9, §2.2 (standard library), §13 (Node format risk).
 After: T5.5.
 Done: output tests against Node values on a set of simple values.
@@ -318,7 +318,7 @@ Done: diff tests for objects and arrays pass in normal and stress mode.
 
 ### [ ] T5.8 `lower`: closures
 
-What: a function value as a pair (code, environment); the environment as a heap cell with a type table; captured mutable variables in heap cells, immutable ones by copy; a new `let` binding per iteration; indirect call through `call_closure`; passing closures to the runtime (sorting). What T5.5 left for this task: `Array_Sort` calls the comparator as `code(env, a, b) -> f64`, env first even when it is nil, a boolean as b64 and a tagged value as its two words (`abi.Closure_Cell`), so the closure passed to it needs exactly the `(T, T) => number` shape, with an adapter where the TS function's parameters differ. The runtime calls the comparator in another order than V8's TimSort, so no corpus program may print inside one.
+What: a function value as a pair (code, environment); the environment as a heap cell with a type table; captured mutable variables in heap cells, immutable ones by copy; a new `let` binding per iteration; indirect call through `call_closure`; passing closures to the runtime (sorting). What T5.5 left for this task: `Array_Sort` calls the comparator as `code(env, a, b) -> f64`, env first even when it is nil, a boolean as b64 and a tagged value as its two words (`abi.Closure_Cell`), so the closure passed to it needs exactly the `(T, T) => number` shape. `codegen.func_signature` does not follow that convention yet: a function that captures nothing gets no env parameter, a boolean travels as `i1` and a tagged value as one `{i64, i64}` struct. So every function that captures nothing differs too, not only one whose TS parameters differ: either codegen emits a closure body in the `abi` convention or an adapter bridges it. The runtime calls the comparator in another order than V8's TimSort, so no corpus program may print inside one.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`; requirements §3.5, §6 (closures in the heap).
 After: T5.7.
 Done: diff tests: counter closures, closures in a loop capture different `i`, sorting with a comparator.
@@ -332,7 +332,7 @@ Done: diff tests for discriminated unions and `typeof` branches; a failed `x!` p
 
 ### [ ] T5.10 ASan, stress mode in CI, full v1 corpus
 
-What: a runtime build with `-sanitize:address` for a separate run; `runner diff` in GC stress mode; corpus: one program for each §2.2 v1 construct plus programs with allocations and closures in a loop; a `bench/` starter with hello world (startup time, exe size). One leftover of T5.2 belongs here. ASan's fake stack (`detect_stack_use_after_return`, on by default on Linux since LLVM 15) moves every local whose address is taken off the thread stack, where the collector never looks: the stack base `rt.main` passes lands there, so the scan reads past the real stack, and a live cell kept only in such a local would be freed. The ASan run turns the fake stack off (an `__asan_default_options` that answers `detect_stack_use_after_return=0`) or the scan learns the fake frames.
+What: a runtime build with `-sanitize:address` for a separate run; `runner diff` in GC stress mode; corpus: one program for each §2.2 v1 construct plus programs with allocations and closures in a loop; a `bench/` starter with hello world (startup time, exe size). One leftover of T5.2 belongs here. ASan's fake stack (`detect_stack_use_after_return`, on by default on Linux since LLVM 15) moves every local whose address is taken off the thread stack, where the collector never looks: the stack base `rt.main` passes lands there, so the scan reads past the real stack, and a live cell kept only in such a local would be freed. The ASan run turns the fake stack off (an `__asan_default_options` that answers `detect_stack_use_after_return=0`) or the scan learns the fake frames. The stress run includes `-o:speed`: it is the only proof of the register spill in `gc.collect`, since a mutation that emptied `spill_registers` passed every `gc` unit test.
 Where: [Milestones](architecture-plan-tsnc.md#milestones), row 5; [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools); requirements §10 (v1 acceptance criterion, ASan, stress, benchmarks).
 After: T5.9, T5.2.
 Done: the whole corpus is green on three OSes in normal, stress and ASan mode.
@@ -357,7 +357,7 @@ Done: the determinism test runs in CI; the v1 acceptance criterion is fully met.
 
 ### [ ] T6.3 Benchmarks
 
-What: `bench/`: numeric loops, strings, arrays of objects, closures, allocations against Node and Go; startup time and exe size; compile time at `-j:1` and `-j:N` (the cost of duplicated checker work); results in `bench/RESULTS.md` by version.
+What: `bench/`: numeric loops, strings, arrays of objects, closures, allocations against Node and Go; startup time and exe size; compile time at `-j:1` and `-j:N` (the cost of duplicated checker work); results in `bench/RESULTS.md` by version. One idea for the strings benchmark: `str.unit_at` allocates a cell for every `s[i]`, while V8 keeps a cache of single-character strings. Odin cannot build a table of 128 cells at compile time, so 128 spelled-out rows have to pay for themselves in the numbers.
 Where: [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions), the item on private tables; requirements §10 "Benchmarks", §11.
 After: T6.2.
 Done: v1 results are recorded.
@@ -373,7 +373,7 @@ An actionable v2 task cannot be written before the v1 code exists. Each epic sta
 - [ ] E7.5 Index signatures, `Object.keys`, `for...in`, `obj[key]`, `Map`, `Set`; package `rt/table`. Row "Index signatures...".
 - [ ] E7.6 Sugar: destructuring, spread, `?.`, `enum`, `export default`, getters and setters. Row "Destructuring, spread...".
 - [ ] E7.7 `async` and `await`; package `rt/sched`. Row "`async` and `await`".
-- [ ] E7.8 N codegen units and ThinLTO. Row "N codegen units and ThinLTO".
+- [ ] E7.8 N codegen units and ThinLTO. Row "N codegen units and ThinLTO". `codegen.add_type_tables` and `add_roots` emit `tsnc_type_tables` and `tsnc_roots` into every unit's module today, which N units would define N times.
 - [ ] E7.9 Cross-compiling for Linux from Windows; `wasm32-wasi`. Row "Cross-compilation and `wasm32-wasi`".
 - [ ] E7.10 PDB and DWARF debug info. Row "Debug info".
 - [ ] E7.11 Concurrent GC with write barriers; NaN-boxing and precise roots, depending on benchmark results. Rows "Concurrent GC with write barriers", "NaN-boxing, precise roots, shadow stack".

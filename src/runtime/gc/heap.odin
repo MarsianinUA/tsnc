@@ -4,7 +4,8 @@ The GC heap: the cells of every TS value that needs memory (requirements 6).
 One reservation of address space holds the cells. It is handed out in pages of PAGE_SIZE bytes: a
 page either holds slots of one size class or belongs to a run of pages that holds one large cell.
 New pages come from a frontier that only grows. A page the collector empties stays committed below
-the frontier and is handed out again before the frontier moves. A second reservation holds the page
+the frontier and is handed out again before the frontier moves, unless a large cell needs a longer
+run of free pages than any there is: then the frontier grows. A second reservation holds the page
 table, one Page per reserved page, committed in step with the frontier, and a third the mark stack
 of the collector (collect.odin).
 
@@ -227,6 +228,14 @@ type_table :: proc(heap: ^Heap, id: abi.Type_Table_ID) -> (table: abi.Type_Table
 	return heap.tables[index], true
 }
 
+// table_of stops the program even under -disable-assert on a cell of an unknown table: every cell
+// was allocated with a known one, so that is memory corruption.
+table_of :: proc(heap: ^Heap, cell: ^abi.Cell_Header) -> abi.Type_Table {
+	table, known := type_table(heap, cell.type_table)
+	ensure(known, "a cell of an unregistered type table")
+	return table
+}
+
 // array_table finds the program's table for an array of `element` slots. lower makes one table per
 // element kind, and only for the kinds the program uses, which includes the result of every call
 // that answers an array: a `string[]` exists wherever `split` is called.
@@ -257,9 +266,8 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	assert(known, "a cell of an unregistered type table")
 	assert(size >= layout.size, "a cell smaller than its type table")
 
-	small := size <= MAX_SMALL
 	class, count, slot_size: int
-	if small {
+	if size <= MAX_SMALL {
 		class = class_of(size)
 		slot_size = CLASS_SIZE[class]
 	} else {
@@ -269,30 +277,20 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	if heap.mode == .Stress || heap.used + slot_size > heap.trigger {
 		collect(heap)
 	}
-	heap.used += slot_size
 
-	cell: [^]byte
-	if small {
-		if heap.free[class] == nil {
-			carve_page(heap, class)
+	// Below the trigger the garbage of the heap is still in it, so out of room a collection comes
+	// first and then the whole search again, as V8's CollectAllAvailableGarbage does before it
+	// reports out of memory.
+	cell, found := take_cell(heap, class, count)
+	if !found {
+		collect(heap)
+		cell, found = take_cell(heap, class, count)
+		if !found {
+			out_of_memory()
 		}
-		slot := heap.free[class]
-		heap.free[class] = slot.next
-		cell = ([^]byte)(slot)
-	} else {
-		first := take_pages(heap, count)
-		heap.pages[first] = {
-			kind = .Large,
-			run  = u32(count),
-		}
-		for i in 1 ..< count {
-			heap.pages[first + i] = {
-				kind = .Large_Tail,
-				run  = u32(i),
-			}
-		}
-		cell = heap.base[first * PAGE_SIZE:]
 	}
+	// Only now: the collection above recounts used from the live cells.
+	heap.used += slot_size
 
 	// A cell of a header alone still clears the free list link after it, so no stale pointer stays
 	// in its slot.
@@ -300,6 +298,31 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	header := (^abi.Cell_Header)(cell)
 	header.type_table = table
 	return header
+}
+
+// take_cell takes a slot of `class` when `count` is zero, and a run of `count` pages otherwise.
+@(private)
+take_cell :: proc(heap: ^Heap, class, count: int) -> (cell: [^]byte, found: bool) {
+	if count == 0 {
+		if heap.free[class] == nil {
+			carve_page(heap, class) or_return
+		}
+		slot := heap.free[class]
+		heap.free[class] = slot.next
+		return ([^]byte)(slot), true
+	}
+	first := take_pages(heap, count) or_return
+	heap.pages[first] = {
+		kind = .Large,
+		run  = u32(count),
+	}
+	for i in 1 ..< count {
+		heap.pages[first + i] = {
+			kind = .Large_Tail,
+			run  = u32(i),
+		}
+	}
+	return heap.base[first * PAGE_SIZE:], true
 }
 
 // owner is the object start map: the live cell that holds the address `p`, or nil when `p` lies
@@ -385,21 +408,22 @@ root_is_valid :: proc(root: abi.Root) -> bool {
 	return aligned && (root.kind == .Ref || root.kind == .Tagged)
 }
 
+// class_of reads the class off the layout of CLASS_SIZE: steps of 16 up to 128, then four classes
+// for each power of two, told apart by the two bits below the top one of size - 1.
 @(private)
 class_of :: proc(size: int) -> int {
-	for class_size, class in CLASS_SIZE {
-		if size <= class_size {
-			return class
-		}
+	if size <= 128 {
+		return (size - 1) >> 4
 	}
-	unreachable()
+	top := 63 - int(intrinsics.count_leading_zeros(u64(size - 1)))
+	return 4 * top - 24 + ((size - 1) >> uint(top - 2))
 }
 
 // carve_page threads every slot of a new page onto the free list of `class`, from the last slot
 // back, so the list hands the slots out in address order.
 @(private)
-carve_page :: proc(heap: ^Heap, class: int) {
-	index := take_pages(heap, 1)
+carve_page :: proc(heap: ^Heap, class: int) -> (ok: bool) {
+	index := take_pages(heap, 1) or_return
 	heap.pages[index] = {
 		kind  = .Small,
 		class = u8(class),
@@ -416,33 +440,31 @@ carve_page :: proc(heap: ^Heap, class: int) {
 		next = free
 	}
 	heap.free[class] = next
+	return true
 }
 
 @(private)
-take_pages :: proc(heap: ^Heap, count: int) -> int {
-	if first, found := find_free_run(heap, count); found {
-		return first
+take_pages :: proc(heap: ^Heap, count: int) -> (first: int, ok: bool) {
+	if free, found := find_free_run(heap, count); found {
+		return free, true
 	}
-	first := heap.page_count
-	// direct: fails without a last collection, which only a live heap near half the reservation
-	// meets; Go collects once more before it reports out of memory. That needs carve_page to take a
-	// collection that refills the free lists underneath it.
+	first = heap.page_count
 	if count > heap.page_limit - first {
-		out_of_memory()
+		return
 	}
 	if virtual.commit(&heap.base[first * PAGE_SIZE], uint(count * PAGE_SIZE)) != nil {
-		out_of_memory()
+		return
 	}
 	committed := page_table_size(first)
 	needed := page_table_size(first + count)
 	if needed > committed {
 		rows := ([^]byte)(heap.pages)
 		if virtual.commit(&rows[committed], uint(needed - committed)) != nil {
-			out_of_memory()
+			return
 		}
 	}
 	heap.page_count = first + count
-	return first
+	return first, true
 }
 
 // direct: a linear scan of the page table from first_free; an index of free runs by length once

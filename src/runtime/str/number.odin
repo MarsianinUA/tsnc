@@ -23,8 +23,8 @@ to_fixed :: proc(heap: ^gc.Heap, value, digits: f64) -> (text: ^abi.String_Cell,
 	return from_utf8(heap, fixed), true
 }
 
-// parse_float is parseFloat of a string. A decimal literal is ASCII, so after the leading
-// whitespace only the ASCII units that follow can be part of it; they are copied into
+// parse_float is parseFloat of a string. After the leading whitespace, only the units that can
+// appear in a StrDecimalLiteral can be part of the prefix it reads; they are copied into
 // context.allocator for num.parse_float, which reads UTF-8.
 parse_float :: proc(text: ^abi.String_Cell) -> f64 {
 	view := unit_slice(text)
@@ -33,7 +33,7 @@ parse_float :: proc(text: ^abi.String_Cell) -> f64 {
 		from += 1
 	}
 	to := from
-	for to < len(view) && view[to] < 0x80 {
+	for to < len(view) && in_literal(view[to]) {
 		to += 1
 	}
 	ascii := make([]byte, to - from)
@@ -42,4 +42,14 @@ parse_float :: proc(text: ^abi.String_Cell) -> f64 {
 		ascii[i] = byte(unit)
 	}
 	return num.parse_float(string(ascii))
+}
+
+// The letters in_literal takes are those of Infinity.
+@(private)
+in_literal :: proc "contextless" (unit: u16) -> bool {
+	switch unit {
+	case '0' ..= '9', '.', 'e', 'E', '+', '-', 'I', 'n', 'f', 'i', 't', 'y':
+		return true
+	}
+	return false
 }

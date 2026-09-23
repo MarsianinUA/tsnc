@@ -52,11 +52,11 @@ join_units :: proc(
 	return str.from_units(heap, string16(units[:])), true
 }
 
-// Join_Frame is one array being joined, in a chain up through the joins that hold it.
 @(private)
 Join_Frame :: struct {
 	array: ^abi.Array_Cell,
 	outer: ^Join_Frame,
+	start: int, // where in the units the string being written begins; sort_default writes many
 }
 
 @(private)
@@ -72,9 +72,11 @@ write_elements :: proc(
 			return true
 		}
 	}
-	frame := Join_Frame{array, outer}
+	frame := Join_Frame{array, outer, outer.start if outer != nil else len(units^)}
 	kind := element_kind(heap, array)
 	for i in 0 ..< array.length {
+		// Checked as the string grows, so a join Node refuses fails before it fills the memory.
+		str.ensure_length(len(units^) - frame.start)
 		if i > 0 {
 			append(units, ..transmute([]u16)separator)
 		}
@@ -118,7 +120,5 @@ as_array :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (array: ^abi.Array_Cell, is_a
 	if v.tag != .Object {
 		return nil, false
 	}
-	table, known := gc.type_table(heap, v.payload.ref.type_table)
-	ensure(known, "a cell of an unregistered type table")
-	return (^abi.Array_Cell)(v.payload.ref), table.kind == .Array
+	return (^abi.Array_Cell)(v.payload.ref), gc.table_of(heap, v.payload.ref).kind == .Array
 }

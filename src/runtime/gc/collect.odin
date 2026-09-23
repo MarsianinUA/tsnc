@@ -1,6 +1,7 @@
 package gc
 
 import "core:mem/virtual"
+import "core:strconv"
 
 import "../../abi"
 import "../fail"
@@ -23,8 +24,13 @@ collect :: #force_no_inline proc(heap: ^Heap) {
 	heap.trigger = max(MIN_TRIGGER, heap.used * GROWTH)
 
 	if heap.mode == .Stress {
-		if problem, _ := verify(heap); problem != .None {
-			fail.at({error = .Internal}, "heap check failed", PROBLEM_TEXT[problem])
+		if problem, at := verify(heap); problem != .None {
+			// The address is the cell, page or free list where verify stopped, for a debugger.
+			buf: [len("0x") + 16]byte
+			copy(buf[:], "0x")
+			digits := strconv.write_uint(buf[2:], u64(uintptr(at)), 16)
+			address := string(buf[:2 + len(digits)])
+			fail.at({error = .Internal}, "heap check failed", PROBLEM_TEXT[problem], address)
 		}
 	}
 }

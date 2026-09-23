@@ -41,19 +41,42 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 	padded := str.from_utf8(heap, "  Hello  ")
 
 	expect_units(t, str.from_units(heap, str.units(mixed)[3:]), MIXED[3:])
+	expect_live(t, heap, mixed, padded)
 	// The first half is held only by this frame while the second half and the result allocate.
 	expect_units(t, str.concat(heap, cell(heap, MIXED[:3]), cell(heap, MIXED[3:])), MIXED[:])
+	expect_live(t, heap, mixed, padded)
 	expect_units(t, str.unit_at(heap, mixed, 1), {0xd83d})
+	expect_live(t, heap, mixed, padded)
 	expect_units(t, str.slice(heap, mixed, 1, 3), {0xd83d, 0xde00})
+	expect_live(t, heap, mixed, padded)
 	expect_ascii(t, str.trim(heap, padded), "Hello")
+	expect_live(t, heap, mixed, padded)
 	expect_ascii(t, str.to_upper(heap, padded), "  HELLO  ")
+	expect_live(t, heap, mixed, padded)
 	expect_ascii(t, str.to_lower(heap, padded), "  hello  ")
+	expect_live(t, heap, mixed, padded)
 	expect_ascii(t, str.from_number(heap, 1.5), "1.5")
+	expect_live(t, heap, mixed, padded)
 	fixed, _ := str.to_fixed(heap, 2.5, 0)
 	expect_ascii(t, fixed, "3")
+	expect_live(t, heap, mixed, padded)
 
 	expect_units(t, mixed, MIXED[:])
 	expect_ascii(t, padded, "  Hello  ")
+}
+
+// expect_live checks what reading the units cannot: a freed cell keeps them until its slot is
+// taken again.
+@(private = "file")
+expect_live :: proc(
+	t: ^testing.T,
+	heap: ^gc.Heap,
+	cells: ..^abi.String_Cell,
+	loc := #caller_location,
+) {
+	for c in cells {
+		testing.expect(t, gc.owner(heap, c) != nil, "a source cell was freed", loc = loc)
+	}
 }
 
 @(private = "file")

@@ -40,6 +40,22 @@ the_copy_keeps_what_a_comparator_pops :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, gc.Heap_Problem.None)
 }
 
+// On its first call the comparator pushes a new string, pops two, and sorts the same array with
+// itself, while every allocation collects. The outer sort then sets the three words it copied, as
+// Node does:
+//
+//	node -e 'const w = ["cherry", "apple", "banana"]; let n = 0; const by = (a, b) => { if (n++ === 0) { w.push("date"); w.pop(); w.pop(); w.sort(by) } return a < b ? -1 : a > b ? 1 : 0 }; w.sort(by); console.log(w)'
+@(test)
+a_comparator_may_push_pop_and_sort_again :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap, .Stress)
+	defer gc.heap_destroy(&heap)
+
+	sort_while_sorting(t, &heap)
+	problem, _ := gc.verify(&heap)
+	testing.expect_value(t, problem, gc.Heap_Problem.None)
+}
+
 @(private = "file")
 call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^gc.Heap) {
 	// The string lives only in push's argument while the first push grows the buffer.
@@ -50,7 +66,12 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 
 	digits := numbers(heap, 10, 9, 1, 100)
 	part := arr.slice(heap, digits, 1, 3)
-	pieces := arr.split(heap, str.from_utf8(heap, "x,yy,zzz"), str.from_utf8(heap, ","), NO_LIMIT)
+	pieces := arr.split(
+		heap,
+		str.from_utf8(heap, "x,yy,zzz"),
+		str.from_utf8(heap, ","),
+		abi.MISSING_LIMIT,
+	)
 	joined, _ := arr.join(heap, pieces, str.from_utf8(heap, "+"))
 	nested := arr.new_array(heap, VALUES, 0)
 	arr.push(heap, nested, object(digits))
@@ -95,6 +116,25 @@ sort_while_popping :: #force_no_inline proc(t: ^testing.T, heap: ^gc.Heap) {
 }
 
 @(private = "file")
+sort_while_sorting :: #force_no_inline proc(t: ^testing.T, heap: ^gc.Heap) {
+	words := words_only_the_array_holds(heap)
+	scrub_stack()
+	stub := Stub {
+		heap  = heap,
+		array = words,
+	}
+	arr.sort(
+		heap,
+		words,
+		&abi.Closure_Cell{code = rawptr(push_pop_and_sort_once), env = environment(&stub)},
+	)
+	testing.expect_value(t, words.length, 3)
+	for want, i in ([?]string{"apple", "banana", "cherry"}) {
+		expect_ascii(t, (^abi.String_Cell)(arr.element_at(heap, words, i).payload.ref), want)
+	}
+}
+
+@(private = "file")
 words_only_the_array_holds :: #force_no_inline proc(heap: ^gc.Heap) -> ^abi.Array_Cell {
 	words := arr.new_array(heap, REFS, 0)
 	for word in ([?]string{"cherry", "apple", "banana"}) {
@@ -118,6 +158,25 @@ pop_all_then_compare :: proc "c" (env: ^abi.Environment_Cell, a, b: ^abi.Cell_He
 		arr.pop(stub.heap, stub.array)
 	}
 	str.from_utf8(stub.heap, "garbage")
+	x, y := (^abi.String_Cell)(a), (^abi.String_Cell)(b)
+	return f64(str.compare_units(str.units(x), str.units(y)))
+}
+
+@(private = "file")
+push_pop_and_sort_once :: proc "c" (env: ^abi.Environment_Cell, a, b: ^abi.Cell_Header) -> f64 {
+	context = runtime.default_context()
+	stub := (^Stub)(env)
+	stub.calls += 1
+	if stub.calls == 1 {
+		arr.push(stub.heap, stub.array, text(str.from_utf8(stub.heap, "date")))
+		arr.pop(stub.heap, stub.array)
+		arr.pop(stub.heap, stub.array)
+		again := abi.Closure_Cell {
+			code = rawptr(push_pop_and_sort_once),
+			env  = env,
+		}
+		arr.sort(stub.heap, stub.array, &again)
+	}
 	x, y := (^abi.String_Cell)(a), (^abi.String_Cell)(b)
 	return f64(str.compare_units(str.units(x), str.units(y)))
 }

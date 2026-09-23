@@ -71,7 +71,8 @@ to_boolean :: proc(v: abi.Tagged) -> bool {
 }
 
 // to_string answers ok = false where Node runs code tsnc does not have: it prints a function's
-// source text, and it calls an object's own toString.
+// source text, and it calls an object's own toString. An array stops the program here: callers go
+// through arr.to_string, which joins an array and hands anything else on to this one.
 to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok: bool) {
 	switch v.tag {
 	case .Undefined:
@@ -85,8 +86,7 @@ to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok:
 	case .String:
 		return string_cell(v), true
 	case .Object:
-		table, known := gc.type_table(heap, v.payload.ref.type_table)
-		ensure(known, "a cell of an unregistered type table")
+		table := gc.table_of(heap, v.payload.ref)
 		ensure(table.kind == .Object, "a tagged object that is no object; arr converts an array")
 		for field in table.fields {
 			if field.name == "toString" {

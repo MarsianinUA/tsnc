@@ -29,7 +29,7 @@ BUFFER :: abi.Type_Table_ID(abi.Builtin_Table.Buffer)
 @(private)
 MIN_CAPACITY :: 4
 
-// new_array answers an empty array with room for `capacity` elements; with none it has no buffer.
+// new_array makes no buffer for a capacity of 0.
 new_array :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, capacity: int) -> ^abi.Array_Cell {
 	array := (^abi.Array_Cell)(gc.alloc(heap, table, size_of(abi.Array_Cell)))
 	if capacity > 0 {
@@ -38,7 +38,7 @@ new_array :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, capacity: int) -> ^a
 	return array
 }
 
-// push appends `value`, which must be of the kind the array holds, and answers the new length.
+// push answers the new length. `value` must be of the kind the array holds.
 push :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, value: abi.Tagged) -> int {
 	kind := element_kind(heap, array)
 	if array.length == array.capacity {
@@ -128,8 +128,8 @@ split :: proc(heap: ^gc.Heap, text, separator: ^abi.String_Cell, limit: f64) -> 
 
 @(private)
 element_kind :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> abi.Slot_Kind {
-	table, known := gc.type_table(heap, array.type_table)
-	ensure(known && table.kind == .Array, "an array cell of no array table")
+	table := gc.table_of(heap, array)
+	ensure(table.kind == .Array, "an array cell of no array table")
 	return table.element
 }
 
@@ -194,9 +194,7 @@ load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
 // tag_of is the tag a reference takes in a tagged value. An array is an object there, as in typeof.
 @(private)
 tag_of :: proc(heap: ^gc.Heap, cell: ^abi.Cell_Header) -> abi.Tag {
-	table, known := gc.type_table(heap, cell.type_table)
-	ensure(known, "a cell of an unregistered type table")
-	switch table.kind {
+	switch gc.table_of(heap, cell).kind {
 	case .String:
 		return .String
 	case .Closure:

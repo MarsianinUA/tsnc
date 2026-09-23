@@ -16,8 +16,6 @@ collect_test.odin runs the same procedures in stress mode.
 NAN :: 0h7ff8_0000_0000_0000
 INF :: 0h7ff0_0000_0000_0000
 NEGATIVE_ZERO :: 0h8000_0000_0000_0000
-// NO_LIMIT is what lower passes for a limit split was not given.
-NO_LIMIT :: 4294967295
 
 RESERVE :: 64 * gc.PAGE_SIZE
 
@@ -236,18 +234,18 @@ split_matches_node :: proc(t: ^testing.T) {
 		limit:           f64,
 		want:            [][]u16,
 	} {
-		{{}, {','}, NO_LIMIT, {{}}},
-		{{}, {}, NO_LIMIT, {}},
-		{{'a', ',', 'b', ',', ',', 'c'}, {','}, NO_LIMIT, {{'a'}, {'b'}, {}, {'c'}}},
+		{{}, {','}, abi.MISSING_LIMIT, {{}}},
+		{{}, {}, abi.MISSING_LIMIT, {}},
+		{{'a', ',', 'b', ',', ',', 'c'}, {','}, abi.MISSING_LIMIT, {{'a'}, {'b'}, {}, {'c'}}},
 		{{'a', ',', 'b', ',', ',', 'c'}, {','}, 2, {{'a'}, {'b'}}},
 		{{'a', ',', 'b', ',', ',', 'c'}, {','}, 0, {}},
 		{{'a', ',', 'b'}, {','}, -1, {{'a'}, {'b'}}},
-		{{'a', 'b', 'c'}, {}, NO_LIMIT, {{'a'}, {'b'}, {'c'}}},
-		{{'a', 'b'}, {'a', 'b', 'c'}, NO_LIMIT, {{'a', 'b'}}},
-		{{',', 'a', ','}, {','}, NO_LIMIT, {{}, {'a'}, {}}},
-		{{'a', '-', '-', 'b', '-', '-'}, {'-', '-'}, NO_LIMIT, {{'a'}, {'b'}, {}}},
+		{{'a', 'b', 'c'}, {}, abi.MISSING_LIMIT, {{'a'}, {'b'}, {'c'}}},
+		{{'a', 'b'}, {'a', 'b', 'c'}, abi.MISSING_LIMIT, {{'a', 'b'}}},
+		{{',', 'a', ','}, {','}, abi.MISSING_LIMIT, {{}, {'a'}, {}}},
+		{{'a', '-', '-', 'b', '-', '-'}, {'-', '-'}, abi.MISSING_LIMIT, {{'a'}, {'b'}, {}}},
 		// An emoji splits into its two surrogates.
-		{{0xd83d, 0xde00, 'x'}, {}, NO_LIMIT, {{0xd83d}, {0xde00}, {'x'}}},
+		{{0xd83d, 0xde00, 'x'}, {}, abi.MISSING_LIMIT, {{0xd83d}, {0xde00}, {'x'}}},
 	}
 	for c in cases {
 		text := str.from_units(&heap, string16(c.text))

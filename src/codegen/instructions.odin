@@ -139,8 +139,6 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 			append(&args, body.result_slot)
 		}
 		for arg, i in v.args {
-			// Two C types differ from the register shape: a boolean is b64, not i1, and a tagged
-			// value is its two words, or the slot it comes back through.
 			operand := body.values[arg]
 			#partial switch export.params[i] {
 			case .Boolean:
@@ -303,8 +301,7 @@ build_unbox :: proc(m: ^Module, payload: llvm.LLVMValueRef, type: ir.Type) -> ll
 	unreachable()
 }
 
-// to_storage and from_storage move a value between its register shape and its memory shape. Only a
-// boolean differs, and it differs everywhere abi stores one: i1 in a register, b64 in memory.
+// to_storage and from_storage move a value between value_type and storage_type.
 @(private)
 to_storage :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
 	if type.kind == .Bool {

@@ -33,8 +33,8 @@ slice :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, start, end: f64) -> ^abi.S
 	return from_units(heap, units(text)[from:to])
 }
 
-// index_of answers -1 when `search` is not found. includes(search, position) is
-// index_of(...) != -1 in every case, an empty search past the end included.
+// includes(search, position) is index_of(...) != -1 in every case, an empty search past the end
+// included.
 index_of :: proc(text, search: ^abi.String_Cell, position: f64) -> int {
 	return find(units(text), units(search), clamp_index(position, text.length))
 }
@@ -79,7 +79,7 @@ Splitter :: struct {
 }
 
 splitter :: proc(text, separator: ^abi.String_Cell, limit: f64) -> Splitter {
-	return {text = units(text), separator = units(separator), left = to_uint32(limit)}
+	return {text = units(text), separator = units(separator), left = num.to_uint32(limit)}
 }
 
 // split_next follows the specification's steps: an empty separator splits into single units, and an
@@ -125,16 +125,4 @@ find :: proc "contextless" (text, search: string16, from: int) -> int {
 @(private)
 clamp_index :: proc "contextless" (value: f64, length: int) -> int {
 	return int(clamp(num.to_integer(value), 0, f64(length)))
-}
-
-// to_uint32 is ToUint32: NaN and the infinities are 0, anything else wraps modulo 2^32, so -1 is
-// 4294967295.
-@(private)
-to_uint32 :: proc "contextless" (value: f64) -> u32 {
-	if value != value || math.is_inf(value) {
-		return 0
-	}
-	// The remainder lies strictly between -2^32 and 2^32, so i64 holds it and u32 keeps the low 32
-	// bits of a negative one.
-	return u32(i64(math.mod(math.trunc(value), 4294967296)))
 }

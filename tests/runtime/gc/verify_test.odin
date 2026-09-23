@@ -138,6 +138,12 @@ array_elements_live_in_a_buffer_cell_with_room :: proc(t: ^testing.T) {
 	live.array.elements = rawptr(buffer)
 	expect_problem(t, &heap, .Bad_Cell, live.array)
 
+	// Room enough, right after a header, but the cell is no buffer.
+	live.array.capacity = 2
+	live.array.elements = &([^]byte)(live.first)[size_of(abi.Cell_Header)]
+	expect_problem(t, &heap, .Bad_Cell, live.array)
+	live.array.capacity = 6
+
 	// An empty array still writes its next push into the buffer, so the buffer is checked.
 	live.array.length = 0
 	live.array.elements = heap.free[POINT_CLASS]

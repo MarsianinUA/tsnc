@@ -61,7 +61,7 @@ Anything else is a compile error, and `tsnc check` reports all of them in one pa
 
 ## Status
 
-Milestones 1 to 4 of the six that make up v1 are done. `tsnc check` covers the whole v1 subset and reports syntax, type, name and module errors in one pass. `tsnc build` and `tsnc run` produce executables for numbers, booleans, string literals, functions, control flow, modules, `Math`, `console` and `process`.
+Milestones 1 to 4 of the six that make up v1 are done. `tsnc check` covers the whole v1 subset and reports syntax, type, name and module errors in one pass. `tsnc build` and `tsnc run` produce executables for numbers, booleans, string literals, functions, control flow, modules, `Math`, `console` and `process.exit`.
 
 Milestone 5 is next: the garbage collector, string operations, objects, arrays, closures and unions. Until then a program that uses one of them gets a compile error with a location, not a wrong executable. There are no benchmarks yet. They come with milestone 6. The [task board](docs/tasks-tsnc.md) tracks the rest.
 
