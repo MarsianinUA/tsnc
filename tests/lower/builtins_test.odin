@@ -163,18 +163,23 @@ math_sign_answers_the_value_itself_at_zero :: proc(t: ^testing.T) {
 }
 
 @(test)
-console_log_writes_one_call_per_piece :: proc(t: ^testing.T) {
+console_log_is_one_runtime_call_per_statement :: proc(t: ^testing.T) {
 	result := lower_text(t, `console.log(1, "a", true);`)
 	init, found := func_named(result.output, "init$m1")
 	testing.expect(t, found, "the module has no init function")
-	// Two separators and the line end, plus the string argument.
-	testing.expectf(t, runtime_calls(init, .Console_String) == 4, "%s", result.text)
-	testing.expectf(t, runtime_calls(init, .Console_Number) == 1, "%s", result.text)
-	testing.expectf(t, runtime_calls(init, .Console_Boolean) == 1, "%s", result.text)
+	call, called := only_console_call(init)
+	if !testing.expectf(t, called, "%s", result.text) {
+		return
+	}
+	// The stream, then every argument as a tagged value.
+	testing.expectf(t, len(call.args) == 4, "%s", result.text)
+	for arg in call.args[1:] {
+		testing.expectf(t, init.values[arg].type == ir.TAGGED, "%s", result.text)
+	}
 }
 
 // Node evaluates the whole list before it writes anything, so the call an argument makes comes
-// ahead of every write of its statement, the first argument's included.
+// ahead of the write of its statement.
 @(test)
 console_log_evaluates_every_argument_before_it_writes :: proc(t: ^testing.T) {
 	result := lower_text(
@@ -201,34 +206,75 @@ console_log_evaluates_every_argument_before_it_writes :: proc(t: ^testing.T) {
 }
 
 @(test)
-console_log_of_nothing_is_a_line_end :: proc(t: ^testing.T) {
+console_log_of_nothing_passes_no_values :: proc(t: ^testing.T) {
 	result := lower_text(t, `console.log();`)
 	init, _ := func_named(result.output, "init$m1")
-	testing.expectf(t, runtime_calls(init, .Console_String) == 1, "%s", result.text)
+	call, called := only_console_call(init)
+	testing.expectf(t, called && len(call.args) == 1, "%s", result.text)
 }
 
 @(test)
-null_and_undefined_print_as_words :: proc(t: ^testing.T) {
+null_and_undefined_pass_as_constants :: proc(t: ^testing.T) {
 	result := lower_text(t, `console.log(null, undefined);`)
 	init, _ := func_named(result.output, "init$m1")
-	// The two words, the separator and the line end.
-	testing.expectf(t, runtime_calls(init, .Console_String) == 4, "%s", result.text)
-	testing.expectf(t, runtime_calls(init, .Console_Number) == 0, "%s", result.text)
+	call, called := only_console_call(init)
+	if !testing.expectf(t, called && len(call.args) == 3, "%s", result.text) {
+		return
+	}
+	_, is_null := init.values[call.args[1]].variant.(ir.Const_Null)
+	_, is_undefined := init.values[call.args[2]].variant.(ir.Const_Undefined)
+	testing.expectf(t, is_null && is_undefined, "%s", result.text)
+}
+
+@(test)
+console_log_prints_a_union :: proc(t: ^testing.T) {
+	result := lower_text(t, "let x: number | undefined = 1;\nconsole.log(x);\n")
+	init, _ := func_named(result.output, "init$m1")
+	_, called := only_console_call(init)
+	testing.expectf(t, called, "%s", result.text)
 }
 
 @(test)
 console_error_writes_to_the_other_stream :: proc(t: ^testing.T) {
 	result := lower_text(t, `console.error("bad");`)
 	init, _ := func_named(result.output, "init$m1")
-	streams := make([dynamic]bool, context.temp_allocator)
-	for instruction in init.values {
-		if call, is_call := instruction.variant.(ir.Call_Runtime); is_call {
-			flag := init.values[call.args[0]].variant.(ir.Const_Bool)
-			append(&streams, flag.value)
-		}
+	call, called := only_console_call(init)
+	if !testing.expectf(t, called, "%s", result.text) {
+		return
 	}
-	testing.expectf(t, len(streams) == 2, "%s", result.text)
-	testing.expectf(t, streams[0] && streams[1], "%s", result.text)
+	stream := init.values[call.args[0]].variant.(ir.Const_Bool)
+	testing.expectf(t, stream.value, "%s", result.text)
+}
+
+// process.argv is one array for the whole run, made by main before any module runs.
+@(test)
+process_argv_is_a_global_main_fills_first :: proc(t: ^testing.T) {
+	result := lower_text(t, "console.log(process.argv);\nconsole.log(process.argv);\n")
+	testing.expectf(t, len(result.output.globals) == 1, "%s", result.text)
+	argv := result.output.globals[0]
+	testing.expectf(t, argv.type.kind == .Ref, "%s", result.text)
+	testing.expectf(t, result.output.layouts[argv.type.layout].kind == .Array, "%s", result.text)
+	testing.expectf(t, result.output.layouts[argv.type.layout].element == .Ref, "%s", result.text)
+
+	main := result.output.funcs[result.output.main]
+	entry := main.blocks[ir.ENTRY].instructions
+	first, is_runtime := main.values[entry[0]].variant.(ir.Call_Runtime)
+	testing.expectf(t, is_runtime && first.export == .Process_Argv, "%s", result.text)
+	_, stores := main.values[entry[1]].variant.(ir.Global_Store)
+	testing.expectf(t, stores, "%s", result.text)
+	_, then_inits := main.values[entry[2]].variant.(ir.Call)
+	testing.expectf(t, then_inits, "%s", result.text)
+
+	init, _ := func_named(result.output, "init$m1")
+	testing.expectf(t, runtime_calls(init, .Process_Argv) == 0, "%s", result.text)
+}
+
+@(test)
+a_program_that_never_reads_process_argv_has_no_global_for_it :: proc(t: ^testing.T) {
+	result := lower_text(t, `console.log(1);`)
+	testing.expectf(t, len(result.output.globals) == 0, "%s", result.text)
+	main := result.output.funcs[result.output.main]
+	testing.expectf(t, runtime_calls(main, .Process_Argv) == 0, "%s", result.text)
 }
 
 @(test)
@@ -350,8 +396,8 @@ a_union_is_reported_where_it_is_used :: proc(t: ^testing.T) {
 	// number back out of it is the tag check of milestone 5.
 	result := expect_later(
 		t,
-		"let x: number | undefined = 1;\nconsole.log(x);\n",
-		{{.Not_Lowered, 2, 13}},
+		"let x: number | undefined = 1;\nfunction f(): number {\nreturn x! + 1;\n}\n",
+		{{.Not_Lowered, 3, 8}},
 	)
 	testing.expect(t, len(result.output.globals) == 1)
 	testing.expect(t, result.output.globals[0].type == ir.TAGGED)
@@ -391,4 +437,19 @@ runtime_calls :: proc(body: ir.Func, export: abi.Runtime_Proc) -> int {
 		}
 	}
 	return total
+}
+
+@(private = "file")
+only_console_call :: proc(body: ir.Func) -> (call: ir.Call_Runtime, found: bool) {
+	if runtime_calls(body, .Console_Log) != 1 {
+		return {}, false
+	}
+	for instruction in body.values {
+		if runtime, is_runtime := instruction.variant.(ir.Call_Runtime); is_runtime {
+			if runtime.export == .Console_Log {
+				return runtime, true
+			}
+		}
+	}
+	return {}, false
 }

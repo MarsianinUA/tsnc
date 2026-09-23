@@ -13,7 +13,8 @@ Shape of the output:
 - One IR function per module, init$m<N>, holding that module's top-level code.
 - One IR function per TypeScript function declaration, m<N>.<name>.
 - One IR global per module-level binding, m<N>.<name>.
-- tsnc_main calls the module init functions in turn and returns.
+- tsnc_main calls the module init functions in turn and returns. First it fills the global
+  process.argv, which exists only in a program that reads it.
 
 Which modules run. Program.init_order lists every file once, the lib among them, and a module that
 only an `import type` reaches: Node never loads such a module, so its top-level code must not run
@@ -71,6 +72,8 @@ Lowering :: struct {
 	builder:     ir.Program_Builder,
 	funcs:       map[Decl_Key]ir.Func_ID, // by ast.Function_Decl
 	globals:     map[Decl_Key]ir.Global_ID, // by ast.Declarator
+	// argv holds process.argv, made the first time the program reads it and filled once by main.
+	argv:        Maybe(ir.Global_ID),
 	diagnostics: [dynamic]diag.Diagnostic,
 	allocator:   runtime.Allocator,
 }
@@ -332,6 +335,12 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 build_main :: proc(low: ^Lowering, main: ir.Func_ID, inits: []ir.Func_ID) {
 	span := module_span(low, ENTRY)
 	f := ir.begin_func(&low.builder, main)
+	// Before any module runs, since any of them may read it.
+	if argv, used := low.argv.?; used {
+		type := low.builder.globals[argv].type
+		array := ir.emit(&f, type, ir.Call_Runtime{export = .Process_Argv}, span)
+		ir.emit(&f, ir.VOID, ir.Global_Store{global = argv, value = array}, span)
+	}
 	for id in inits {
 		ir.emit(&f, ir.VOID, ir.Call{func = id}, span)
 	}

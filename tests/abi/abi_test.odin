@@ -55,3 +55,18 @@ symbols_are_distinct :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// codegen passes a Rest as the last two arguments of the call and the runtime reads it as the tail
+// of its parameter list, so nothing may follow it.
+@(test)
+rest_is_only_the_last_parameter :: proc(t: ^testing.T) {
+	exports := abi.RUNTIME_EXPORTS
+	for export, id in exports {
+		testing.expectf(t, export.result != .Rest, "%v answers a Rest", id)
+		for param, i in export.params {
+			if param == .Rest {
+				testing.expectf(t, i == len(export.params) - 1, "%v has a Rest before the end", id)
+			}
+		}
+	}
+}

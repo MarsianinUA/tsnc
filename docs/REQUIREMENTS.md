@@ -73,7 +73,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 - Conversion to UTF-8 happens only at the OS boundary: console, files, arguments.
 - Converting a function to a string (`String(f)`, `` `${f}` ``) is a runtime error: Node prints the function's source text, which a compiled program does not keep. So is converting an object with its own `toString` field, which Node would call.
 - A string holds at most 536,870,888 units, as in Node 24. Building a longer one, by `+`, `join` or any other method, is a runtime error with Node's message, `Invalid string length`, where Node throws a `RangeError`.
-- Inside the runtime, a string is a header in the GC heap followed by `u16` data; operations work through Odin's built-in `string16` type, which points inside the object. A custom "pointer plus length" pair is not needed, `core:io` re-encodes console output to UTF-8 (4.5).
+- Inside the runtime, a string is a header in the GC heap followed by `u16` data; operations work through Odin's built-in `string16` type, which points inside the object. A custom "pointer plus length" pair is not needed, and the console re-encodes its line to UTF-8 on the way out (4.5).
 - v2: hybrid Latin-1 / UTF-16 storage to save memory, as in V8. The semantics do not change.
 
 ### 3.3 Objects
@@ -115,9 +115,13 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr with the error name and, where available, the source location, and exits with code `1`. Programs that behave differently in Node in these cases are invalid and stay out of the differential tests.
 
 ### 3.9 Console output
-- `console.log` takes any number of arguments, separates them with a space, and ends with a newline.
-- Numbers per 3.1, strings as is, `undefined` / `null` / `boolean` as words. Objects and arrays print in Node format for simple cases: `[ 1, 2, 3 ]`, `{ a: 1, b: 'x' }`.
+- `console.log` and `console.error` print what Node's `util.format` prints. A string first argument is a format string while more arguments follow it, with Node's specifiers `%s %d %i %f %j %o %O %c %%`. Every other argument follows after a space: a string as is, anything else as `util.inspect` prints it with Node's defaults (depth 2, 80 columns, 100 array items, 10000 string units, long arrays grouped into columns, cycles marked `<ref *1>` and `[Circular *1]`). The line and its newline leave in one write.
+- Numbers per 3.1, `undefined` / `null` / `boolean` as words, arrays and objects as `[ 1, 2, 3 ]` and `{ a: 1, b: 'x' }`, functions as `[Function: f]`.
 - One exception to 3.1, and it follows Node: a negative zero printed on its own keeps its sign. Node formats an argument of `console.log` through `util.inspect` rather than through `String`, so `console.log(-0)` writes `-0` while `` console.log(`${-0}`) `` writes `0`.
+- An object prints its fields in the order Node enumerates them: integer-like keys in ascending order, then the rest in creation order. An optional field that was never set is left out. So is one set to `undefined` explicitly, which Node prints as `y: undefined`: v1 cannot tell the two apart.
+- Where Node would run the program's own code to print a value, the program stops with a runtime error (3.8): `%s`, `%i` or `%f` of a function or of an object with its own `toString`, `%d` of an object with its own `valueOf` or `toString`, `%j` of an object with its own `toJSON`.
+- Colors follow Node: `FORCE_COLOR`, `NO_COLOR`, `NODE_DISABLE_COLORS` and `TERM`, then whether the stream is a terminal. On Windows a console gets escape sequence processing turned on, as libuv does. The column width of a character, which groups an array, comes from Unicode 17 East Asian Width; unlike Node, a sequence that NFC would compose, such as Hangul jamo, is counted as it is.
+- `process.argv` is the path of the executable, the first argument as the process was started, then the arguments, which is what a Node single executable application sees. On Windows the arguments come from the wide command line, so any alphabet arrives intact.
 - Output is UTF-8 regardless of the Windows console code page.
 
 ## 4. Compiler architecture
@@ -165,7 +169,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 | Strings | built-in `string16`, `unicode/utf16`, the byte ranges of `unicode/utf8` | cell in the GC heap, methods from 2.2, UTF-8 decoding that turns each broken sequence into one U+FFFD as `Buffer.toString` does, full case rules from tables generated from the Unicode Character Database (the tables of `core:unicode` are from an old Unicode version and stop at the BMP) |
 | Numbers to string and back | `strconv/decimal` (exact expansion, shifts, rounding), `strconv.decimal_to_float_bits` | `Number::toString` rules (3.1), `ToNumber` grammar, the shortest digits (Go's current `roundShortest`: the copy in `core:strconv` predates two of its fixes), the digits of a literal past the 384 that `decimal.set` keeps, an exact comparison with the halfway point for a literal of more than 190 significant digits |
 | Array sorting | nothing | a natural merge sort over indices into a temporary copy, in the manner of TimSort: n - 1 comparator calls for sorted or reversed input, as in V8; comparator rules, `undefined` to the end, the order of strings without a comparator |
-| Console | `core:os` for stdout, `io.write_string16` (re-encodes to UTF-8) | output format per 3.9 |
+| Console | `core:os` for the streams, the environment and the terminal check | output format per 3.9: a port of `util.format` and `util.inspect`, color rules, a column width table generated from the Unicode Character Database, and the UTF-16 to UTF-8 encoding of the line (`io.write_string16` writes one character per call) |
 | Objects, arrays, closures, `Map`, `Set` | nothing | everything, layout shaped for GC type tables |
 | `Math` | nothing, see below | only differences from C |
 | `bigint` (v2) | `math/big` as the arithmetic engine with an explicit allocator | immutable object in the GC heap, digits copied at creation |
@@ -276,7 +280,7 @@ None of the following is planned in any version; section 2 lists everything plan
 | macOS is tested only in CI | Connect GitHub Actions early |
 | Numbers as f64 in v1 are slower than Go on integer tasks | Optimization in v2, benchmarks record the gap |
 | The name `tsnc` matches the abandoned project `mhw0/tsnc` ("typescript native compiler", C, archived since 2024) and the command of the commercial TSN.1 Compiler (Protomatics). The name is free on npm, crates.io, PyPI, JSR, Homebrew, and AUR; the `tsnc` username on GitHub is taken | Acceptable for a personal project; when publishing, state "TypeScript → machine code, Odin + LLVM" in the description to stand apart in search |
-| Exact reproduction of the Node format in `console.log` for objects | Tests mostly print primitives; object format only for simple cases |
+| Exact reproduction of the Node format in `console.log` for objects | `util.inspect` is ported rule by rule and tested against Node's output; a Node release that changes it needs the port changed too, and the corpus shows where |
 | The runtime relies on the built-in `string16` from a nightly Odin build | The Odin version is pinned together with LLVM 20; on rollback a custom "pointer plus length" pair is enough, and the semantics of 3.2 do not change |
 
 ## 14. Sources and prior art

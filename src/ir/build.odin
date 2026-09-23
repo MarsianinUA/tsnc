@@ -344,9 +344,10 @@ intern_layout :: proc(
 		offset := table.size
 		for slot, i in fields {
 			owned[i] = {
-				name   = slot.name,
-				offset = offset,
-				kind   = slot.kind,
+				name     = slot.name,
+				offset   = offset,
+				kind     = slot.kind,
+				optional = slot.optional,
 			}
 			offset += abi.SLOT_SIZE[slot.kind]
 		}
@@ -375,7 +376,7 @@ write_layout_key :: proc(
 	for slot in fields {
 		strings.write_byte(b, ',')
 		strings.write_quoted_string(b, slot.name)
-		strings.write_byte(b, ':')
+		strings.write_byte(b, '?' if slot.optional else ':')
 		strings.write_int(b, int(slot.kind))
 	}
 }

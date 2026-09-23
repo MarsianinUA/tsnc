@@ -3,6 +3,7 @@ package arr
 import "../../abi"
 import "../gc"
 import "../str"
+import "../value"
 
 /*
 Array.prototype.sort, with a comparator and without one (requirements 4.5, row "Array sorting").
@@ -84,7 +85,7 @@ sort_default :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> (ok: bool) {
 	defer delete(spans)
 	for index in state.order {
 		start := len(pool)
-		item := load(heap, slot(state.items, state.kind, index), state.kind)
+		item := value.load(heap, slot(state.items, state.kind, index), state.kind)
 		write_string(&pool, heap, item, nil) or_return
 		spans[index] = {start, len(pool)}
 	}
@@ -257,7 +258,13 @@ less :: proc(state: ^Sort_State, a, b: int) -> bool {
 @(private)
 write_back :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, state: ^Sort_State) {
 	for index, i in state.order {
-		put(heap, array, state, i, load(heap, slot(state.items, state.kind, index), state.kind))
+		put(
+			heap,
+			array,
+			state,
+			i,
+			value.load(heap, slot(state.items, state.kind, index), state.kind),
+		)
 	}
 	for i in len(state.order) ..< state.items.length {
 		put(heap, array, state, i, abi.Tagged{})

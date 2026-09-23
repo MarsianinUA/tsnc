@@ -52,13 +52,13 @@ unpaired_surrogate_is_replacement_character :: proc(t: ^testing.T) {
 @(test)
 a_negative_zero_keeps_its_sign_on_the_console :: proc(t: ^testing.T) {
 	NEGATIVE_ZERO :: 0h8000_0000_0000_0000
-	testing.expect_value(t, number(NEGATIVE_ZERO), "-0")
-	testing.expect_value(t, number(0), "0")
-	testing.expect_value(t, number(1.5), "1.5")
-	testing.expect_value(t, number(1e21), "1e+21")
+	testing.expect_value(t, printed_number(NEGATIVE_ZERO), "-0")
+	testing.expect_value(t, printed_number(0), "0")
+	testing.expect_value(t, printed_number(1.5), "1.5")
+	testing.expect_value(t, printed_number(1e21), "1e+21")
 }
 
-number :: proc(value: f64) -> string {
+printed_number :: proc(value: f64) -> string {
 	buf: [num.STRING_MAX]byte
 	return strings.clone(console.number_text(buf[:], value), context.temp_allocator)
 }

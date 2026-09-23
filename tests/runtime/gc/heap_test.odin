@@ -236,6 +236,14 @@ a_malformed_table_is_refused :: proc(t: ^testing.T) {
 			},
 		},
 		{
+			"overlapping fields out of offset order",
+			{
+				kind = .Object,
+				size = 40,
+				fields = {{offset = 16, kind = .Number}, {offset = 8, kind = .Tagged}},
+			},
+		},
+		{
 			"misaligned field",
 			{kind = .Object, size = 24, fields = {{offset = 12, kind = .Number}}},
 		},
@@ -262,6 +270,23 @@ a_malformed_table_is_refused :: proc(t: ^testing.T) {
 			"%s: accepted",
 			c.name,
 		)
+	}
+}
+
+// An object lists its fields in the order the console prints them, which need not be the order of
+// their offsets.
+@(test)
+fields_out_of_offset_order_are_accepted :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	fields := []abi.Field {
+		{name = "b", offset = 24, kind = .Tagged},
+		{name = "a", offset = 8, kind = .Ref},
+	}
+	tables := []abi.Type_Table{{kind = .Object, size = 40, fields = fields}}
+	err := gc.heap_init(&heap, tables, nil, &heap, reserve = RESERVE)
+	testing.expect_value(t, err, gc.Heap_Error.None)
+	if err == .None {
+		gc.heap_destroy(&heap)
 	}
 }
 

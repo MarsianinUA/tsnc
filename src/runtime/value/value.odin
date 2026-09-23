@@ -100,6 +100,36 @@ to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok:
 	unreachable()
 }
 
+// load boxes what a slot of `kind` holds: an array element, an object field.
+load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
+	switch kind {
+	case .Number:
+		return {tag = .Number, payload = {number = (^f64)(slot)^}}
+	case .Boolean:
+		return {tag = .Boolean, payload = {boolean = (^b64)(slot)^}}
+	case .Ref:
+		cell := (^^abi.Cell_Header)(slot)^
+		return {tag = tag_of(heap, cell), payload = {ref = cell}}
+	case .Tagged:
+		return (^abi.Tagged)(slot)^
+	}
+	unreachable()
+}
+
+// tag_of is the tag a reference takes in a tagged value. An array is an object there, as in typeof.
+tag_of :: proc(heap: ^gc.Heap, cell: ^abi.Cell_Header) -> abi.Tag {
+	switch gc.table_of(heap, cell).kind {
+	case .String:
+		return .String
+	case .Closure:
+		return .Function
+	case .Object, .Array:
+		return .Object
+	case .Environment, .Buffer:
+	}
+	panic("a reference to a cell that is no value")
+}
+
 @(private)
 string_cell :: proc "contextless" (v: abi.Tagged) -> ^abi.String_Cell {
 	return (^abi.String_Cell)(v.payload.ref)

@@ -359,6 +359,98 @@ parse_float_reads_literals_of_any_length :: proc(t: ^testing.T) {
 }
 
 // Math.round(x)
+// Number(text). Where the rounding is the point, the value is the bit pattern
+// Buffer.writeDoubleLE gives, for example:
+//
+//	node -e 'const b = Buffer.alloc(8); b.writeDoubleLE(Number("0x20000000000003")); console.log(b.readBigUInt64LE().toString(16))'
+@(test)
+to_number_matches_node :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		text:  string,
+		value: f64,
+	} {
+		{"", 0},
+		{" 12 ", 12},
+		{"+12", 12},
+		{"-0", NEGATIVE_ZERO},
+		{"1e3", 1000},
+		{".5", 0.5},
+		{"5.", 5},
+		{"12e-1 ", 1.2},
+		{"Infinity", INF},
+		{"-Infinity", -INF},
+		// The whole text must be the literal, less the whitespace around it.
+		{"12px", NAN},
+		{"1_0", NAN},
+		{".", NAN},
+		{"1e", NAN},
+		{"infinity", NAN},
+		{"\xc2\xa0 7\xe2\x80\xa8", 7},
+		{"\xc2\x853", NAN},
+		// Integers in radix 16, 8 and 2, which take no sign.
+		{"0x10", 16},
+		{"0X1f", 31},
+		{"0o17", 15},
+		{"0b101", 5},
+		{"0x", NAN},
+		{"-0x1", NAN},
+		{"0x1g", NAN},
+		{"0b102", NAN},
+		// Past 53 bits: a tie goes to the even neighbor, anything above it up.
+		{"0x1fffffffffffff", 0h433f_ffff_ffff_ffff},
+		{"0x20000000000001", 0h4340_0000_0000_0000},
+		{"0x20000000000003", 0h4340_0000_0000_0002},
+		{"0x200000000000011", 0h4380_0000_0000_0001},
+		{"0b111111111111111111111111111111111111111111111111111111111111", 0h43b0_0000_0000_0000},
+	}
+	for c in cases {
+		got, want := num.to_number(c.text), c.value
+		testing.expectf(t, same(got, want), "to_number(%q): got %v, want %v", c.text, got, want)
+	}
+	// Past the largest double.
+	digits := strings.repeat("f", 300, context.temp_allocator)
+	wide := strings.concatenate({"0x", digits}, context.temp_allocator)
+	testing.expectf(t, same(num.to_number(wide), INF), "to_number of 300 hex digits")
+}
+
+// parseInt(text), with the bit patterns taken as for to_number.
+@(test)
+parse_int_matches_node :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		text:  string,
+		value: f64,
+	} {
+		{"0x1f", 31},
+		{"12.9", 12},
+		{"-0.5", NEGATIVE_ZERO},
+		{"-0", NEGATIVE_ZERO},
+		{"  -12abc", -12},
+		{"+7", 7},
+		{"1e+21", 1},
+		{"", NAN},
+		{"abc", NAN},
+		{"0x", NAN},
+		{"0xg", NAN},
+		{"  0x10z", 16},
+		{"-0x10", -16},
+		{"9007199254740993", 0h4340_0000_0000_0000},
+		{"10000000000000000000000000000001", 0h465f_8def_8808_b024},
+		{"123456789012345678901234567890", 0h45f8_ee90_ff6c_373e},
+		{"0x20000000000003", 0h4340_0000_0000_0002},
+		{"0x200000000000011", 0h4380_0000_0000_0001},
+	}
+	for c in cases {
+		got, want := num.parse_int(c.text), c.value
+		testing.expectf(t, same(got, want), "parse_int(%q): got %v, want %v", c.text, got, want)
+	}
+	// Leading zeros are not significant digits, and 310 of those are past the largest double.
+	zeros := strings.repeat("0", 400, context.temp_allocator)
+	one := strings.concatenate({zeros, "1"}, context.temp_allocator)
+	testing.expectf(t, same(num.parse_int(one), 1), "parse_int of 400 zeros and a one")
+	nines := strings.repeat("9", 320, context.temp_allocator)
+	testing.expectf(t, same(num.parse_int(nines), INF), "parse_int of 320 nines")
+}
+
 @(test)
 round_takes_a_half_toward_positive_infinity :: proc(t: ^testing.T) {
 	cases := [?]struct {

@@ -37,6 +37,12 @@ to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok:
 	return value.to_string(heap, v)
 }
 
+// append_string appends the units of ToString(v), so a caller that only reads the text makes no
+// cell for it. ok = false where to_string would refuse.
+append_string :: proc(units: ^[dynamic]u16, heap: ^gc.Heap, v: abi.Tagged) -> (ok: bool) {
+	return write_string(units, heap, v, nil)
+}
+
 @(private)
 join_units :: proc(
 	heap: ^gc.Heap,
@@ -80,7 +86,7 @@ write_elements :: proc(
 		if i > 0 {
 			append(units, ..transmute([]u16)separator)
 		}
-		element := load(heap, slot(array, kind, i), kind)
+		element := value.load(heap, slot(array, kind, i), kind)
 		if element.tag == .Undefined || element.tag == .Null {
 			continue
 		}

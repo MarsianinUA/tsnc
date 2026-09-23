@@ -131,6 +131,33 @@ join_refuses_what_node_would_run :: proc(t: ^testing.T) {
 	testing.expect(t, !string_ok, "ToString of the same array converted")
 }
 
+// append_string is ToString without the cell: an array joins by commas, and what to_string refuses
+// it refuses too.
+@(test)
+append_string_writes_to_string_into_the_units :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	units := make([dynamic]u16, context.temp_allocator)
+	inner := numbers(&heap, 2, 3)
+	outer := arr.new_array(&heap, VALUES, 0)
+	arr.push(&heap, outer, number(1))
+	arr.push(&heap, outer, object(inner))
+	testing.expect(t, arr.append_string(&units, &heap, number(-1.5)))
+	testing.expect(t, arr.append_string(&units, &heap, null()))
+	testing.expect(t, arr.append_string(&units, &heap, object(outer)))
+	want := "-1.5null1,2,3"
+	same := len(units) == len(want)
+	for i in 0 ..< min(len(units), len(want)) {
+		same &&= units[i] == u16(want[i])
+	}
+	testing.expectf(t, same, "got %v, want %q", units[:], want)
+
+	closure := gc.alloc(&heap, CLOSURE, size_of(abi.Closure_Cell))
+	testing.expect(t, !arr.append_string(&units, &heap, function(closure)), "a function converted")
+}
+
 // String(x) of an array is its join by commas; of anything else it is what package value says.
 @(test)
 to_string_joins_an_array_and_leaves_the_rest_to_value :: proc(t: ^testing.T) {

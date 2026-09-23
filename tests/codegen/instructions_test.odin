@@ -304,9 +304,8 @@ a_runtime_call_widens_its_boolean :: proc(t: ^testing.T) {
 	params := [?]ir.Type{ir.BOOL}
 	id := ir.declare_func(&p, "m1.print", params[:], ir.VOID, at(1))
 	f := ir.begin_func(&p, id)
-	to_stdout := ir.emit(&f, ir.BOOL, ir.Const_Bool{value = false}, at(2))
-	args := [?]ir.Value_ID{to_stdout, 0}
-	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Boolean, args = args[:]}, at(2))
+	args := [?]ir.Value_ID{0}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = args[:]}, at(2))
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(3))
 	ir.end_func(&f)
 
@@ -315,8 +314,45 @@ a_runtime_call_widens_its_boolean :: proc(t: ^testing.T) {
 	if text == "" {
 		return
 	}
-	wants := []string{"zext i1 ", "call void @tsnc_console_boolean(i64 0, i64 "}
+	wants := []string{"zext i1 ", "call void @tsnc_console_log(i64 "}
 	expect_text(t, text, wants)
+}
+
+// A Rest parameter takes its values from one array on the caller's stack, as long as the widest
+// call of the function needs, and a call that passes none passes null.
+@(test)
+a_runtime_call_passes_its_rest_in_one_stack_array :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+
+	params := [?]ir.Type{ir.TAGGED, ir.TAGGED}
+	id := ir.declare_func(&p, "m1.print", params[:], ir.VOID, at(1))
+	f := ir.begin_func(&p, id)
+	to_stdout := ir.emit(&f, ir.BOOL, ir.Const_Bool{value = false}, at(2))
+	three := [?]ir.Value_ID{to_stdout, 0, 1, 0}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = three[:]}, at(2))
+	one := [?]ir.Value_ID{to_stdout, 1}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = one[:]}, at(3))
+	none := [?]ir.Value_ID{to_stdout}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = none[:]}, at(4))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(5))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "rest")
+	if text == "" {
+		return
+	}
+	wants := []string {
+		"alloca [3 x %tsnc.tagged]",
+		"getelementptr inbounds %tsnc.tagged, ptr %2, i64 2",
+		"store %tsnc.tagged %0, ptr %",
+		"call void @tsnc_console_log(i64 0, ptr %2, i64 3)",
+		"call void @tsnc_console_log(i64 0, ptr %2, i64 1)",
+		"call void @tsnc_console_log(i64 0, ptr null, i64 0)",
+	}
+	expect_text(t, text, wants)
+	testing.expectf(t, strings.count(text, "alloca") == 1, "one slot per function:\n%s", text)
 }
 
 // A tagged value crosses into the runtime as its two words, which every target passes alike.

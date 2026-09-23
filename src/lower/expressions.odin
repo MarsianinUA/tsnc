@@ -255,8 +255,8 @@ lower_lib_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Spa
 	return later(s, span, construct_of(strategy, name))
 }
 
-// lower_member is left with a constant of the lib, such as Math.PI: everything of an object or an
-// array waits for milestone 5.
+// lower_member is left with a constant of the lib, such as Math.PI, and process.argv: everything of
+// an object or an array waits for milestone 5.
 @(private)
 lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -267,7 +267,24 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 	if constant, is_constant := strategy.(Constant); is_constant {
 		return ir.emit(&s.fb, ir.F64, ir.Const_Number{value = constant.value}, span)
 	}
+	if strategy == Builtin.Process_Argv {
+		return lower_process_argv(s, span)
+	}
 	return later(s, span, construct_of(strategy, node.name.text))
+}
+
+// lower_process_argv reads one global, so every read answers the same array, as in Node. main
+// fills it before any module runs.
+@(private)
+lower_process_argv :: proc(s: ^Func_State, span: source.Span) -> ir.Value_ID {
+	argv, made := s.low.argv.?
+	if !made {
+		strings := ir.array_layout(&s.low.builder, .Ref)
+		argv = ir.add_global(&s.low.builder, "process.argv", ir.ref(strings))
+		s.low.argv = argv
+	}
+	type := s.low.builder.globals[argv].type
+	return ir.emit(&s.fb, type, ir.Global_Load{global = argv}, span)
 }
 
 // member_strategy is the table row that `object.name` names. A lib value in front of the dot picks

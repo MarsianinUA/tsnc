@@ -14,11 +14,9 @@ the program, which resolves statically and becomes a direct call; a name of the 
 strategy table of lib.odin turns into an intrinsic, an operator, a runtime call or a shape built
 here; or a function value, which needs the closures of milestone 5.
 
-console.log is the one name whose expansion is worth stating. The compiler knows every argument
-statically, so a statement becomes one runtime call per argument with the separators and the line
-end written as string constants. Nothing formats a list at run time, and the runtime needs one
-export per kind of value rather than one that understands them all. Every argument is evaluated
-before the first write, as Node does it.
+console.log is one runtime call per statement, with every argument boxed into a tagged value: a
+format string in the first argument decides how the others print, so only the runtime can lay out
+the line. Every argument is evaluated before the call, as Node does it.
 */
 
 @(private)
@@ -136,6 +134,9 @@ lower_strategy :: proc(
 			return lower_console(s, node, false, span)
 		case .Console_Error:
 			return lower_console(s, node, true, span)
+		case .Process_Argv:
+			// An array is not callable, and check said so already.
+			return ir.NO_VALUE
 		case .Process_Exit:
 			return lower_process_exit(s, node, span)
 		case .Number_Is_Integer:
@@ -197,66 +198,36 @@ lower_console :: proc(
 ) -> ir.Value_ID {
 	// Node evaluates the whole list before it writes anything, so an argument that prints or exits
 	// does so ahead of the line and never in the middle of it.
-	values := make([]ir.Value_ID, len(node.args), context.temp_allocator)
+	args := make([]ir.Value_ID, len(node.args) + 1, context.temp_allocator)
+	args[0] = ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = err}, span)
+	complete := true
 	for id, i in node.args {
-		values[i] = lower_expression(s, id)
+		args[i + 1] = console_argument(s, id)
+		complete = complete && args[i + 1] != ir.NO_VALUE
 	}
-
-	// An argument this build cannot print does not stop the rest: one pass names every construct a
-	// program would have to change, which is what requirements 2.3 asks of the compiler.
-	for id, i in node.args {
-		if i > 0 {
-			write_text(s, err, " ", span)
-		}
-		write_argument(s, err, id, values[i])
+	// An argument this build cannot compile does not stop the others from being lowered: one pass
+	// names every construct a program would have to change, which is what requirements 2.3 asks of
+	// the compiler. The call goes only when every argument has a value; one that never comes back,
+	// as process.exit() does, leaves no line to write.
+	if complete {
+		ir.emit(&s.fb, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = args}, span)
 	}
-	write_text(s, err, "\n", span)
 	return ir.NO_VALUE
 }
 
-// write_argument runs none of the program's code: the caller evaluated the argument already.
+// console_argument boxes the argument into the tagged value the runtime takes. An argument typed
+// undefined or null is that constant whatever lowering it answered.
 @(private)
-write_argument :: proc(s: ^Func_State, err: bool, id: ast.Node_ID, value: ir.Value_ID) {
+console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	type := s.typed.node_types[id]
-	if type == check.UNDEFINED || type == check.NULL {
-		// Both are a word, and both are the same word at every call site.
-		write_text(s, err, "undefined" if type == check.UNDEFINED else "null", span)
-		return
+	value := lower_expression(s, id)
+	switch s.typed.node_types[id] {
+	case check.UNDEFINED:
+		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
+	case check.NULL:
+		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Null{}, span)
 	}
-
-	if value == ir.NO_VALUE {
-		return
-	}
-	export: abi.Runtime_Proc
-	#partial switch value_type(s, value).kind {
-	case .F64:
-		export = .Console_Number
-	case .Bool:
-		export = .Console_Boolean
-	case .Str:
-		export = .Console_String
-	case .Tagged:
-		later(s, span, "printing a union")
-		return
-	case:
-		later(s, span, "printing a value of this type")
-		return
-	}
-	stream := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = err}, span)
-	ir.emit(&s.fb, ir.VOID, ir.Call_Runtime{export = export, args = {stream, value}}, span)
-}
-
-@(private)
-write_text :: proc(s: ^Func_State, err: bool, text: string, span: source.Span) {
-	stream := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = err}, span)
-	pooled := ir.intern_string(&s.low.builder, text)
-	value := ir.emit(&s.fb, ir.STR, ir.Const_String{text = pooled}, span)
-	call := ir.Call_Runtime {
-		export = .Console_String,
-		args   = {stream, value},
-	}
-	ir.emit(&s.fb, ir.VOID, call, span)
+	return coerce(s, value, ir.TAGGED, span)
 }
 
 // lower_process_exit emits no terminator of its own: the export never returns, and the statement

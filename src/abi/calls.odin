@@ -30,18 +30,21 @@ C_Type :: enum u8 {
 	// passes the address of a Tagged on its stack ahead of the other parameters, the export writes
 	// it and returns nothing. That is Win64's hidden pointer, spelled out on every target.
 	Tagged,
+	// Any number of Tagged values, as the last parameter only and never as a result. They travel
+	// as two parameters: the address of an array of Tagged on the caller's stack, nil when there
+	// are none, and their count as an i64.
+	Rest,
 }
 
 // Runtime_Proc lists the procedures the runtime exports to generated code. Runtime tasks add rows
 // as they add exports.
 Runtime_Proc :: enum u8 {
-	// Console output, requirements 3.9. One call writes one piece of a line: lower knows every
-	// argument statically, so it composes the spaces between them and the line end out of string
-	// constants and picks the row by the type of each argument.
-	Console_String, // (err, text: ^String_Cell)
-	Console_Number, // (err, value): the digits of requirements 3.1
-	Console_Boolean, // (err, value): `true` or `false`
+	// Console output, requirements 3.9. One call per statement: the runtime formats the whole line,
+	// since a format string in the first argument decides how the others print, and writes it
+	// once.
+	Console_Log, // (err, args: Rest): console.log, or console.error when err is true
 	Log_String, // (text: ^String_Cell): the units as UTF-8 and a newline to stdout
+	Process_Argv, // () -> ^Array_Cell of strings: a new process.argv; lower calls it once
 	Process_Exit, // (code): flushes nothing and ends the process
 	// The three Math names that are not a C function: round takes a half toward positive infinity,
 	// max and min have their own rules for NaN and -0 (requirements 4.5).
@@ -105,18 +108,9 @@ MISSING_LIMIT :: 4294967295 // 2^32 - 1, split's limit
 // exports from it (`link_name`) and codegen declares them from the same rows.
 // Every symbol starts with `tsnc_` to stay clear of libc and Odin.
 RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
-	.Console_String = {symbol = "tsnc_console_string", params = {.Boolean, .Ptr}, result = .Void},
-	.Console_Number = {
-		symbol = "tsnc_console_number",
-		params = {.Boolean, .Number},
-		result = .Void,
-	},
-	.Console_Boolean = {
-		symbol = "tsnc_console_boolean",
-		params = {.Boolean, .Boolean},
-		result = .Void,
-	},
+	.Console_Log = {symbol = "tsnc_console_log", params = {.Boolean, .Rest}, result = .Void},
 	.Log_String = {symbol = "tsnc_log_string", params = {.Ptr}, result = .Void},
+	.Process_Argv = {symbol = "tsnc_process_argv", params = {}, result = .Ptr},
 	.Process_Exit = {
 		symbol = "tsnc_process_exit",
 		params = {.Number},
@@ -205,6 +199,10 @@ Runtime_Error :: enum i32 {
 	// object's own toString.
 	Not_Convertible_To_String,
 	Invalid_String_Length, // a string past str.MAX_LENGTH units: Node's RangeError
+	// %d of an object with its own valueOf or toString, which Node would call.
+	Not_Convertible_To_Number,
+	// %j of an object with its own toJSON, which Node would call.
+	Not_Convertible_To_Json,
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

@@ -7,12 +7,13 @@ import "../abi"
 import "arr"
 import "console"
 import "fail"
+import "gc"
 import "num"
 import "str"
 import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 37)
+#assert(len(abi.Runtime_Proc) == 36)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -25,25 +26,13 @@ import "value"
 // The three Math exports do no allocating of their own, and they still take a context, because an
 // export that skipped it would be the one place a later assert inside it had nowhere to go.
 
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_String].symbol)
-console_string :: proc "c" (err: b64, text: ^abi.String_Cell) {
+// The values of a Rest parameter arrive as their address on the caller's stack and their count
+// (abi.C_Type.Rest); the address is nil when there are none.
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_Log].symbol)
+console_log :: proc "c" (err: b64, args: [^]abi.Tagged, count: int) {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	console.write_string(bool(err), text)
-}
-
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_Number].symbol)
-console_number :: proc "c" (err: b64, value: f64) {
-	context = export_context()
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	console.write_number(bool(err), value)
-}
-
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Console_Boolean].symbol)
-console_boolean :: proc "c" (err: b64, value: b64) {
-	context = export_context()
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	console.write_boolean(bool(err), bool(value))
+	console.log(&heap, .Stderr if err else .Stdout, args[:count])
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Log_String].symbol)
@@ -51,6 +40,32 @@ log_string :: proc "c" (text: ^abi.String_Cell) {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	console.log_string(text)
+}
+
+// process_argv answers a new array: the path of the executable, the first argument as the process
+// was started with it, then the others, which is process.argv of a Node single executable
+// application. Generated code calls it once, before any module runs.
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Process_Argv].symbol)
+process_argv :: proc "c" () -> ^abi.Array_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	table, found := gc.array_table(&heap, .Ref)
+	ensure(found, "process.argv in a program with no table for a string[]")
+	argv := arr.new_array(&heap, table, 0)
+	path, _ := os.get_executable_path(context.allocator)
+	arr.push(&heap, argv, {tag = .String, payload = {ref = str.from_utf8(&heap, path)}})
+	when ODIN_OS == .Windows {
+		for argument in wide_arguments(context.allocator) {
+			cell := str.from_units(&heap, argument)
+			arr.push(&heap, argv, {tag = .String, payload = {ref = cell}})
+		}
+	} else {
+		for argument in os.args {
+			cell := str.from_utf8(&heap, argument)
+			arr.push(&heap, argv, {tag = .String, payload = {ref = cell}})
+		}
+	}
+	return argv
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Round].symbol)
