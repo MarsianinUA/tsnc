@@ -74,6 +74,14 @@ npm ci --prefix tests/diff
 
 A program in the corpus stays inside the part of the subset that is lowered, since one that does not compile is a failure rather than a skip. `tests/diff/src/modules/` holds modules that other programs import and that are never run on their own.
 
+A program that needs an environment variable names it on its first line, and the runner sets it for both the Node run and the compiled one, on top of its own environment:
+
+```ts
+// env: FORCE_COLOR=1 NO_COLOR= NODE_DISABLE_COLORS=
+```
+
+`tests/diff/src/colors.ts` does this to see colors through the pipe the runner reads. The two empty values keep Node from warning that they are ignored, should the machine set them.
+
 ## GC stress mode
 
 A compiled program runs its collector in stress mode when the environment variable `TSNC_GC_STRESS` is `1`, with no rebuild. It then collects before every allocation and checks the whole heap after every collection. A broken heap ends the program with exit code 1 and the address of the cell, page or free list where the check stopped:
@@ -99,9 +107,24 @@ odin run src/runtime/str/tools -out:dist/case-tables.exe -vet -strict-style -- <
 
 After a version change, update the hashes in `tests/runtime/str/case_test.odin`: the test maps every code point and compares with Node, and the Node command above it prints the new values. Use a Node whose `process.versions.unicode` is the new version. The generator refuses files that hold a rule the runtime cannot follow, such as a context other than Final_Sigma or a mapping longer than three units. CI only type-checks it.
 
+## Unicode width table
+
+When the console groups a long array into columns, it measures each entry in terminal columns, as Node does: a CJK character takes two, a combining mark none. The widths come from `src/runtime/console/width_tables.odin`, which a generator writes from five files of the same Unicode Character Database 17.0.0. Download them into one directory outside the repository and run the generator on it:
+
+```sh
+curl -O https://www.unicode.org/Public/17.0.0/ucd/EastAsianWidth.txt
+curl -O https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt
+curl -O https://www.unicode.org/Public/17.0.0/ucd/DerivedNormalizationProps.txt
+curl -O https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt
+curl -O https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt
+odin run src/runtime/console/tools -out:dist/width-tables.exe -vet -strict-style -- <ucd dir> src/runtime/console/width_tables.odin
+```
+
+After a version change, update the hash in `tests/runtime/console/width_test.odin`: the test measures every code point and compares with Node's internal `getStringWidth`, which the command above it runs. CI only type-checks the generator.
+
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, type-checks the case table generator, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus, with the commands above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, type-checks the case and width table generators, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus, with the commands above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.

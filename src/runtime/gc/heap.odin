@@ -378,18 +378,22 @@ table_is_valid :: proc(table: abi.Type_Table) -> bool {
 		if table.size < size_of(abi.Cell_Header) {
 			return false
 		}
-		// Fields come in layout order, each after the one before it and inside the cell.
-		end := size_of(abi.Cell_Header)
-		for field in table.fields {
+		// Fields come in the order the console prints them, not by offset, so each one is checked
+		// against every other. A table has a handful of fields, and this runs once per table.
+		for field, i in table.fields {
 			if !slot_kind_is_valid(field.kind) {
 				return false
 			}
-			slot_size := abi.SLOT_SIZE[field.kind]
-			fits := field.offset >= end && field.offset <= table.size - slot_size
-			if !fits || field.offset % size_of(u64) != 0 {
+			end := field.offset + abi.SLOT_SIZE[field.kind]
+			inside := field.offset >= size_of(abi.Cell_Header) && end <= table.size
+			if !inside || field.offset % size_of(u64) != 0 {
 				return false
 			}
-			end = field.offset + slot_size
+			for other in table.fields[:i] {
+				if field.offset < other.offset + abi.SLOT_SIZE[other.kind] && other.offset < end {
+					return false
+				}
+			}
 		}
 		return true
 	}

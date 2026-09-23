@@ -78,6 +78,19 @@ one_shape_interns_to_one_layout :: proc(t: ^testing.T) {
 }
 
 @(test)
+an_optional_slot_is_part_of_the_shape :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	required := [?]ir.Slot{{name = "x", kind = .Tagged}}
+	optional := [?]ir.Slot{{name = "x", kind = .Tagged, optional = true}}
+
+	id := ir.object_layout(&p, optional[:])
+
+	// The console skips an absent optional field and prints a required one holding undefined.
+	testing.expect(t, ir.object_layout(&p, required[:]) != id, "optional is part of the shape")
+	testing.expect(t, p.layouts[id].fields[0].optional, "the table carries the flag")
+}
+
+@(test)
 table_id_numbers_a_layout_after_the_builtin_tables :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	fields := [?]ir.Slot{{name = "x", kind = .Number}}

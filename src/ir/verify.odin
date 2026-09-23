@@ -542,12 +542,24 @@ verify_instruction :: proc(c: ^Checker) {
 	case Call_Runtime:
 		exports := abi.RUNTIME_EXPORTS
 		export := exports[v.export]
-		if len(v.args) != len(export.params) {
+		// A trailing Rest takes every argument past the fixed ones, and each of them is Tagged.
+		fixed := export.params
+		rest := len(fixed) > 0 && fixed[len(fixed) - 1] == .Rest
+		if rest {
+			fixed = fixed[:len(fixed) - 1]
+		}
+		if len(v.args) < len(fixed) || !rest && len(v.args) != len(fixed) {
 			report(c, .Argument_Count)
 		}
 		for arg, i in v.args {
 			type, known := operand(c, arg)
-			if known && i < len(export.params) && !c_type_fits(export.params[i], type) {
+			switch {
+			case !known:
+			case i < len(fixed):
+				if !c_type_fits(fixed[i], type) {
+					report(c, .Operand_Type)
+				}
+			case rest && type != TAGGED:
 				report(c, .Operand_Type)
 			}
 		}
@@ -875,6 +887,8 @@ c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 		return type == BOOL
 	case .Tagged:
 		return type == TAGGED
+	case .Rest:
+	// Not one operand: the Call_Runtime case checks each of them as a Tagged.
 	}
 	return false
 }

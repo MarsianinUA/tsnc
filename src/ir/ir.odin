@@ -100,8 +100,9 @@ ref :: proc(layout: Layout_ID) -> Type {
 // Slot is one field of an object layout or one captured variable of an environment, in the
 // canonical order lower chose. The layout procedures turn slots into abi.Field offsets.
 Slot :: struct {
-	name: string, // UTF-8 TS name; empty in an environment
-	kind: abi.Slot_Kind,
+	name:     string, // UTF-8 TS name; empty in an environment
+	kind:     abi.Slot_Kind,
+	optional: bool, // abi.Field.optional
 }
 
 // Global is a module-level binding, zero filled before any module runs, so a Tagged global starts

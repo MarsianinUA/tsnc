@@ -57,13 +57,13 @@ pop :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> abi.Tagged {
 	}
 	array.length -= 1
 	kind := element_kind(heap, array)
-	return load(heap, slot(array, kind, array.length), kind)
+	return value.load(heap, slot(array, kind, array.length), kind)
 }
 
 element_at :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, index: int) -> abi.Tagged {
 	ensure(0 <= index && index < array.length, "an array index out of range")
 	kind := element_kind(heap, array)
-	return load(heap, slot(array, kind, index), kind)
+	return value.load(heap, slot(array, kind, index), kind)
 }
 
 // slice answers a new array even when it copies all of this one: an array is compared by identity.
@@ -84,7 +84,7 @@ slice :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, start, end: f64) -> ^abi.A
 index_of :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, search: abi.Tagged, from: f64) -> int {
 	kind := element_kind(heap, array)
 	for i in num.relative_index(from, array.length) ..< array.length {
-		if value.equal(load(heap, slot(array, kind, i), kind), search) {
+		if value.equal(value.load(heap, slot(array, kind, i), kind), search) {
 			return i
 		}
 	}
@@ -98,7 +98,7 @@ includes :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, search: abi.Tagged, fro
 	}
 	kind := element_kind(heap, array)
 	for i in num.relative_index(from, array.length) ..< array.length {
-		if is_nan(load(heap, slot(array, kind, i), kind)) {
+		if is_nan(value.load(heap, slot(array, kind, i), kind)) {
 			return true
 		}
 	}
@@ -173,37 +173,6 @@ store :: proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 	case .Tagged:
 		(^abi.Tagged)(slot)^ = v
 	}
-}
-
-@(private)
-load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
-	switch kind {
-	case .Number:
-		return {tag = .Number, payload = {number = (^f64)(slot)^}}
-	case .Boolean:
-		return {tag = .Boolean, payload = {boolean = (^b64)(slot)^}}
-	case .Ref:
-		cell := (^^abi.Cell_Header)(slot)^
-		return {tag = tag_of(heap, cell), payload = {ref = cell}}
-	case .Tagged:
-		return (^abi.Tagged)(slot)^
-	}
-	unreachable()
-}
-
-// tag_of is the tag a reference takes in a tagged value. An array is an object there, as in typeof.
-@(private)
-tag_of :: proc(heap: ^gc.Heap, cell: ^abi.Cell_Header) -> abi.Tag {
-	switch gc.table_of(heap, cell).kind {
-	case .String:
-		return .String
-	case .Closure:
-		return .Function
-	case .Object, .Array:
-		return .Object
-	case .Environment, .Buffer:
-	}
-	panic("an array element that is no value")
 }
 
 @(private)

@@ -40,6 +40,33 @@ TAGGED_ANSWERS :: "number\nundefined\n0\nabc\ntrue\nfalse\ntrue\ntrue\nfalse\ntr
 //		pieces.slice(1).join("-"), String(pieces.sort()), pieces.slice(0, 0).pop()]) console.log(String(v))
 ARRAY_ANSWERS :: "b\n3\n1\nfalse\na-d\na,c,d\nundefined\n"
 
+// ARGUMENTS reach process.argv as they were passed: the Cyrillic one in UTF-16, which on Windows
+// means from the wide command line, and the quotes as the command line escaped them.
+ARGUMENTS :: []string{"a", "\xd0\xb1 \xd0\xb2", "\"q\""}
+
+// console_answers is what Node prints for console_program as a single executable application
+// named `name` and run with ARGUMENTS, whose process.argv is [execPath, argv[0], ...arguments]:
+//
+//	console.log(process.argv); console.log(process.argv.join("\n"));
+//	console.log("c,a,b".split(","), 1.5, "x", null, undefined, true, -0);
+//	console.error("%s=%d%%", "n", 42)
+//
+// The two paths make the array too long for one line.
+console_answers :: proc(name: string) -> string {
+	dir, _ := os.get_executable_directory(context.temp_allocator)
+	program, _ := os.join_path({dir, fmt.tprintf("%s.exe", name)}, context.temp_allocator)
+	quoted, _ := strings.replace_all(program, "\\", "\\\\", context.temp_allocator)
+	return fmt.tprintf(
+		"[\n  '%s',\n  '%s',\n  'a',\n  '\xd0\xb1 \xd0\xb2',\n  '\"q\"'\n]\n" +
+		"%s\n%s\na\n\xd0\xb1 \xd0\xb2\n\"q\"\n" +
+		"[ 'c', 'a', 'b' ] 1.5 x null undefined true -0\n",
+		quoted,
+		quoted,
+		program,
+		program,
+	)
+}
+
 NAN :: 0h7ff8_0000_0000_0000
 INF :: 0h7ff0_0000_0000_0000
 NEGATIVE_ZERO :: 0h8000_0000_0000_0000
@@ -100,6 +127,40 @@ arrays_cross_into_the_runtime :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.exit_code, 0)
 }
 
+// console_program prints process.argv, run with ARGUMENTS, as console.log(argv) and as
+// argv.join("\n"), then a split array and tagged values on one line and a format string on stderr.
+// Each statement is one runtime call that takes its values on the caller's stack.
+@(test)
+console_and_process_argv_cross_into_the_runtime :: proc(t: ^testing.T) {
+	output := console_program()
+	state, stdout, stderr, ran := build_and_run(t, &output, "link-console", ARGUMENTS)
+	if !ran {
+		return
+	}
+	testing.expect_value(t, stdout, console_answers("link-console"))
+	testing.expect_value(t, stderr, "n=42%\n")
+	testing.expect_value(t, state.exit_code, 0)
+}
+
+// The same program in GC stress mode, which collects before every allocation: process.argv is
+// built one cell at a time, and every cell has to survive the allocation of the next.
+@(test)
+console_and_process_argv_survive_a_collection_at_every_allocation :: proc(t: ^testing.T) {
+	output := console_program()
+	environment, _ := os.environ(context.temp_allocator)
+	stress := make([dynamic]string, context.temp_allocator)
+	append(&stress, ..environment)
+	append(&stress, "TSNC_GC_STRESS=1")
+	name := "link-console-stress"
+	state, stdout, stderr, ran := build_and_run(t, &output, name, ARGUMENTS, stress[:])
+	if !ran {
+		return
+	}
+	testing.expect_value(t, stdout, console_answers(name))
+	testing.expect_value(t, stderr, "n=42%\n")
+	testing.expect_value(t, state.exit_code, 0)
+}
+
 @(test)
 missing_runtime_object_is_reported :: proc(t: ^testing.T) {
 	missing := "dist/link-missing/tsnc_rt.obj"
@@ -137,12 +198,14 @@ only_the_host_target_links :: proc(t: ^testing.T) {
 }
 
 // build_and_run emits the program as an object, links it with the runtime object under `name` in
-// the test's directory and runs it.
+// the test's directory and runs it with `arguments`, in `environment` when it is not nil.
 @(private = "file")
 build_and_run :: proc(
 	t: ^testing.T,
 	output: ^ir.Program_IR,
 	name: string,
+	arguments: []string = nil,
+	environment: []string = nil,
 	loc := #caller_location,
 ) -> (
 	state: os.Process_State,
@@ -175,7 +238,14 @@ build_and_run :: proc(
 
 	out, errors: []byte
 	run_err: os.Error
-	state, out, errors, run_err = os.process_exec({command = {program}}, context.temp_allocator)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, program)
+	append(&command, ..arguments)
+	description := os.Process_Desc {
+		command = command[:],
+		env     = environment,
+	}
+	state, out, errors, run_err = os.process_exec(description, context.temp_allocator)
 	if !testing.expectf(t, run_err == nil, "run %s: %v", program, run_err, loc = loc) {
 		return
 	}
@@ -284,6 +354,56 @@ array_program :: proc() -> ir.Program_IR {
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
 	ir.end_func(&f)
 	return ir.finish(&p, main, nil)
+}
+
+// console_program is the program console_answers describes, built by hand: until milestone 5
+// lowers arrays, no TypeScript source can pass one to console.log.
+@(private = "file")
+console_program :: proc() -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	strings_type := ir.ref(ir.array_layout(&p, .Ref))
+	line_end := ir.intern_string(&p, "\n")
+	cab := ir.intern_string(&p, "c,a,b")
+	comma := ir.intern_string(&p, ",")
+	x := ir.intern_string(&p, "x")
+	pattern := ir.intern_string(&p, "%s=%d%%")
+	n := ir.intern_string(&p, "n")
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
+	f := ir.begin_func(&p, main)
+
+	argv := call(&f, .Process_Argv, strings_type)
+	log(&f, false, box(&f, argv))
+	separator := ir.emit(&f, ir.STR, ir.Const_String{text = line_end}, SPAN)
+	log(&f, false, box(&f, call(&f, .Array_Join, ir.STR, argv, separator)))
+
+	text := ir.emit(&f, ir.STR, ir.Const_String{text = cab}, SPAN)
+	splitter := ir.emit(&f, ir.STR, ir.Const_String{text = comma}, SPAN)
+	pieces := call(&f, .String_Split, strings_type, text, splitter, number(&f, abi.MISSING_LIMIT))
+	log(
+		&f,
+		false,
+		box(&f, pieces),
+		boxed_number(&f, 1.5),
+		boxed_string(&f, x),
+		ir.emit(&f, ir.TAGGED, ir.Const_Null{}, SPAN),
+		ir.emit(&f, ir.TAGGED, ir.Const_Undefined{}, SPAN),
+		box(&f, ir.emit(&f, ir.BOOL, ir.Const_Bool{value = true}, SPAN)),
+		boxed_number(&f, NEGATIVE_ZERO),
+	)
+	log(&f, true, boxed_string(&f, pattern), boxed_string(&f, n), boxed_number(&f, 42))
+
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
+	ir.end_func(&f)
+	return ir.finish(&p, main, nil)
+}
+
+// log is console.log, or console.error when `err` is true.
+@(private = "file")
+log :: proc(f: ^ir.Func_Builder, err: bool, values: ..ir.Value_ID) {
+	args := make([]ir.Value_ID, len(values) + 1, context.temp_allocator)
+	args[0] = ir.emit(f, ir.BOOL, ir.Const_Bool{value = err}, SPAN)
+	copy(args[1:], values)
+	ir.emit(f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = args}, SPAN)
 }
 
 @(private = "file")

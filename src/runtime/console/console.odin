@@ -1,15 +1,17 @@
 /*
-Console output for console.log and console.error (requirements 3.9). A TS string is UTF-16 and the
-console gets UTF-8: io.write_string16 re-encodes it and turns an unpaired surrogate into U+FFFD, as
-Node does.
+Console output for console.log and console.error (requirements 3.9), as Node prints it: the
+arguments go through util.formatWithOptions (format.odin), which reads a format string in the first
+one and hands every other value to util.inspect (inspect.odin), with the colors Node would use on
+the same stream (color.odin). The line and its newline leave in one write, as in Node's
+kWriteToConsole, so lines on stdout and stderr keep the order of the calls.
 
-The bytes are UTF-8 whatever the console code page: on Windows the Odin entry point, which the
-runtime owns, switches the console to UTF-8 before tsnc_main runs.
+A TS string is UTF-16 and the console gets UTF-8, with an unpaired surrogate as U+FFFD, as Node
+writes it. The bytes are UTF-8 whatever the console code page: on Windows the Odin entry point,
+which the runtime owns, switches the console to UTF-8 before tsnc_main runs.
 
-One statement becomes several calls. The compiler knows every argument of a console.log statically,
-so it picks a procedure per argument and writes the spaces between them and the line end as string
-constants of its own; nothing here formats a list. The stream is a parameter for the same reason:
-log and error differ only at the call site, and the runtime keeps no state but the GC heap.
+Everything a call builds lives in context.allocator, which is the export's scratch arena. Nothing
+here allocates in the GC heap, so no collection runs while a line is formatted, and the runtime
+keeps no state but the heap: the stream and the colors are decided at each call.
 */
 package console
 
@@ -19,27 +21,31 @@ import "core:math"
 import "core:os"
 
 import "../../abi"
+import "../fail"
+import "../gc"
 import "../num"
 import "../str"
 
-write_string :: proc(err: bool, text: ^abi.String_Cell) {
-	buf: [4096]byte
-	out: bufio.Writer
-	bufio.writer_init_with_buf(&out, os.to_writer(stream(err)), buf[:])
-	// Like C stdio and Go's fmt.Print, a failed write to the console does not stop the program.
-	_, _ = io.write_string16(bufio.writer_to_writer(&out), str.units(text))
-	_ = bufio.writer_flush(&out)
+Stream :: enum u8 {
+	Stdout, // console.log
+	Stderr, // console.error
 }
 
-write_boolean :: proc(err: bool, value: bool) {
-	_, _ = os.write_string(stream(err), "true" if value else "false")
-}
-
-// write_number writes the digits of requirements 3.1. They are ASCII, so this path needs none of
-// the UTF-16 re-encoding a string goes through.
-write_number :: proc(err: bool, value: f64) {
-	buf: [num.STRING_MAX]byte
-	_, _ = os.write_string(stream(err), number_text(buf[:], value))
+// log ends the program where Node would run code of the program to print a value, before any of
+// the line is written.
+log :: proc(heap: ^gc.Heap, stream: Stream, args: []abi.Tagged) {
+	units := make([dynamic]u16, 0, 64)
+	switch format(heap, args, should_colorize(stream), &units) {
+	case .None:
+	case .Not_Convertible_To_String:
+		fail.at({error = .Not_Convertible_To_String})
+	case .Not_Convertible_To_Number:
+		fail.at({error = .Not_Convertible_To_Number})
+	case .Not_Convertible_To_Json:
+		fail.at({error = .Not_Convertible_To_Json})
+	}
+	append(&units, '\n')
+	write_utf8(file_of(stream), units[:])
 }
 
 // number_text is what the console prints for a number: Number::toString, except that a negative
@@ -71,6 +77,51 @@ log_string :: proc(text: ^abi.String_Cell) {
 }
 
 @(private)
-stream :: proc(err: bool) -> ^os.File {
-	return os.stderr if err else os.stdout
+file_of :: proc(stream: Stream) -> ^os.File {
+	return os.stderr if stream == .Stderr else os.stdout
+}
+
+// write_utf8 writes a line longer than its buffer in pieces. Like C stdio and Go's fmt.Print, a
+// failed write to the console does not stop the program.
+@(private)
+write_utf8 :: proc(file: ^os.File, units: []u16) {
+	buf: [16 * 1024]byte
+	at := 0
+	for i := 0; i < len(units); i += 1 {
+		if at > len(buf) - 4 {
+			_, _ = os.write(file, buf[:at])
+			at = 0
+		}
+		r := rune(units[i])
+		switch {
+		case r < 0x80:
+			buf[at] = byte(r)
+			at += 1
+			continue
+		case r < 0xd800 || r > 0xdfff:
+		case r < 0xdc00 && i + 1 < len(units) && 0xdc00 <= units[i + 1] && units[i + 1] <= 0xdfff:
+			r = 0x10000 + (r - 0xd800) << 10 + (rune(units[i + 1]) - 0xdc00)
+			i += 1
+		case:
+			r = 0xfffd
+		}
+		switch {
+		case r < 0x800:
+			buf[at] = byte(0xc0 | r >> 6)
+			buf[at + 1] = byte(0x80 | r & 0x3f)
+			at += 2
+		case r < 0x10000:
+			buf[at] = byte(0xe0 | r >> 12)
+			buf[at + 1] = byte(0x80 | r >> 6 & 0x3f)
+			buf[at + 2] = byte(0x80 | r & 0x3f)
+			at += 3
+		case:
+			buf[at] = byte(0xf0 | r >> 18)
+			buf[at + 1] = byte(0x80 | r >> 12 & 0x3f)
+			buf[at + 2] = byte(0x80 | r >> 6 & 0x3f)
+			buf[at + 3] = byte(0x80 | r & 0x3f)
+			at += 4
+		}
+	}
+	_, _ = os.write(file, buf[:at])
 }

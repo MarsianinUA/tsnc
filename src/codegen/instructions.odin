@@ -138,9 +138,14 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		if export.result == .Tagged {
 			append(&args, body.result_slot)
 		}
-		for arg, i in v.args {
-			operand := body.values[arg]
-			#partial switch export.params[i] {
+		for param, i in export.params {
+			if param == .Rest {
+				address, count := pass_rest(m, body, v.args[i:])
+				append(&args, address, count)
+				break
+			}
+			operand := body.values[v.args[i]]
+			#partial switch param {
 			case .Boolean:
 				append(&args, llvm.LLVMBuildZExt(m.builder, operand, m.types.int64, ""))
 			case .Tagged:
@@ -238,6 +243,36 @@ REAL_PREDICATES := [ir.Compare_Op]llvm.LLVMRealPredicate {
 	.Greater_Equal = .LLVMRealOGE,
 	.Equal         = .LLVMRealOEQ,
 	.Not_Equal     = .LLVMRealUNE,
+}
+
+// pass_rest stores the values into the function's rest slot and answers the two arguments a Rest
+// parameter takes: their address, null when there are none, and their count.
+@(private)
+pass_rest :: proc(
+	m: ^Module,
+	body: ^Body,
+	values: []ir.Value_ID,
+) -> (
+	address: llvm.LLVMValueRef,
+	count: llvm.LLVMValueRef,
+) {
+	count = llvm.LLVMConstInt(m.types.int64, u64(len(values)), false)
+	if len(values) == 0 {
+		return llvm.LLVMConstNull(m.types.ptr), count
+	}
+	for value, i in values {
+		index := llvm.LLVMConstInt(m.types.int64, u64(i), false)
+		slot := llvm.LLVMBuildInBoundsGEP2(
+			m.builder,
+			m.types.tagged,
+			body.rest_slot,
+			&index,
+			1,
+			"",
+		)
+		llvm.LLVMBuildStore(m.builder, body.values[value], slot)
+	}
+	return body.rest_slot, count
 }
 
 // const_tagged is a tagged value with an empty payload: undefined and null carry nothing.

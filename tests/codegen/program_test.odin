@@ -1,6 +1,7 @@
 package codegen_tests
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 import "../../src/abi"
@@ -137,16 +138,24 @@ main_runs_every_module_init :: proc(t: ^testing.T) {
 	expect_text(t, text, wants)
 }
 
-// A string argument of console.log goes to the runtime as a static cell, one call per argument.
+// console.log is one runtime call per statement: the values go in one array on the stack, and a
+// string among them is a static cell.
 @(test)
-console_log_passes_a_static_cell_to_the_runtime :: proc(t: ^testing.T) {
-	output := compile_text(t, "console.log(\"ok\");\n")
+console_log_passes_its_values_in_one_call :: proc(t: ^testing.T) {
+	output := compile_text(t, "console.log(1, \"ok\", true);\nconsole.log();\n")
 	text := llvm_text(t, &output, "program-console")
 	if text == "" {
 		return
 	}
-	wants := []string{"[2 x i16] [i16 111, i16 107]", "call void @tsnc_console_string(i64 0, ptr"}
+	wants := []string {
+		"[2 x i16] [i16 111, i16 107]",
+		"alloca [3 x %tsnc.tagged]",
+		"call void @tsnc_console_log(i64 0, ptr %",
+		", i64 3)",
+		"call void @tsnc_console_log(i64 0, ptr null, i64 0)",
+	}
 	expect_text(t, text, wants)
+	testing.expectf(t, strings.count(text, "call void @tsnc_console_log") == 2, "%s", text)
 }
 
 // Every layout reaches the object file as the type table the runtime registers at startup, in the
@@ -154,22 +163,27 @@ console_log_passes_a_static_cell_to_the_runtime :: proc(t: ^testing.T) {
 @(test)
 layouts_become_the_type_tables_the_runtime_reads :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
-	fields := [?]ir.Slot{{name = "next", kind = .Ref}, {name = "x", kind = .Number}}
+	fields := [?]ir.Slot {
+		{name = "next", kind = .Ref},
+		{name = "x", kind = .Number, optional = true},
+	}
 	ir.object_layout(&p, fields[:])
 	captured := [?]abi.Slot_Kind{.Tagged}
 	ir.environment_layout(&p, captured[:])
 	ir.array_layout(&p, .Ref)
 	output := finish_program(t, &p, declare_main(&p))
-	// Slot kinds: Number 0, Ref 2, Tagged 3; cell kinds: Object 0, Environment 1, Array 3.
+	// Slot kinds: Number 0, Ref 2, Tagged 3; cell kinds: Object 0, Environment 1, Array 3. The
+	// last byte of a field says whether it is optional.
 	wants := []string {
 		"define ptr @tsnc_type_tables()",
 		"ret ptr @type_tables.slice",
 		"@type_tables.slice = private constant { ptr, i64 } { ptr @type_tables, i64 3 }",
 		"{ i8 0, i64 24, ptr @fields, i64 2, i8 0 }",
-		"{ ptr @text, i64 4, i64 8, i8 2 }, { ptr, i64, i64, i8 } { ptr @text.1, i64 1, i64 16, i8 0 }",
+		"{ ptr @text, i64 4, i64 8, i8 2, i8 0 }",
+		"{ ptr, i64, i64, i8, i8 } { ptr @text.1, i64 1, i64 16, i8 0, i8 1 }",
 		"@text = private unnamed_addr constant [4 x i8] c\"next\"",
 		"{ i8 1, i64 24, ptr @fields.2, i64 1, i8 0 }",
-		"{ ptr null, i64 0, i64 8, i8 3 }",
+		"{ ptr null, i64 0, i64 8, i8 3, i8 0 }",
 		"{ i8 3, i64 32, ptr null, i64 0, i8 2 }",
 	}
 	expect_text(t, llvm_text(t, &output, "program-tables"), wants)

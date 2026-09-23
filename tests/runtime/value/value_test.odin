@@ -209,6 +209,36 @@ to_string_refuses_what_node_would_run :: proc(t: ^testing.T) {
 	testing.expect(t, !object_ok, "an object with its own toString converted")
 }
 
+// load boxes a slot of each kind, and a reference takes the tag typeof would answer for its cell.
+@(test)
+load_boxes_a_slot_of_each_kind :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	number_slot := f64(2.5)
+	flag := b64(true)
+	cells := [?]^abi.Cell_Header {
+		str.from_utf8(&heap, "a"),
+		gc.alloc(&heap, POINT, 16),
+		gc.alloc(&heap, ARRAY, size_of(abi.Array_Cell)),
+		gc.alloc(&heap, CLOSURE, size_of(abi.Closure_Cell)),
+	}
+	tags := [?]abi.Tag{.String, .Object, .Object, .Function}
+	tagged := abi.Tagged{.Null, {}}
+
+	got_number := value.load(&heap, &number_slot, .Number)
+	testing.expect(t, got_number.tag == .Number && got_number.payload.number == 2.5)
+	got_flag := value.load(&heap, &flag, .Boolean)
+	testing.expect(t, got_flag.tag == .Boolean && bool(got_flag.payload.boolean))
+	testing.expect_value(t, value.load(&heap, &tagged, .Tagged).tag, abi.Tag.Null)
+	for &cell, i in cells {
+		got := value.load(&heap, &cell, .Ref)
+		testing.expect_value(t, got.tag, tags[i])
+		testing.expect(t, got.payload.ref == cell)
+	}
+}
+
 @(private = "file")
 init_heap :: proc(t: ^testing.T, heap: ^gc.Heap, loc := #caller_location) {
 	err := gc.heap_init(heap, TABLES, nil, heap, reserve = RESERVE)

@@ -27,6 +27,10 @@ gets. Both builds are compared against the same Node output.
 The walk takes only the `.ts` files directly in tests/diff/src, the way the negative corpus does:
 the modules under tests/diff/src/modules/ are there to be imported and are never run as programs of
 their own.
+
+A program whose first line is `// env: NAME=value ...` runs, under Node and as the build, in the
+runner's environment with those variables set, an empty value included. colors.ts sets FORCE_COLOR
+that way, which is the one way to see colors through a pipe.
 */
 package main
 
@@ -169,7 +173,8 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
 	path := fmt.tprintf("%s/%s", DIFF_CORPUS, name)
-	want := execute(path, "node", {NODE, path}) or_return
+	environment := program_environment(path) or_return
+	want := execute(path, "node", {NODE, path}, environment) or_return
 	if want.code >= 1 && want.code <= SIGNAL_MAX {
 		fmt.eprintfln(
 			"diff: %s: exit code %d is also a signal's number; a corpus program exits with 0 or %d..125",
@@ -192,7 +197,7 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 			ok = false
 			continue
 		}
-		if !compare_level(compiler, path, program, level, want) {
+		if !compare_level(compiler, path, program, level, want, environment) {
 			ok = false
 		}
 	}
@@ -200,7 +205,14 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 }
 
 @(private = "file")
-compare_level :: proc(compiler, path, program: string, level: Level, want: Output) -> (ok: bool) {
+compare_level :: proc(
+	compiler, path, program: string,
+	level: Level,
+	want: Output,
+	environment: []string,
+) -> (
+	ok: bool,
+) {
 	command := [?]string{compiler, "build", path, level.flag, fmt.tprintf("-out:%s", program)}
 	built := execute(path, "tsnc build", command[:]) or_return
 	if built.code != 0 || built.stdout != "" || built.stderr != "" {
@@ -212,7 +224,7 @@ compare_level :: proc(compiler, path, program: string, level: Level, want: Outpu
 		return false
 	}
 
-	got := execute(path, program, {program}) or_return
+	got := execute(path, program, {program}, environment) or_return
 	ok = true
 	if !same_stream(path, level, "stdout", got.stdout, want.stdout) {
 		ok = false
@@ -233,11 +245,66 @@ compare_level :: proc(compiler, path, program: string, level: Level, want: Outpu
 	return ok
 }
 
-// execute reports a program that could not be started at all, and the caller stops: there is
-// nothing left to compare.
+// program_environment answers nil for a program with no `// env:` line, which keeps the runner's
+// environment. A name the line sets replaces the runner's own, whose case Windows ignores.
 @(private = "file")
-execute :: proc(path, what: string, command: []string) -> (output: Output, ok: bool) {
-	state, stdout, stderr, err := os.process_exec({command = command}, context.temp_allocator)
+program_environment :: proc(path: string) -> (environment: []string, ok: bool) {
+	HEADER :: "// env: "
+	data, read_err := os.read_entire_file(path, context.temp_allocator)
+	if read_err != nil {
+		fmt.eprintfln("diff: read %s: %v", path, read_err)
+		return nil, false
+	}
+	first, _, _ := strings.partition(string(data), "\n")
+	first = strings.trim_right(first, "\r")
+	if !strings.has_prefix(first, HEADER) {
+		return nil, true
+	}
+	settings := strings.fields(first[len(HEADER):], context.temp_allocator)
+	inherited, env_err := os.environ(context.temp_allocator)
+	if env_err != nil {
+		fmt.eprintfln("diff: %s: read the environment: %v", path, env_err)
+		return nil, false
+	}
+	list := make([dynamic]string, context.temp_allocator)
+	for entry in inherited {
+		name, _, _ := strings.partition(entry, "=")
+		if !sets(settings, name) {
+			append(&list, entry)
+		}
+	}
+	append(&list, ..settings)
+	return list[:], true
+}
+
+@(private = "file")
+sets :: proc(settings: []string, name: string) -> bool {
+	for setting in settings {
+		set, _, _ := strings.partition(setting, "=")
+		same := strings.equal_fold(set, name) if ODIN_OS == .Windows else set == name
+		if same {
+			return true
+		}
+	}
+	return false
+}
+
+// execute reports a program that could not be started at all, and the caller stops: there is
+// nothing left to compare. A nil environment is the runner's own.
+@(private = "file")
+execute :: proc(
+	path, what: string,
+	command: []string,
+	environment: []string = nil,
+) -> (
+	output: Output,
+	ok: bool,
+) {
+	description := os.Process_Desc {
+		command = command,
+		env     = environment,
+	}
+	state, stdout, stderr, err := os.process_exec(description, context.temp_allocator)
 	if err != nil {
 		fmt.eprintfln("diff: %s: run %s: %v", path, what, err)
 		return {}, false

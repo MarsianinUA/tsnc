@@ -193,6 +193,33 @@ a_result_type_that_does_not_suit_the_instruction_is_a_violation :: proc(t: ^test
 }
 
 @(test)
+a_rest_parameter_of_the_runtime_takes_any_number_of_tagged_values :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	params := [?]ir.Type{ir.TAGGED, ir.F64}
+	log := ir.declare_func(&p, "log", params[:], ir.VOID, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, log)
+	err := ir.emit(&f, ir.BOOL, ir.Const_Bool{value = false}, at(2))
+	none := [?]ir.Value_ID{err}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = none[:]}, at(2))
+	three := [?]ir.Value_ID{err, 0, 0, 0}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = three[:]}, at(3))
+	number := [?]ir.Value_ID{err, 0, 1}
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = number[:]}, at(4))
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Console_Log}, at(5))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(6))
+	ir.end_func(&f)
+
+	found := ir.verify(ir.finish(&p, main, nil), context.temp_allocator)
+
+	// No values and three are both fine; a number in the rest is not, and neither is a call that
+	// leaves out the fixed parameter before it.
+	expect_kinds(t, found, {.Operand_Type, .Argument_Count})
+}
+
+@(test)
 a_phi_needs_one_edge_per_predecessor :: proc(t: ^testing.T) {
 	program, _ := build_branch(.Missing_Edge)
 

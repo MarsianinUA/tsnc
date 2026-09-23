@@ -16,6 +16,10 @@ Body :: struct {
 	// result_slot is where the runtime writes a tagged result (abi.C_Type.Tagged); nil in a function
 	// that calls for none. Every such call reads it back at once, so one slot serves them all.
 	result_slot: llvm.LLVMValueRef,
+	// rest_slot holds the values of a Rest parameter (abi.C_Type.Rest), room for the widest call of
+	// the function; nil in a function that makes none. The runtime is done with them when the call
+	// returns, so one slot serves every call.
+	rest_slot:   llvm.LLVMValueRef,
 }
 
 // build_func stops at the first instruction codegen cannot emit and leaves the reason in the
@@ -42,6 +46,11 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	if calls_for_a_tagged_result(func) {
 		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
 		body.result_slot = llvm.LLVMBuildAlloca(m.builder, m.types.tagged, "")
+	}
+	if capacity := rest_capacity(func); capacity > 0 {
+		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
+		values := llvm.LLVMArrayType2(m.types.tagged, u64(capacity))
+		body.rest_slot = llvm.LLVMBuildAlloca(m.builder, values, "")
 	}
 
 	phis := make([dynamic]ir.Value_ID, 0, len(func.blocks), context.temp_allocator)
@@ -82,6 +91,23 @@ calls_for_a_tagged_result :: proc(func: ir.Func) -> bool {
 		}
 	}
 	return false
+}
+
+@(private)
+rest_capacity :: proc(func: ir.Func) -> int {
+	exports := abi.RUNTIME_EXPORTS
+	widest := 0
+	for instruction in func.values {
+		call, is_call := instruction.variant.(ir.Call_Runtime)
+		if !is_call {
+			continue
+		}
+		params := exports[call.export].params
+		if len(params) > 0 && params[len(params) - 1] == .Rest {
+			widest = max(widest, len(call.args) - (len(params) - 1))
+		}
+	}
+	return widest
 }
 
 // patch_phis leaves out an edge out of a block that cannot run: it is not an edge of the LLVM

@@ -40,3 +40,29 @@ console.log(noisy(3) > 0 ? "yes" : "no", noisy(4));
 
 // The argument prints to stdout, and the line it belongs to goes to stderr whole.
 console.error("code", noisy(5));
+
+// A union prints as whatever it holds when the line is written.
+function maybe(flag: boolean): number | undefined {
+  return flag ? 1 : undefined;
+}
+
+function either(flag: boolean): string | number {
+  return flag ? "text" : 2;
+}
+
+function nullable(flag: boolean): boolean | null {
+  return flag ? false : null;
+}
+
+console.log(maybe(true), maybe(false), either(true), either(false));
+console.log(nullable(true), nullable(false), -0 as number | undefined);
+console.error(either(false), maybe(false));
+
+// A union that holds a string at run time is a format string there, as in Node.
+console.log(either(true), "%s");
+
+// A string with a percent sign is a format string only when more arguments follow it.
+console.log("100%");
+console.log("100%", "done");
+console.log("%s of %d", "one", 2);
+console.log("50%% off", nothing);

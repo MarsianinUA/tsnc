@@ -89,4 +89,6 @@ NAMES := [abi.Runtime_Error]string {
 	.Fraction_Digits_Out_Of_Range = "toFixed() digits argument must be between 0 and 100",
 	.Not_Convertible_To_String    = "tsnc cannot convert a function, or an object with its own toString, to a string",
 	.Invalid_String_Length        = "Invalid string length",
+	.Not_Convertible_To_Number    = "tsnc cannot convert an object with its own valueOf or toString to a number",
+	.Not_Convertible_To_Json      = "tsnc cannot convert an object with its own toJSON to JSON",
 }

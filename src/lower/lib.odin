@@ -64,6 +64,7 @@ Fold :: struct {
 Builtin :: enum u8 {
 	Console_Log,
 	Console_Error,
+	Process_Argv,
 	Process_Exit,
 	Number_Is_Integer,
 	Math_Sign,
@@ -93,7 +94,7 @@ Lib_Entry :: struct {
 LIB_STRATEGIES := []Lib_Entry {
 	{.Value, "console", "log", Builtin.Console_Log},
 	{.Value, "console", "error", Builtin.Console_Error},
-	{.Value, "process", "argv", Later{"the arguments of the process"}},
+	{.Value, "process", "argv", Builtin.Process_Argv},
 	{.Value, "process", "exit", Builtin.Process_Exit},
 	{.Value, "NaN", "", Constant{NAN}},
 	{.Value, "Infinity", "", Constant{INFINITY}},

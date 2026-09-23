@@ -21,8 +21,14 @@ import "core:unicode/utf8"
 //
 // The text is UTF-8. A string cell is UTF-16, and re-encoding it belongs to its owner.
 parse_float :: proc(text: string) -> f64 {
-	body := text[skip_whitespace(text):]
+	value, _ := read_decimal(text[skip_whitespace(text):])
+	return value
+}
 
+// read_decimal converts the longest prefix of `body` that is a StrDecimalLiteral and answers how
+// long it is: 0, and NaN, when there is none.
+@(private)
+read_decimal :: proc(body: string) -> (value: f64, length: int) {
 	at := 0
 	negative := false
 	if at < len(body) && (body[at] == '+' || body[at] == '-') {
@@ -35,7 +41,7 @@ parse_float :: proc(text: string) -> f64 {
 	INFINITY :: "Infinity"
 	rest := body[at:]
 	if len(rest) >= len(INFINITY) && rest[:len(INFINITY)] == INFINITY {
-		return math.inf_f64(-1 if negative else 1)
+		return math.inf_f64(-1 if negative else 1), at + len(INFINITY)
 	}
 
 	// DecimalDigits, then an optional point and more of them. The grammar allows digits on either
@@ -51,7 +57,7 @@ parse_float :: proc(text: string) -> f64 {
 		digits += width
 	}
 	if digits == 0 {
-		return math.nan_f64()
+		return math.nan_f64(), 0
 	}
 	mantissa := body[start:at]
 
@@ -67,12 +73,16 @@ parse_float :: proc(text: string) -> f64 {
 			sign = -1 if body[after] == '-' else 1
 			after += 1
 		}
-		for i in after ..< after + digit_width(body[after:]) {
+		width := digit_width(body[after:])
+		for i in after ..< after + width {
 			if exponent < 1 << 40 {
 				exponent = exponent * 10 + int(body[i] - '0')
 			}
 		}
 		exponent *= sign
+		if width > 0 {
+			at = after + width
+		}
 	}
 
 	d: decimal.Decimal
@@ -95,7 +105,7 @@ parse_float :: proc(text: string) -> f64 {
 		bits = round_exactly(mantissa, point, bits)
 	}
 	magnitude := transmute(f64)bits
-	return -magnitude if negative else magnitude
+	return -magnitude if negative else magnitude, at
 }
 
 // EXACT_DIGITS is how many significant digits decimal_to_float_bits always rounds correctly. Its

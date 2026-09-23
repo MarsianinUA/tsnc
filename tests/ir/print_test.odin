@@ -27,7 +27,7 @@ the_dump_shows_every_section_of_a_program :: proc(t: ^testing.T) {
 			"; tsnc ir",
 			"layout 1 object size 24",
 			"  field 0 \"x\" number at 8",
-			"  field 1 \"next\" ref at 16",
+			"  field 1 \"next\"? ref at 16",
 			"layout 2 array number size 32",
 			"global 0 total : f64",
 			"string 0 \"hi\"",
@@ -291,7 +291,10 @@ expect_dump :: proc(t: ^testing.T, output: string, lines: []string, loc := #call
 build_program :: proc(table: []source.File) -> ir.Program_IR {
 	p := ir.make_builder(context.temp_allocator)
 
-	fields := [?]ir.Slot{{name = "x", kind = .Number}, {name = "next", kind = .Ref}}
+	fields := [?]ir.Slot {
+		{name = "x", kind = .Number},
+		{name = "next", kind = .Ref, optional = true},
+	}
 	cell := ir.object_layout(&p, fields[:])
 	ir.array_layout(&p, .Number)
 	total := ir.add_global(&p, "total", ir.F64)

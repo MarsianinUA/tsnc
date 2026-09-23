@@ -164,6 +164,7 @@ foreign lib {
 	LLVMBuildAlloca :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildLoad2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, PointerVal: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildStore :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, Ptr: LLVMValueRef) -> LLVMValueRef ---
+	LLVMBuildInBoundsGEP2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Pointer: LLVMValueRef, Indices: [^]LLVMValueRef, NumIndices: u32, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildExtractValue :: proc(B: LLVMBuilderRef, AggVal: LLVMValueRef, Index: u32, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildInsertValue :: proc(B: LLVMBuilderRef, AggVal: LLVMValueRef, EltVal: LLVMValueRef, Index: u32, Name: cstring) -> LLVMValueRef ---
 

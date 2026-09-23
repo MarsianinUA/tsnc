@@ -183,9 +183,12 @@ declare_runtime :: proc(
 			result = .Void
 		}
 		for param in export.params {
-			if param == .Tagged {
+			#partial switch param {
+			case .Tagged:
 				append(&params, types.int64, types.int64)
-			} else {
+			case .Rest:
+				append(&params, types.ptr, types.int64)
+			case:
 				append(&params, c_type(types, param))
 			}
 		}
@@ -216,7 +219,7 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 		return types.double
 	case .Boolean:
 		return types.int64
-	case .Tagged:
+	case .Tagged, .Rest:
 		// Two parameters, or a slot for a result, which declare_runtime spells itself.
 		unreachable()
 	}
@@ -408,14 +411,14 @@ add_fail_sites :: proc(m: ^Module) {
 
 // add_type_tables writes the layouts as the type tables the collector and console read, in
 // Type_Table_ID order after the builtin ones, and defines tsnc_type_tables, which hands the
-// runtime's main a slice of them. A Field is { ptr, i64, i64, i8 } and a Type_Table is
+// runtime's main a slice of them. A Field is { ptr, i64, i64, i8, i8 } and a Type_Table is
 // { i8, i64, ptr, i64, i8 }: a string and a slice are a pointer and a length, and LLVM pads the
 // tails the way Odin does, which the #asserts at the end of abi.odin pin. The names are shared: an
 // environment has none, and objects repeat theirs.
 @(private)
 add_type_tables :: proc(m: ^Module) {
 	types := m.types
-	field_types := [?]llvm.LLVMTypeRef{types.ptr, types.int64, types.int64, types.int8}
+	field_types := [?]llvm.LLVMTypeRef{types.ptr, types.int64, types.int64, types.int8, types.int8}
 	field_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
 	table_types := [?]llvm.LLVMTypeRef{types.int8, types.int64, types.ptr, types.int64, types.int8}
 	table_type := llvm.LLVMStructTypeInContext(m.ctx, &table_types[0], len(table_types), false)
@@ -441,6 +444,7 @@ add_type_tables :: proc(m: ^Module) {
 				llvm.LLVMConstInt(types.int64, u64(len(field.name)), false),
 				llvm.LLVMConstInt(types.int64, u64(field.offset), false),
 				llvm.LLVMConstInt(types.int8, u64(field.kind), false),
+				llvm.LLVMConstInt(types.int8, u64(field.optional), false),
 			}
 			fields[j] = llvm.LLVMConstStructInContext(m.ctx, &values[0], len(values), false)
 		}

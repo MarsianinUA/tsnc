@@ -58,6 +58,15 @@ Closure_Cell :: struct {
 	using header: Cell_Header,
 	code:         rawptr,
 	env:          ^Environment_Cell, // nil when the function captures nothing
+	info:         ^Function_Info, // static data, one per function of the program
+}
+
+// Function_Info is what the console prints of a function: `[Function: name]`, and under %o the
+// own properties `length`, `name` and `prototype` Node shows.
+Function_Info :: struct {
+	name:          ^String_Cell, // static; length 0 when the function is anonymous
+	length:        int, // the parameters before the first one with a default, or the rest one
+	has_prototype: bool, // a declaration or a function expression has one, an arrow does not
 }
 
 // Environment_Cell has no fields of its own: the slots of the captured variables follow the header
@@ -120,9 +129,12 @@ Cell_Kind :: enum u8 {
 }
 
 Field :: struct {
-	name:   string, // UTF-8 TS name; empty in an environment
-	offset: int, // bytes from the start of the cell
-	kind:   Slot_Kind,
+	name:     string, // UTF-8 TS name; empty in an environment
+	offset:   int, // bytes from the start of the cell
+	kind:     Slot_Kind,
+	// The field may be absent (`x?: T`). A Tagged slot holding undefined then reads as absent:
+	// the console and %j leave it out, as Node does for a property that was never set.
+	optional: bool,
 }
 
 // Type_Table tells the GC how to scan a cell and console how to print it. The compiler emits
@@ -132,7 +144,10 @@ Field :: struct {
 Type_Table :: struct {
 	kind:    Cell_Kind,
 	size:    int, // bytes, header included; the fixed part for String and Array
-	fields:  []Field, // Object and Environment, in layout order
+	// Object and Environment. An object lists its fields in the order Node prints its own
+	// properties: integer-like keys ascending, then the others in creation order. The offsets
+	// need not follow that order.
+	fields:  []Field,
 	element: Slot_Kind, // Array
 }
 
@@ -167,6 +182,9 @@ Root :: struct {
 // are a pointer and a length.
 #assert(size_of(string) == 16 && size_of([]Field) == 16)
 #assert(size_of(Field) == 32 && offset_of(Field, offset) == 16 && offset_of(Field, kind) == 24)
+#assert(offset_of(Field, optional) == 25)
+#assert(size_of(Closure_Cell) == 32 && offset_of(Closure_Cell, info) == 24)
+#assert(size_of(Function_Info) == 24 && offset_of(Function_Info, has_prototype) == 16)
 #assert(size_of(Type_Table) == 40 && offset_of(Type_Table, size) == 8)
 #assert(offset_of(Type_Table, fields) == 16 && offset_of(Type_Table, element) == 32)
 #assert(size_of(Root) == 16 && offset_of(Root, kind) == 8)

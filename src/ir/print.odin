@@ -181,6 +181,9 @@ write_layout :: proc(w: io.Writer, id: Layout_ID, table: abi.Type_Table) -> io.E
 		io.write_int(w, index) or_return
 		io.write_byte(w, ' ') or_return
 		write_text(w, field.name) or_return
+		if field.optional {
+			io.write_byte(w, '?') or_return
+		}
 		io.write_byte(w, ' ') or_return
 		io.write_string(w, SLOT_KIND_TEXT[field.kind]) or_return
 		io.write_string(w, " at ") or_return
@@ -673,6 +676,8 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Fraction_Digits_Out_Of_Range = "fraction_digits_out_of_range",
 	.Not_Convertible_To_String    = "not_convertible_to_string",
 	.Invalid_String_Length        = "invalid_string_length",
+	.Not_Convertible_To_Number    = "not_convertible_to_number",
+	.Not_Convertible_To_Json      = "not_convertible_to_json",
 }
 
 @(private, rodata)
