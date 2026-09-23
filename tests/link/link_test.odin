@@ -1,5 +1,6 @@
 package link_tests
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -26,47 +27,54 @@ RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out
 // about the front end.
 HELLO :: "Hello, world!"
 
+// TAGGED_ANSWERS is what Node prints for the questions tagged_program asks, one per line:
+//
+//	for (const v of [typeof 1.5, typeof undefined, String(-0), String("abc"), String(true),
+//		NaN === NaN, -0 === 0, "12" === String(12), !!"", !!1.5, !!null]) console.log(v)
+TAGGED_ANSWERS :: "number\nundefined\n0\nabc\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\n"
+
+NAN :: 0h7ff8_0000_0000_0000
+NEGATIVE_ZERO :: 0h8000_0000_0000_0000
+
+SPAN :: source.Span {
+	file  = 0,
+	start = 0,
+	end   = 1,
+}
+
 @(test)
 hello_world_links_and_runs :: proc(t: ^testing.T) {
 	output := hello_program()
-	object := "dist/link-hello.obj"
-	emit_err := codegen.emit(&output, output.units[0], target.HOST, .speed, .Object, object)
-	if !testing.expect_value(t, emit_err, codegen.Error.None) {
+	state, stdout, stderr, ran := build_and_run(t, &output, "link-hello")
+	if !ran {
 		return
 	}
-
-	// An absolute path, so the run below does not depend on how the OS resolves a relative one.
-	dir, _ := os.get_executable_directory(context.temp_allocator)
-	program, _ := os.join_path({dir, "link-hello.exe"}, context.temp_allocator)
-	err := link.link({object}, target.HOST, program)
-	defer delete(err.detail)
-	if !testing.expectf(
-		t,
-		err.kind == .None,
-		"%v: %s\nbuild the runtime object first: %s",
-		err.kind,
-		err.detail,
-		RUNTIME_BUILD,
-	) {
-		return
-	}
-
-	state, stdout, stderr, run_err := os.process_exec({command = {program}}, context.allocator)
-	defer delete(stdout)
-	defer delete(stderr)
-	if !testing.expectf(t, run_err == nil, "run %s: %v", program, run_err) {
-		return
-	}
-	testing.expect_value(t, string(stdout), HELLO + "\n")
-	testing.expect_value(t, string(stderr), "")
+	testing.expect_value(t, stdout, HELLO + "\n")
+	testing.expect_value(t, stderr, "")
 	testing.expect_value(t, state.exit_code, 0)
 
 	// The executable exports nothing, so lld-link writes no import library next to it. It did
 	// while the runtime marked its procedures @(export), which is dllexport on Windows.
 	when ODIN_OS == .Windows {
+		dir, _ := os.get_executable_directory(context.temp_allocator)
 		import_library, _ := os.join_path({dir, "link-hello.lib"}, context.temp_allocator)
 		testing.expectf(t, !os.exists(import_library), "%s was written", import_library)
 	}
+}
+
+// A tagged value crosses into the runtime as two words (abi.C_Type.Tagged). Only a program that
+// codegen built and the linker joined to the runtime shows that both sides pass those words the
+// same way, on each target CI runs.
+@(test)
+tagged_values_cross_into_the_runtime :: proc(t: ^testing.T) {
+	output := tagged_program()
+	state, stdout, stderr, ran := build_and_run(t, &output, "link-tagged")
+	if !ran {
+		return
+	}
+	testing.expect_value(t, stdout, TAGGED_ANSWERS)
+	testing.expect_value(t, stderr, "")
+	testing.expect_value(t, state.exit_code, 0)
 }
 
 @(test)
@@ -105,16 +113,57 @@ only_the_host_target_links :: proc(t: ^testing.T) {
 	}
 }
 
+// build_and_run emits the program as an object, links it with the runtime object under `name` in
+// the test's directory and runs it.
+@(private = "file")
+build_and_run :: proc(
+	t: ^testing.T,
+	output: ^ir.Program_IR,
+	name: string,
+	loc := #caller_location,
+) -> (
+	state: os.Process_State,
+	stdout: string,
+	stderr: string,
+	ran: bool,
+) {
+	object := fmt.tprintf("dist/%s.obj", name)
+	emit_err := codegen.emit(output, output.units[0], target.HOST, .speed, .Object, object)
+	if !testing.expect_value(t, emit_err, codegen.Error.None, loc = loc) {
+		return
+	}
+
+	// An absolute path, so the run below does not depend on how the OS resolves a relative one.
+	dir, _ := os.get_executable_directory(context.temp_allocator)
+	program, _ := os.join_path({dir, fmt.tprintf("%s.exe", name)}, context.temp_allocator)
+	err := link.link({object}, target.HOST, program)
+	defer delete(err.detail)
+	if !testing.expectf(
+		t,
+		err.kind == .None,
+		"%v: %s\nbuild the runtime object first: %s",
+		err.kind,
+		err.detail,
+		RUNTIME_BUILD,
+		loc = loc,
+	) {
+		return
+	}
+
+	out, errors: []byte
+	run_err: os.Error
+	state, out, errors, run_err = os.process_exec({command = {program}}, context.temp_allocator)
+	if !testing.expectf(t, run_err == nil, "run %s: %v", program, run_err, loc = loc) {
+		return
+	}
+	return state, string(out), string(errors), true
+}
+
 // hello_program is the smallest program there is: tsnc_main prints one line through the runtime.
 // Its layouts are there for the runtime's main, which registers the type tables codegen wrote for
 // them before it calls tsnc_main: a table the runtime cannot read ends the run with exit code 1.
 @(private = "file")
 hello_program :: proc() -> ir.Program_IR {
-	span := source.Span {
-		file  = 0,
-		start = 0,
-		end   = 1,
-	}
 	p := ir.make_builder(context.temp_allocator)
 	fields := [?]ir.Slot{{name = "next", kind = .Ref}, {name = "value", kind = .Tagged}}
 	ir.object_layout(&p, fields[:])
@@ -122,12 +171,84 @@ hello_program :: proc() -> ir.Program_IR {
 	ir.environment_layout(&p, captured[:])
 	ir.array_layout(&p, .Tagged)
 	line := ir.intern_string(&p, HELLO)
-	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, span)
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
 	f := ir.begin_func(&p, main)
-	cell := ir.emit(&f, ir.STR, ir.Const_String{text = line}, span)
+	cell := ir.emit(&f, ir.STR, ir.Const_String{text = line}, SPAN)
 	args := [?]ir.Value_ID{cell}
-	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Log_String, args = args[:]}, span)
-	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
+	ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Log_String, args = args[:]}, SPAN)
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
 	ir.end_func(&f)
 	return ir.finish(&p, main, nil)
+}
+
+// tagged_program asks each question of TAGGED_ANSWERS through the Value exports, with one tagged
+// argument and with two, and prints each answer as its own line. A boolean answer goes back into a
+// tagged value, so Value_To_String spells it.
+@(private = "file")
+tagged_program :: proc() -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	abc := ir.intern_string(&p, "abc")
+	twelve := ir.intern_string(&p, "12")
+	empty := ir.intern_string(&p, "")
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
+	f := ir.begin_func(&p, main)
+
+	nan := boxed_number(&f, NAN)
+	negative_zero := boxed_number(&f, NEGATIVE_ZERO)
+	zero := boxed_number(&f, 0)
+	one_and_a_half := boxed_number(&f, 1.5)
+	undefined := ir.emit(&f, ir.TAGGED, ir.Const_Undefined{}, SPAN)
+	null := ir.emit(&f, ir.TAGGED, ir.Const_Null{}, SPAN)
+	yes := box(&f, ir.emit(&f, ir.BOOL, ir.Const_Bool{value = true}, SPAN))
+	abc_text := box(&f, ir.emit(&f, ir.STR, ir.Const_String{text = abc}, SPAN))
+	twelve_text := box(&f, ir.emit(&f, ir.STR, ir.Const_String{text = twelve}, SPAN))
+	empty_text := box(&f, ir.emit(&f, ir.STR, ir.Const_String{text = empty}, SPAN))
+
+	write_line(&f, call(&f, .Value_Typeof, ir.STR, one_and_a_half))
+	write_line(&f, call(&f, .Value_Typeof, ir.STR, undefined))
+	write_line(&f, call(&f, .Value_To_String, ir.STR, negative_zero))
+	write_line(&f, call(&f, .Value_To_String, ir.STR, abc_text))
+	write_line(&f, call(&f, .Value_To_String, ir.STR, yes))
+	write_boolean(&f, call(&f, .Value_Equal, ir.BOOL, nan, nan))
+	write_boolean(&f, call(&f, .Value_Equal, ir.BOOL, negative_zero, zero))
+	// A static cell against one the runtime built: equal by content.
+	computed := box(&f, call(&f, .Value_To_String, ir.STR, boxed_number(&f, 12)))
+	write_boolean(&f, call(&f, .Value_Equal, ir.BOOL, twelve_text, computed))
+	write_boolean(&f, call(&f, .Value_To_Boolean, ir.BOOL, empty_text))
+	write_boolean(&f, call(&f, .Value_To_Boolean, ir.BOOL, one_and_a_half))
+	write_boolean(&f, call(&f, .Value_To_Boolean, ir.BOOL, null))
+
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
+	ir.end_func(&f)
+	return ir.finish(&p, main, nil)
+}
+
+@(private = "file")
+boxed_number :: proc(f: ^ir.Func_Builder, n: f64) -> ir.Value_ID {
+	return box(f, ir.emit(f, ir.F64, ir.Const_Number{value = n}, SPAN))
+}
+
+@(private = "file")
+box :: proc(f: ^ir.Func_Builder, value: ir.Value_ID) -> ir.Value_ID {
+	return ir.emit(f, ir.TAGGED, ir.Box{value = value}, SPAN)
+}
+
+@(private = "file")
+call :: proc(
+	f: ^ir.Func_Builder,
+	export: abi.Runtime_Proc,
+	type: ir.Type,
+	args: ..ir.Value_ID,
+) -> ir.Value_ID {
+	return ir.emit(f, type, ir.Call_Runtime{export = export, args = args}, SPAN)
+}
+
+@(private = "file")
+write_line :: proc(f: ^ir.Func_Builder, text: ir.Value_ID) {
+	call(f, .Log_String, ir.VOID, text)
+}
+
+@(private = "file")
+write_boolean :: proc(f: ^ir.Func_Builder, answer: ir.Value_ID) {
+	write_line(f, call(f, .Value_To_String, ir.STR, box(f, answer)))
 }

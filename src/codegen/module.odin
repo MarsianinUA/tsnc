@@ -176,9 +176,13 @@ declare_runtime :: proc(
 	)
 	exports := abi.RUNTIME_EXPORTS
 	for export, id in exports {
-		params := make([]llvm.LLVMTypeRef, len(export.params), context.temp_allocator)
-		for param, i in export.params {
-			params[i] = c_type(types, param)
+		params := make([dynamic]llvm.LLVMTypeRef, context.temp_allocator)
+		for param in export.params {
+			if param == .Tagged {
+				append(&params, types.int64, types.int64)
+			} else {
+				append(&params, c_type(types, param))
+			}
 		}
 		signature := llvm.LLVMFunctionType(
 			c_type(types, export.result),
@@ -209,6 +213,9 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 		// b64, so the call site widens its i1 and no export depends on how a C ABI passes a
 		// narrower boolean.
 		return types.int64
+	case .Tagged:
+		// Two parameters, which declare_runtime spells itself; no export returns one.
+		unreachable()
 	}
 	unreachable()
 }

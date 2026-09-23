@@ -134,12 +134,20 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		exports := abi.RUNTIME_EXPORTS
 		export := exports[v.export]
 		callee := m.runtime[v.export]
-		args := make([]llvm.LLVMValueRef, len(v.args), context.temp_allocator)
+		args := make([dynamic]llvm.LLVMValueRef, context.temp_allocator)
 		for arg, i in v.args {
-			// A boolean is the one C type that differs from the register shape: b64, not i1.
-			args[i] = body.values[arg]
-			if export.params[i] == .Boolean {
-				args[i] = llvm.LLVMBuildZExt(m.builder, args[i], m.types.int64, "")
+			// Two C types differ from the register shape: a boolean is b64, not i1, and a tagged
+			// value is its two words.
+			operand := body.values[arg]
+			#partial switch export.params[i] {
+			case .Boolean:
+				append(&args, llvm.LLVMBuildZExt(m.builder, operand, m.types.int64, ""))
+			case .Tagged:
+				tag := llvm.LLVMBuildExtractValue(m.builder, operand, 0, "")
+				payload := llvm.LLVMBuildExtractValue(m.builder, operand, 1, "")
+				append(&args, tag, payload)
+			case:
+				append(&args, operand)
 			}
 		}
 		result := llvm.LLVMBuildCall2(

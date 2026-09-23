@@ -15,6 +15,11 @@ its cell alive once a later frame covers it without writing over it. A test that
 be freed therefore keeps its address hidden (hide) and calls scrub_stack before collect. One cell
 may stay anyway: at -o:speed heap_init is inlined, and the test keeps heap.base, the address of the
 first slot of the first page, in a register. No test expects that slot to be freed.
+
+Such a test also runs its heap through on_a_clean_stack. The words an earlier test left on the
+same thread lie where this test's frames land, and a new heap often takes the address range the
+last one gave back, so an old pointer can name a cell of this heap. It did on a CI runner: a slot
+that only a number held was kept.
 */
 
 // COLLECT_RESERVE leaves room for a heap that grows to MIN_TRIGGER several times over.
@@ -63,11 +68,7 @@ a_wide_array_grows_the_mark_stack :: proc(t: ^testing.T) {
 
 @(test)
 a_collection_frees_what_nothing_reaches_and_reuses_it_in_address_order :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	reuse_the_dropped_slots(t, &heap)
+	on_a_clean_stack(t, reuse_the_dropped_slots)
 }
 
 @(test)
@@ -96,11 +97,7 @@ empty_pages_go_back_and_serve_any_class :: proc(t: ^testing.T) {
 
 @(test)
 only_reference_slots_keep_a_cell :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	collect_past_scalar_slots(t, &heap)
+	on_a_clean_stack(t, collect_past_scalar_slots)
 }
 
 @(test)
@@ -120,16 +117,40 @@ module_value: abi.Tagged
 @(test)
 module_roots_are_read_by_their_kind :: proc(t: ^testing.T) {
 	roots := []abi.Root{{slot = &module_ref, kind = .Ref}, {slot = &module_value, kind = .Tagged}}
+	on_a_clean_stack(t, collect_module_roots, roots)
+}
+
+// on_a_clean_stack runs `scenario` on a new heap whose stack base lies in a frame scrub_stack has
+// just cleared, so every word the scan reads was written by this test.
+on_a_clean_stack :: proc(
+	t: ^testing.T,
+	scenario: proc(t: ^testing.T, heap: ^gc.Heap),
+	roots: []abi.Root = nil,
+) {
+	scrub_stack()
+	run_on_new_heap(t, scenario, roots)
+}
+
+@(private = "file")
+run_on_new_heap :: #force_no_inline proc(
+	t: ^testing.T,
+	scenario: proc(t: ^testing.T, heap: ^gc.Heap),
+	roots: []abi.Root,
+) {
 	heap: gc.Heap
 	init_heap(t, &heap, roots)
 	defer gc.heap_destroy(&heap)
 
-	kept, dropped := fill_module_globals(&heap)
+	scenario(t, &heap)
+}
+
+collect_module_roots :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	kept, dropped := fill_module_globals(heap)
 	scrub_stack()
-	gc.collect(&heap)
-	testing.expect_value(t, gc.owner(&heap, unhide(kept)), (^abi.Cell_Header)(unhide(kept)))
-	testing.expect(t, gc.owner(&heap, unhide(dropped)) == nil, "a number root kept its cell")
-	expect_problem(t, &heap, .None, nil)
+	gc.collect(heap)
+	testing.expect_value(t, gc.owner(heap, unhide(kept)), (^abi.Cell_Header)(unhide(kept)))
+	testing.expect(t, gc.owner(heap, unhide(dropped)) == nil, "a number root kept its cell")
+	expect_problem(t, heap, .None, nil)
 }
 
 @(test)

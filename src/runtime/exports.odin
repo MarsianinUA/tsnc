@@ -8,9 +8,10 @@ import "console"
 import "fail"
 import "num"
 import "str"
+import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 24)
+#assert(len(abi.Runtime_Proc) == 28)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -180,6 +181,47 @@ number_parse_float :: proc "c" (text: ^abi.String_Cell) -> f64 {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	return str.parse_float(text)
+}
+
+// A tagged value arrives as its two words (abi.C_Type.Tagged). The payload is a u64 rather than an
+// abi.Payload, since how a C ABI passes a union of a double and a pointer is each target's guess,
+// and how it passes an integer is not.
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Value_Typeof].symbol)
+value_typeof :: proc "c" (tag: abi.Tag, payload: u64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return value.typeof_word(tagged(tag, payload))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Value_Equal].symbol)
+value_equal :: proc "c" (a_tag: abi.Tag, a_payload: u64, b_tag: abi.Tag, b_payload: u64) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(value.equal(tagged(a_tag, a_payload), tagged(b_tag, b_payload)))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Value_To_Boolean].symbol)
+value_to_boolean :: proc "c" (tag: abi.Tag, payload: u64) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(value.to_boolean(tagged(tag, payload)))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Value_To_String].symbol)
+value_to_string :: proc "c" (tag: abi.Tag, payload: u64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	text, ok := value.to_string(&heap, tagged(tag, payload))
+	if !ok {
+		fail.at({error = .Not_Convertible_To_String})
+	}
+	return text
+}
+
+@(private)
+tagged :: proc "contextless" (tag: abi.Tag, payload: u64) -> abi.Tagged {
+	return {tag = tag, payload = transmute(abi.Payload)payload}
 }
 
 // No temp guard below: the process ends inside. The rows tell codegen the same through `diverges`.

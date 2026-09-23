@@ -670,6 +670,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Internal                     = "internal",
 	.Exit_Code_Not_Integer        = "exit_code_not_integer",
 	.Fraction_Digits_Out_Of_Range = "fraction_digits_out_of_range",
+	.Not_Convertible_To_String    = "not_convertible_to_string",
 }
 
 @(private, rodata)

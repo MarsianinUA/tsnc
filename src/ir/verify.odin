@@ -873,6 +873,8 @@ c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 		return type == F64
 	case .Boolean:
 		return type == BOOL
+	case .Tagged:
+		return type == TAGGED
 	}
 	return false
 }
