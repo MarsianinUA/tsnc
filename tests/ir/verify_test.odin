@@ -272,6 +272,28 @@ an_operand_of_the_wrong_type_is_a_violation :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_tagged_parameter_of_the_runtime_takes_only_a_tagged_value :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	params := [?]ir.Type{ir.TAGGED, ir.F64}
+	same := ir.declare_func(&p, "same", params[:], ir.BOOL, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, same)
+	tagged := [?]ir.Value_ID{0, 0}
+	equal := ir.emit(&f, ir.BOOL, ir.Call_Runtime{export = .Value_Equal, args = tagged[:]}, at(2))
+	number := [?]ir.Value_ID{0, 1}
+	ir.emit(&f, ir.BOOL, ir.Call_Runtime{export = .Value_Equal, args = number[:]}, at(3))
+	ir.emit(&f, ir.VOID, ir.Return{value = equal}, at(4))
+	ir.end_func(&f)
+
+	found := ir.verify(ir.finish(&p, main, nil), context.temp_allocator)
+
+	// The first call passes two tagged values, the second a number where a tagged value goes.
+	expect_one(t, found, .Operand_Type)
+}
+
+@(test)
 a_return_carries_the_result_of_its_function :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	empty := ir.declare_func(&p, "empty", nil, ir.F64, at(1))

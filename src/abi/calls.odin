@@ -16,13 +16,17 @@ TYPE_TABLES_SYMBOL :: "tsnc_type_tables"
 ROOTS_SYMBOL :: "tsnc_roots"
 
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
-// maps each to one LLVM type. A boolean is b64 here, the width the package uses for a boolean slot,
+// maps each to one LLVM type, a Tagged to two. A boolean is b64 here, the width the package uses for a boolean slot,
 // so no export depends on how a C compiler widens a narrower one.
 C_Type :: enum u8 {
 	Void,
 	Ptr,
 	Number, // f64
 	Boolean, // b64, 0 or 1
+	// A Tagged travels as two word parameters, the tag and then the payload's bits. A 16-byte
+	// struct does not travel alike everywhere: Win64 passes a pointer to a copy, SysV and arm64 two
+	// registers. For the same reason no export returns one.
+	Tagged,
 }
 
 // Runtime_Proc lists the procedures the runtime exports to generated code. Runtime tasks add rows
@@ -60,6 +64,11 @@ Runtime_Proc :: enum u8 {
 	Number_To_String, // (value) -> ^String_Cell: String(value) and `${value}`
 	Number_To_Fixed, // (value, digits) -> ^String_Cell; fails outside [0, 100] digits
 	Number_Parse_Float, // (text) -> f64
+	// Tagged values, requirements 3.4 and 3.7: the operations that dispatch on the tag at run time.
+	Value_Typeof, // (value: Tagged) -> ^String_Cell: a static word
+	Value_Equal, // (a, b: Tagged) -> b64: `===`
+	Value_To_Boolean, // (value) -> b64: truthiness
+	Value_To_String, // (value) -> ^String_Cell: String(value), `${value}`; fails on a function
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1
 }
 
@@ -139,6 +148,10 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 		result = .Ptr,
 	},
 	.Number_Parse_Float = {symbol = "tsnc_number_parse_float", params = {.Ptr}, result = .Number},
+	.Value_Typeof = {symbol = "tsnc_value_typeof", params = {.Tagged}, result = .Ptr},
+	.Value_Equal = {symbol = "tsnc_value_equal", params = {.Tagged, .Tagged}, result = .Boolean},
+	.Value_To_Boolean = {symbol = "tsnc_value_to_boolean", params = {.Tagged}, result = .Boolean},
+	.Value_To_String = {symbol = "tsnc_value_to_string", params = {.Tagged}, result = .Ptr},
 	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 
@@ -151,6 +164,9 @@ Runtime_Error :: enum i32 {
 	Internal, // an assertion inside the runtime
 	Exit_Code_Not_Integer, // process.exit with NaN, an infinity or a fraction: Node's RangeError
 	Fraction_Digits_Out_Of_Range, // toFixed outside [0, 100] digits: Node's RangeError
+	// Node prints a function's source text, which a compiled program does not keep, and calls an
+	// object's own toString.
+	Not_Convertible_To_String,
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

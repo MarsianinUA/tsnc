@@ -36,6 +36,16 @@ slot_size_is_indexed_by_a_variable :: proc(t: ^testing.T) {
 	}
 }
 
+// A C function returns a 16-byte struct through a hidden pointer on Win64 and in two registers on
+// SysV and arm64, and codegen declares no such result.
+@(test)
+no_export_returns_a_tagged_value :: proc(t: ^testing.T) {
+	exports := abi.RUNTIME_EXPORTS
+	for export, id in exports {
+		testing.expectf(t, export.result != .Tagged, "%v returns a tagged value", id)
+	}
+}
+
 @(test)
 symbols_are_distinct :: proc(t: ^testing.T) {
 	exports := abi.RUNTIME_EXPORTS

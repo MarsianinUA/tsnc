@@ -71,6 +71,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 ### 3.2 Strings
 - Immutable sequences of 16-bit units (UTF-16). `length`, `charCodeAt`, `slice`, and indexing match TS for any characters, including Cyrillic and emoji.
 - Conversion to UTF-8 happens only at the OS boundary: console, files, arguments.
+- Converting a function to a string (`String(f)`, `` `${f}` ``) is a runtime error: Node prints the function's source text, which a compiled program does not keep. So is converting an object with its own `toString` field, which Node would call.
 - Inside the runtime, a string is a header in the GC heap followed by `u16` data; operations work through Odin's built-in `string16` type, which points inside the object. A custom "pointer plus length" pair is not needed, `core:io` re-encodes console output to UTF-8 (4.5).
 - v2: hybrid Latin-1 / UTF-16 storage to save memory, as in V8. The semantics do not change.
 

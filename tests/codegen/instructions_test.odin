@@ -319,6 +319,36 @@ a_runtime_call_widens_its_boolean :: proc(t: ^testing.T) {
 	expect_text(t, text, wants)
 }
 
+// A tagged value crosses into the runtime as its two words, which every target passes alike.
+@(test)
+a_runtime_call_splits_a_tagged_value :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+
+	params := [?]ir.Type{ir.TAGGED, ir.TAGGED}
+	id := ir.declare_func(&p, "m1.same", params[:], ir.BOOL, at(1))
+	f := ir.begin_func(&p, id)
+	args := [?]ir.Value_ID{0, 1}
+	equal := ir.emit(&f, ir.BOOL, ir.Call_Runtime{export = .Value_Equal, args = args[:]}, at(2))
+	ir.emit(&f, ir.VOID, ir.Return{value = equal}, at(3))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "tagged-call")
+	if text == "" {
+		return
+	}
+	wants := []string {
+		"declare i64 @tsnc_value_equal(i64, i64, i64, i64)",
+		"extractvalue %tsnc.tagged %0, 0",
+		"extractvalue %tsnc.tagged %0, 1",
+		"extractvalue %tsnc.tagged %1, 0",
+		"extractvalue %tsnc.tagged %1, 1",
+		"call i64 @tsnc_value_equal(i64 ",
+	}
+	expect_text(t, text, wants)
+}
+
 // The table is the other half of the one in codegen: an llvm intrinsic where LLVM 20 has one, a
 // libm call otherwise.
 @(test)

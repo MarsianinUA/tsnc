@@ -288,7 +288,7 @@ Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundarie
 After: T5.1.
 Done: tests with Cyrillic and emoji against Node values (`length`, `slice`, `charCodeAt`).
 
-### [ ] T5.4 `value`: tagged values
+### [x] T5.4 `value`: tagged values
 
 What: `typeof`, strict equality by tag (primitives by value, strings by content, references by address), truthiness, conversion to string by tag; exports.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `value`; requirements §3.4, §3.7.
@@ -297,7 +297,7 @@ Done: tests for all tags, including `NaN !== NaN` and `-0 === 0`.
 
 ### [ ] T5.5 `arr`: arrays
 
-What: array cell with a buffer in the heap (unboxed elements by element kind); amortized growth; `push`, `pop`, `slice`, `indexOf`, `includes`, `join`; sorting through `slice.stable_sort_by` over a temporary copy with a closure comparator per the `abi` convention (`undefined` goes last); exports. `sort` is not in `src/lib/lib.d.ts` yet, nor in requirements §2.2, which lets the method list grow: declare it in the lib file here, so that T5.8 can sort with a comparator. `String.prototype.split` gets its export here as well, since it answers a `string[]`: T5.3 left the algorithm in `str` (`splitter`, `split_next`), and the new `String_Split` row passes 4294967295 for a missing limit.
+What: array cell with a buffer in the heap (unboxed elements by element kind); amortized growth; `push`, `pop`, `slice`, `indexOf`, `includes`, `join`; sorting through `slice.stable_sort_by` over a temporary copy with a closure comparator per the `abi` convention (`undefined` goes last); exports. `sort` is not in `src/lib/lib.d.ts` yet, nor in requirements §2.2, which lets the method list grow: declare it in the lib file here, so that T5.8 can sort with a comparator. `String.prototype.split` gets its export here as well, since it answers a `string[]`: T5.3 left the algorithm in `str` (`splitter`, `split_next`), and the new `String_Split` row passes 4294967295 for a missing limit. Two leftovers of T5.4 belong here. `value.to_string` stops on an array, because an array's string is its elements joined by commas and joining is `arr`'s: convert an array here as `join(",")` (a nested array joins in place, an array that contains itself gives `""`) and send the `Value_To_String` export through it. And `abi.C_Type.Tagged` is a parameter only, so a row whose result is a tagged value, such as `pop` of a `number[]`, needs a shape of its own: Win64 returns a 16-byte struct through a hidden pointer, SysV and arm64 in two registers.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `arr`; [Interaction map](architecture-plan-tsnc.md#interaction-map), row "`rt` (array sort) to generated code"; requirements §3.6, §4.5 (row "Array sorting").
 After: T5.4.
 Done: tests, including a call to a stub comparator through the calling convention.
@@ -325,7 +325,7 @@ Done: diff tests: counter closures, closures in a loop capture different `i`, so
 
 ### [ ] T5.9 `lower`: union, `any`, optional fields, §3.8 checks
 
-What: the tagged representation; `box` on assignment into a union, `unbox` after narrowing per `Typed_File`; `tag_test` from `typeof` conditions, literal field conditions, `switch`, `null`; `x!` and a narrowing `as` as a tag check with `fail`; `fail` with file, line and column as constants; `undefined` for missing optional fields.
+What: the tagged representation; `box` on assignment into a union, `unbox` after narrowing per `Typed_File`; `tag_test` from `typeof` conditions, literal field conditions, `switch`, `null`; `x!` and a narrowing `as` as a tag check with `fail`; `fail` with file, line and column as constants; `undefined` for missing optional fields. What T5.4 left for this task: `typeof`, `===`, truthiness and `String(x)` or a template span of a tagged value call the `Value_*` rows, which take a tagged value as its two words (`abi.C_Type.Tagged`). The runtime refuses a function there, so `String(x)` or a template span whose static type is a function is a compile error. And `value.to_string` is ToString: `"a" + x` with an object operand asks `valueOf` first, so it cannot stand in for `+` on an object that has a `valueOf` field.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`; requirements §3.4, §3.8, §2.2 (union and narrowing).
 After: T5.8.
 Done: diff tests for discriminated unions and `typeof` branches; a failed `x!` produces the expected stderr and exit code 1.
