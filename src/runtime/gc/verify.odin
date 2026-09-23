@@ -138,6 +138,8 @@ verify_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header, slot_size: int) -> Heap
 		return verify_reference(heap, (^abi.Closure_Cell)(cell).env)
 	case .Array:
 		return verify_elements(heap, (^abi.Array_Cell)(cell), table.element)
+	case .Buffer:
+	// The array that owns it checks the elements, the only part that holds anything.
 	}
 	return .None
 }

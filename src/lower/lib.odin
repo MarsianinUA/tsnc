@@ -170,6 +170,7 @@ LIB_STRATEGIES := []Lib_Entry {
 	{.Instance, "Array", "includes", Later{"arrays"}},
 	{.Instance, "Array", "slice", Later{"arrays"}},
 	{.Instance, "Array", "join", Later{"arrays"}},
+	{.Instance, "Array", "sort", Later{"arrays"}},
 	{.Instance, "Array", "map", Later{"arrays"}},
 	{.Instance, "Array", "filter", Later{"arrays"}},
 	{.Instance, "Array", "forEach", Later{"arrays"}},

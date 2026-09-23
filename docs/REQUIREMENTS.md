@@ -41,7 +41,7 @@ Version 0.1 · September 15, 2026 · status: agreed (13-question interview, cros
 - Primitives: `number`, `string`, `boolean`, `null`, `undefined`, literal types (`"circle"`, `42`, `true`).
 - Strings: concatenation, template strings, `length`, indexing, basic methods (`charCodeAt`, `slice`, `indexOf`, `includes`, `split`, `trim`, `toUpperCase`, `toLowerCase`, `startsWith`, `endsWith`).
 - Objects: literals, nesting, optional fields `x?: T`, `readonly`.
-- Arrays: `T[]`, literals, indexing, `length`, `push`, `pop`, `indexOf`, `includes`, `slice`, `join`, `map`, `filter`, `forEach`, `reduce`.
+- Arrays: `T[]`, literals, indexing, `length`, `push`, `pop`, `indexOf`, `includes`, `slice`, `join`, `sort`, `map`, `filter`, `forEach`, `reduce`.
 - Control flow: `if` / `else`, `switch`, `for`, `for...of`, `while`, `do...while`, `break`, `continue`, `return`, the ternary operator.
 - Expressions: arithmetic, `===` / `!==`, comparisons, `&&` / `||` / `!` / `??`, bitwise operations, `typeof`.
 - Union types and narrowing: by `typeof`, by `===` on a field with a literal type (discriminated unions), by `switch`, by a `null` / `undefined` check.
@@ -163,7 +163,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 | GC heap pages | `mem/virtual.reserve`, `commit` (both `contextless`) | size classes, object-start map, marking and sweeping |
 | Strings | built-in `string16`, `unicode/utf16` | cell in the GC heap, methods from 2.2, full case rules from tables generated from the Unicode Character Database (the tables of `core:unicode` are from an old Unicode version and stop at the BMP) |
 | Numbers to string and back | `strconv.generic_ftoa`, `strconv.parse_f64_prefix` | `Number::toString` rules (3.1), `ToNumber` grammar |
-| Array sorting | `slice.stable_sort_by` over a temporary copy, TS comparator through `context.user_ptr` | comparator rules, `undefined` to the end |
+| Array sorting | `slice.stable_sort_by` over indices into a temporary copy, TS comparator through `context.user_ptr` | comparator rules, `undefined` to the end, the order of strings without a comparator |
 | Console | `core:os` for stdout, `io.write_string16` (re-encodes to UTF-8) | output format per 3.9 |
 | Objects, arrays, closures, `Map`, `Set` | nothing | everything, layout shaped for GC type tables |
 | `Math` | nothing, see below | only differences from C |

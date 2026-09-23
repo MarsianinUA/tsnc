@@ -43,14 +43,17 @@ Array_Cell :: struct {
 	using header: Cell_Header,
 	length:       int,
 	capacity:     int,
-	// First of `capacity` unboxed slots of the type table's element kind. The slots live in a
-	// separate GC allocation, so the array can grow while references to it stay valid.
+	// First of `capacity` unboxed slots of the type table's element kind, right after the header of
+	// a Buffer cell of their own, so the array can grow while references to it stay valid. nil
+	// while the capacity is 0.
 	elements:     rawptr,
 }
 
 // Closure_Cell is a function value. `code` points to a procedure with the closure calling
-// convention: proc "c" (env: ^Environment_Cell, <TS parameters>) -> <TS result>. One Odin type
-// cannot describe every TS signature, so the runtime casts `code` to the concrete type it calls.
+// convention: proc "c" (env: ^Environment_Cell, <TS parameters>) -> <TS result>. env comes first
+// even when it is nil, and a parameter travels as it does into a runtime export (C_Type): a boolean
+// as b64, a tagged value as its two words. One Odin type cannot describe every TS signature, so the
+// runtime casts `code` to the concrete type it calls, as the array sort does with a comparator.
 Closure_Cell :: struct {
 	using header: Cell_Header,
 	code:         rawptr,
@@ -112,6 +115,8 @@ Cell_Kind :: enum u8 {
 	String,
 	Array,
 	Closure,
+	// The elements of an array, which the array reads itself: only it knows how many are live.
+	Buffer,
 }
 
 Field :: struct {
@@ -135,12 +140,14 @@ Type_Table :: struct {
 // numbers the tables it emits after these.
 Builtin_Table :: enum u32 {
 	String,
+	Buffer, // only the runtime makes one, as the elements of an array
 }
 
 // BUILTIN_TABLES is @(rodata) for the reason SLOT_SIZE is: the runtime indexes it by a table id.
 @(rodata)
 BUILTIN_TABLES := [Builtin_Table]Type_Table {
 	.String = {kind = .String, size = size_of(String_Cell)},
+	.Buffer = {kind = .Buffer, size = size_of(Cell_Header)},
 }
 
 // Root is a module global that holds a reference. The compiler lists them (ROOTS_SYMBOL): nothing

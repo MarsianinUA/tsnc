@@ -82,10 +82,14 @@ equal :: proc(a, b: ^abi.String_Cell) -> bool {
 	return a == b || units(a) == units(b)
 }
 
-// compare orders by 16-bit unit value, as ECMAScript's `<` does, and answers <0, 0 or >0. Not
-// string16's `<`, which compares bytes: on a little-endian machine that puts U+0100 before U+00FF.
+// compare orders by 16-bit unit value, as ECMAScript's `<` does, and answers <0, 0 or >0.
 compare :: proc(a, b: ^abi.String_Cell) -> int {
-	x, y := unit_slice(a), unit_slice(b)
+	return compare_units(units(a), units(b))
+}
+
+// compare_units is compare of two views. Not string16's `<`, which compares bytes: on a
+// little-endian machine that puts U+0100 before U+00FF.
+compare_units :: proc "contextless" (x, y: string16) -> int {
 	for i in 0 ..< min(len(x), len(y)) {
 		if x[i] != y[i] {
 			return int(x[i]) - int(y[i])
