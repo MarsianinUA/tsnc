@@ -124,6 +124,8 @@ the_array_members_of_the_subset_all_type :: proc(t: ^testing.T) {
 			`const has = numbers.includes(2);`,
 			`const part = numbers.slice(1);`,
 			`const text = numbers.join(",");`,
+			`const ordered = numbers.sort();`,
+			`const sorted = numbers.sort((a, b) => a - b);`,
 		),
 	)
 
@@ -134,6 +136,10 @@ the_array_members_of_the_subset_all_type :: proc(t: ^testing.T) {
 	testing.expect_value(t, declared_text(c, "has"), "boolean")
 	testing.expect_value(t, declared_text(c, "part"), "number[]")
 	testing.expect_value(t, declared_text(c, "text"), "string")
+	testing.expect_value(t, declared_text(c, "ordered"), "number[]")
+	// The comparator is optional, and its parameters still take their type from the signature.
+	testing.expect_value(t, declared_text(c, "sorted"), "number[]")
+	testing.expect_value(t, use_text(c, "a"), "number")
 }
 
 @(test)

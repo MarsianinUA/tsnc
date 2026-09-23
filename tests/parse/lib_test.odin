@@ -123,6 +123,7 @@ LIB_DECLARATIONS := [?]string {
 	"Array<T>.includes",
 	"Array<T>.slice",
 	"Array<T>.join",
+	"Array<T>.sort",
 	"Array<T>.map<U>",
 	"Array<T>.filter",
 	"Array<T>.forEach",

@@ -33,7 +33,15 @@ HELLO :: "Hello, world!"
 //		NaN === NaN, -0 === 0, "12" === String(12), !!"", !!1.5, !!null]) console.log(v)
 TAGGED_ANSWERS :: "number\nundefined\n0\nabc\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\n"
 
+// ARRAY_ANSWERS is what Node prints for the steps of array_program, one per line:
+//
+//	const pieces = "c,a,b".split(",");
+//	for (const v of [pieces.pop(), pieces.push("d"), pieces.indexOf("a"), pieces.includes("z"),
+//		pieces.slice(1).join("-"), String(pieces.sort()), pieces.slice(0, 0).pop()]) console.log(String(v))
+ARRAY_ANSWERS :: "b\n3\n1\nfalse\na-d\na,c,d\nundefined\n"
+
 NAN :: 0h7ff8_0000_0000_0000
+INF :: 0h7ff0_0000_0000_0000
 NEGATIVE_ZERO :: 0h8000_0000_0000_0000
 
 SPAN :: source.Span {
@@ -73,6 +81,21 @@ tagged_values_cross_into_the_runtime :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect_value(t, stdout, TAGGED_ANSWERS)
+	testing.expect_value(t, stderr, "")
+	testing.expect_value(t, state.exit_code, 0)
+}
+
+// Arrays cross in both directions: an element goes in as a tagged value and comes out of pop through
+// the slot codegen passes (abi.C_Type.Tagged), and the runtime finds the program's `string[]` table
+// for split among the ones codegen wrote.
+@(test)
+arrays_cross_into_the_runtime :: proc(t: ^testing.T) {
+	output := array_program()
+	state, stdout, stderr, ran := build_and_run(t, &output, "link-arrays")
+	if !ran {
+		return
+	}
+	testing.expect_value(t, stdout, ARRAY_ANSWERS)
 	testing.expect_value(t, stderr, "")
 	testing.expect_value(t, state.exit_code, 0)
 }
@@ -223,9 +246,59 @@ tagged_program :: proc() -> ir.Program_IR {
 	return ir.finish(&p, main, nil)
 }
 
+// array_program takes each step of ARRAY_ANSWERS through the String_Split and Array exports and
+// prints what it answers.
+@(private = "file")
+array_program :: proc() -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	strings_type := ir.ref(ir.array_layout(&p, .Ref))
+	cab := ir.intern_string(&p, "c,a,b")
+	comma := ir.intern_string(&p, ",")
+	dash := ir.intern_string(&p, "-")
+	a := ir.intern_string(&p, "a")
+	d := ir.intern_string(&p, "d")
+	z := ir.intern_string(&p, "z")
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
+	f := ir.begin_func(&p, main)
+
+	text := ir.emit(&f, ir.STR, ir.Const_String{text = cab}, SPAN)
+	separator := ir.emit(&f, ir.STR, ir.Const_String{text = comma}, SPAN)
+	no_limit := number(&f, 4294967295)
+	zero := number(&f, 0)
+	pieces := call(&f, .String_Split, strings_type, text, separator, no_limit)
+
+	write_line(&f, call(&f, .Value_To_String, ir.STR, call(&f, .Array_Pop, ir.TAGGED, pieces)))
+	pushed := call(&f, .Array_Push, ir.F64, pieces, boxed_string(&f, d))
+	write_line(&f, call(&f, .Number_To_String, ir.STR, pushed))
+	found := call(&f, .Array_Index_Of, ir.F64, pieces, boxed_string(&f, a), zero)
+	write_line(&f, call(&f, .Number_To_String, ir.STR, found))
+	write_boolean(&f, call(&f, .Array_Includes, ir.BOOL, pieces, boxed_string(&f, z), zero))
+	tail := call(&f, .Array_Slice, strings_type, pieces, number(&f, 1), number(&f, INF))
+	joiner := ir.emit(&f, ir.STR, ir.Const_String{text = dash}, SPAN)
+	write_line(&f, call(&f, .Array_Join, ir.STR, tail, joiner))
+	sorted := call(&f, .Array_Sort_Default, strings_type, pieces)
+	write_line(&f, call(&f, .Value_To_String, ir.STR, box(&f, sorted)))
+	empty := call(&f, .Array_Slice, strings_type, pieces, zero, zero)
+	write_line(&f, call(&f, .Value_To_String, ir.STR, call(&f, .Array_Pop, ir.TAGGED, empty)))
+
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
+	ir.end_func(&f)
+	return ir.finish(&p, main, nil)
+}
+
+@(private = "file")
+number :: proc(f: ^ir.Func_Builder, n: f64) -> ir.Value_ID {
+	return ir.emit(f, ir.F64, ir.Const_Number{value = n}, SPAN)
+}
+
+@(private = "file")
+boxed_string :: proc(f: ^ir.Func_Builder, text: ir.String_ID) -> ir.Value_ID {
+	return box(f, ir.emit(f, ir.STR, ir.Const_String{text = text}, SPAN))
+}
+
 @(private = "file")
 boxed_number :: proc(f: ^ir.Func_Builder, n: f64) -> ir.Value_ID {
-	return box(f, ir.emit(f, ir.F64, ir.Const_Number{value = n}, SPAN))
+	return box(f, number(f, n))
 }
 
 @(private = "file")

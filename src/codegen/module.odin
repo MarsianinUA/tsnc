@@ -177,6 +177,12 @@ declare_runtime :: proc(
 	exports := abi.RUNTIME_EXPORTS
 	for export, id in exports {
 		params := make([dynamic]llvm.LLVMTypeRef, context.temp_allocator)
+		result := export.result
+		if result == .Tagged {
+			// The caller's slot for it comes first, and the export returns nothing.
+			append(&params, types.ptr)
+			result = .Void
+		}
 		for param in export.params {
 			if param == .Tagged {
 				append(&params, types.int64, types.int64)
@@ -185,7 +191,7 @@ declare_runtime :: proc(
 			}
 		}
 		signature := llvm.LLVMFunctionType(
-			c_type(types, export.result),
+			c_type(types, result),
 			raw_data(params),
 			u32(len(params)),
 			false,
@@ -214,7 +220,7 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 		// narrower boolean.
 		return types.int64
 	case .Tagged:
-		// Two parameters, which declare_runtime spells itself; no export returns one.
+		// Two parameters, or a slot for a result, which declare_runtime spells itself.
 		unreachable()
 	}
 	unreachable()

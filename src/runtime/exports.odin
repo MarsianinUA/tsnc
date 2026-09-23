@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:os"
 
 import "../abi"
+import "arr"
 import "console"
 import "fail"
 import "num"
@@ -11,7 +12,7 @@ import "str"
 import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 28)
+#assert(len(abi.Runtime_Proc) == 37)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -20,7 +21,7 @@ import "value"
 
 // Every returning export starts the same way: its own context, then a temp arena guard that
 // rewinds the scratch memory to where it was on entry. A rewind rather than a reset keeps an outer
-// export's scratch intact when generated code calls back in, as the array sort comparator will.
+// export's scratch intact when generated code calls back in, as the array sort comparator does.
 // The three Math exports do no allocating of their own, and they still take a context, because an
 // export that skipped it would be the one place a later assert inside it had nowhere to go.
 
@@ -157,6 +158,13 @@ string_to_lower :: proc "c" (text: ^abi.String_Cell) -> ^abi.String_Cell {
 	return str.to_lower(&heap, text)
 }
 
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Split].symbol)
+string_split :: proc "c" (text, separator: ^abi.String_Cell, limit: f64) -> ^abi.Array_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return arr.split(&heap, text, separator, limit)
+}
+
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Number_To_String].symbol)
 number_to_string :: proc "c" (value: f64) -> ^abi.String_Cell {
 	context = export_context()
@@ -212,11 +220,76 @@ value_to_boolean :: proc "c" (tag: abi.Tag, payload: u64) -> b64 {
 value_to_string :: proc "c" (tag: abi.Tag, payload: u64) -> ^abi.String_Cell {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	text, ok := value.to_string(&heap, tagged(tag, payload))
+	text, ok := arr.to_string(&heap, tagged(tag, payload))
 	if !ok {
 		fail.at({error = .Not_Convertible_To_String})
 	}
 	return text
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Push].symbol)
+array_push :: proc "c" (array: ^abi.Array_Cell, tag: abi.Tag, payload: u64) -> f64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return f64(arr.push(&heap, array, tagged(tag, payload)))
+}
+
+// A tagged result goes into the slot the caller passes first (abi.C_Type.Tagged).
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Pop].symbol)
+array_pop :: proc "c" (result: ^abi.Tagged, array: ^abi.Array_Cell) {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	result^ = arr.pop(&heap, array)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Index_Of].symbol)
+array_index_of :: proc "c" (array: ^abi.Array_Cell, tag: abi.Tag, payload: u64, from: f64) -> f64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return f64(arr.index_of(&heap, array, tagged(tag, payload), from))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Includes].symbol)
+array_includes :: proc "c" (array: ^abi.Array_Cell, tag: abi.Tag, payload: u64, from: f64) -> b64 {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return b64(arr.includes(&heap, array, tagged(tag, payload), from))
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Slice].symbol)
+array_slice :: proc "c" (array: ^abi.Array_Cell, start, end: f64) -> ^abi.Array_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return arr.slice(&heap, array, start, end)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Join].symbol)
+array_join :: proc "c" (array: ^abi.Array_Cell, separator: ^abi.String_Cell) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	text, ok := arr.join(&heap, array, separator)
+	if !ok {
+		fail.at({error = .Not_Convertible_To_String})
+	}
+	return text
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Sort].symbol)
+array_sort :: proc "c" (array: ^abi.Array_Cell, compare: ^abi.Closure_Cell) -> ^abi.Array_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	arr.sort(&heap, array, compare)
+	return array
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Sort_Default].symbol)
+array_sort_default :: proc "c" (array: ^abi.Array_Cell) -> ^abi.Array_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	if !arr.sort_default(&heap, array) {
+		fail.at({error = .Not_Convertible_To_String})
+	}
+	return array
 }
 
 @(private)

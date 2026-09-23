@@ -362,6 +362,45 @@ exit_code_is_to_int32_of_an_integer :: proc(t: ^testing.T) {
 	}
 }
 
+// ToIntegerOrInfinity, then the start `slice` reads out of it:
+//
+//	node -e 'for (const s of [2.9, -2.9, -1, -10, 10, NaN, Infinity, -Infinity, -0]) console.log(s, "abcde".slice(s).length)'
+@(test)
+positions_become_integers_before_they_become_indices :: proc(t: ^testing.T) {
+	testing.expect(t, same(num.to_integer(NAN), 0))
+	testing.expect(t, same(num.to_integer(2.9), 2))
+	testing.expect(t, same(num.to_integer(-2.9), -2))
+	testing.expect(t, same(num.to_integer(INF), INF))
+	testing.expect(t, same(num.to_integer(-INF), -INF))
+
+	// The start each case gives "abcde".slice is 5 minus the length Node prints.
+	cases := [?]struct {
+		value: f64,
+		index: int,
+	} {
+		{2.9, 2},
+		{-2.9, 3},
+		{-1, 4},
+		{-10, 0},
+		{10, 5},
+		{NAN, 0},
+		{INF, 5},
+		{-INF, 0},
+		{NEGATIVE_ZERO, 0},
+	}
+	for c in cases {
+		got := num.relative_index(c.value, 5)
+		testing.expectf(
+			t,
+			got == c.index,
+			"relative_index(%v, 5) = %d, want %d",
+			c.value,
+			got,
+			c.index,
+		)
+	}
+}
+
 // Both conversions write into the caller's buffer, and a test wants the text to outlive the call.
 text :: proc(value: f64) -> string {
 	buf: [num.STRING_MAX]byte

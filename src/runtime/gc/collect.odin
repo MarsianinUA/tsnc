@@ -92,7 +92,7 @@ scan_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 	table, known := type_table(heap, cell.type_table)
 	assert(known, "a cell of an unregistered type table")
 	switch table.kind {
-	case .String:
+	case .String, .Buffer:
 	case .Object, .Environment:
 		bytes := ([^]byte)(cell)
 		for field in table.fields {
@@ -101,7 +101,7 @@ scan_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 	case .Closure:
 		mark_reference(heap, (^abi.Closure_Cell)(cell).env)
 	case .Array:
-		// elements points past the header of a buffer cell whose own table knows nothing of the
+		// elements points past the header of a Buffer cell, whose table knows nothing of the
 		// elements, so the array reads them.
 		array := (^abi.Array_Cell)(cell)
 		if array.capacity == 0 || owner(heap, array.elements) == nil {

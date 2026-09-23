@@ -161,6 +161,7 @@ foreign lib {
 	LLVMAddIncoming :: proc(PhiNode: LLVMValueRef, IncomingValues: [^]LLVMValueRef, IncomingBlocks: [^]LLVMBasicBlockRef, Count: u32) ---
 	LLVMBuildSelect :: proc(B: LLVMBuilderRef, If: LLVMValueRef, Then: LLVMValueRef, Else: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 
+	LLVMBuildAlloca :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildLoad2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, PointerVal: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildStore :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, Ptr: LLVMValueRef) -> LLVMValueRef ---
 	LLVMBuildExtractValue :: proc(B: LLVMBuilderRef, AggVal: LLVMValueRef, Index: u32, Name: cstring) -> LLVMValueRef ---

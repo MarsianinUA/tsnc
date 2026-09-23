@@ -384,7 +384,7 @@ write_layout_key :: proc(
 @(private)
 fixed_size :: proc(kind: abi.Cell_Kind) -> int {
 	switch kind {
-	case .Object, .Environment:
+	case .Object, .Environment, .Buffer:
 		return size_of(abi.Cell_Header)
 	case .Array:
 		return size_of(abi.Array_Cell)

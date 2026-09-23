@@ -658,6 +658,7 @@ CELL_KIND_TEXT := [abi.Cell_Kind]string {
 	.String      = "string",
 	.Array       = "array",
 	.Closure     = "closure",
+	.Buffer      = "buffer",
 }
 
 @(private, rodata)

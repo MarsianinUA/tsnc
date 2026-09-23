@@ -8,13 +8,13 @@ import "../num"
 
 /*
 The String.prototype methods. A numeric argument arrives as the f64 TypeScript passed and is coerced
-here the way the specification coerces it, before anything becomes an int: int() of NaN, an
-infinity or 1e300 is undefined in LLVM. An argument the program left out arrives as the number the
-specification treats exactly as undefined (the rows in abi/calls.odin say which).
+the way the specification coerces it, through num.to_integer, before anything becomes an int. An
+argument the program left out arrives as the number the specification treats exactly as undefined
+(the rows in abi/calls.odin say which).
 */
 
 char_code_at :: proc(text: ^abi.String_Cell, position: f64) -> f64 {
-	at := to_integer(position)
+	at := num.to_integer(position)
 	if at < 0 || at >= f64(text.length) {
 		return math.nan_f64()
 	}
@@ -22,8 +22,8 @@ char_code_at :: proc(text: ^abi.String_Cell, position: f64) -> f64 {
 }
 
 slice :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, start, end: f64) -> ^abi.String_Cell {
-	from := relative_index(start, text.length)
-	to := relative_index(end, text.length)
+	from := num.relative_index(start, text.length)
+	to := num.relative_index(end, text.length)
 	if from == 0 && to == text.length {
 		return text
 	}
@@ -121,29 +121,10 @@ find :: proc "contextless" (text, search: string16, from: int) -> int {
 	return -1
 }
 
-// to_integer is ToIntegerOrInfinity. The result stays an f64, since the infinities are results too.
-@(private)
-to_integer :: proc "contextless" (value: f64) -> f64 {
-	if value != value {
-		return 0
-	}
-	return math.trunc(value)
-}
-
 // clamp_index is how indexOf, startsWith and endsWith read a position: clamped into [0, length].
 @(private)
 clamp_index :: proc "contextless" (value: f64, length: int) -> int {
-	return int(clamp(to_integer(value), 0, f64(length)))
-}
-
-// relative_index is how slice reads start and end: a negative one counts back from the end.
-@(private)
-relative_index :: proc "contextless" (value: f64, length: int) -> int {
-	at := to_integer(value)
-	if at < 0 {
-		at += f64(length)
-	}
-	return int(clamp(at, 0, f64(length)))
+	return int(clamp(num.to_integer(value), 0, f64(length)))
 }
 
 // to_uint32 is ToUint32: NaN and the infinities are 0, anything else wraps modulo 2^32, so -1 is

@@ -9,14 +9,13 @@ import "../../../src/runtime/gc"
 RESERVE :: 64 * gc.PAGE_SIZE
 
 STRING :: abi.Type_Table_ID(abi.Builtin_Table.String)
+// BLOB is the table of an array's element buffer. It has no slots, so a cell of any size fits it.
+BLOB :: abi.Type_Table_ID(abi.Builtin_Table.Buffer)
 // The program tables TABLES registers, numbered after the builtin ones.
 POINT :: abi.Type_Table_ID(len(abi.Builtin_Table))
 ENVIRONMENT :: POINT + 1
 CLOSURE :: POINT + 2
 ARRAY :: POINT + 3
-// BLOB has no slots, so a cell of any size fits it: it stands for an array's element buffer until
-// T5.5 gives the buffer a table of its own.
-BLOB :: POINT + 4
 
 POINT_SIZE :: 40
 // POINT_CLASS is the class of 48 bytes, the one a point takes.
@@ -35,7 +34,6 @@ TABLES := []abi.Type_Table {
 	{kind = .Environment, size = 16, fields = {{offset = 8, kind = .Ref}}},
 	{kind = .Closure, size = size_of(abi.Closure_Cell)},
 	{kind = .Array, size = size_of(abi.Array_Cell), element = .Ref},
-	{kind = .Object, size = size_of(abi.Cell_Header)},
 }
 
 Point :: struct {
@@ -183,6 +181,10 @@ program_tables_follow_the_builtin_ones :: proc(t: ^testing.T) {
 	testing.expect_value(t, text.kind, abi.Cell_Kind.String)
 	testing.expect_value(t, text.size, size_of(abi.String_Cell))
 
+	buffer, buffer_ok := gc.type_table(&heap, BLOB)
+	testing.expect(t, buffer_ok)
+	testing.expect_value(t, buffer.kind, abi.Cell_Kind.Buffer)
+
 	point, point_ok := gc.type_table(&heap, POINT)
 	testing.expect(t, point_ok)
 	testing.expect_value(t, point.size, POINT_SIZE)
@@ -193,6 +195,20 @@ program_tables_follow_the_builtin_ones :: proc(t: ^testing.T) {
 
 	cell := gc.alloc(&heap, POINT, POINT_SIZE)
 	testing.expect_value(t, gc.owner(&heap, cell), cell)
+}
+
+// The runtime makes a `string[]` for split, and only the program's tables know its number.
+@(test)
+an_array_table_is_found_by_its_element_kind :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	refs, found := gc.array_table(&heap, .Ref)
+	testing.expect(t, found, "the array of references in TABLES")
+	testing.expect_value(t, refs, ARRAY)
+	_, numbers_found := gc.array_table(&heap, .Number)
+	testing.expect(t, !numbers_found, "an array the program has no table for")
 }
 
 @(test)
@@ -231,6 +247,10 @@ a_malformed_table_is_refused :: proc(t: ^testing.T) {
 		{
 			"array of no element kind",
 			{kind = .Array, size = size_of(abi.Array_Cell), element = abi.Slot_Kind(9)},
+		},
+		{
+			"buffer, which only the runtime makes",
+			{kind = .Buffer, size = size_of(abi.Cell_Header)},
 		},
 	}
 	for c in cases {

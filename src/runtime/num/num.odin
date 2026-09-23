@@ -78,3 +78,23 @@ exit_code :: proc "contextless" (code: f64) -> (exit: int, ok: bool) {
 	wrapped := math.mod(code, 4294967296)
 	return int(i32(u32(i64(wrapped)))), true
 }
+
+// to_integer is ToIntegerOrInfinity, which the String and Array methods apply to a position before
+// it becomes an int: int() of NaN, an infinity or 1e300 is undefined in LLVM. The result stays an
+// f64, since the infinities are results too.
+to_integer :: proc "contextless" (value: f64) -> f64 {
+	if value != value {
+		return 0
+	}
+	return math.trunc(value)
+}
+
+// relative_index is how slice reads start and end, and indexOf and includes of an array read where
+// to start: a negative one counts back from the end, and the result is clamped into [0, length].
+relative_index :: proc "contextless" (value: f64, length: int) -> int {
+	at := to_integer(value)
+	if at < 0 {
+		at += f64(length)
+	}
+	return int(clamp(at, 0, f64(length)))
+}

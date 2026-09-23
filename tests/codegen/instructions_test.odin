@@ -349,6 +349,37 @@ a_runtime_call_splits_a_tagged_value :: proc(t: ^testing.T) {
 	expect_text(t, text, wants)
 }
 
+// A tagged result comes back through a slot the caller passes first, which every target passes
+// alike. One slot serves every such call of a function, and a function with none has no slot.
+@(test)
+a_tagged_result_comes_back_through_a_slot :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+
+	params := [?]ir.Type{ir.ref(ir.array_layout(&p, .Number))}
+	id := ir.declare_func(&p, "m1.second_last", params[:], ir.TAGGED, at(1))
+	f := ir.begin_func(&p, id)
+	args := [?]ir.Value_ID{0}
+	ir.emit(&f, ir.TAGGED, ir.Call_Runtime{export = .Array_Pop, args = args[:]}, at(2))
+	second := ir.emit(&f, ir.TAGGED, ir.Call_Runtime{export = .Array_Pop, args = args[:]}, at(2))
+	ir.emit(&f, ir.VOID, ir.Return{value = second}, at(3))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "tagged-result")
+	if text == "" {
+		return
+	}
+	wants := []string {
+		"declare void @tsnc_array_pop(ptr, ptr)",
+		"alloca %tsnc.tagged",
+		"call void @tsnc_array_pop(ptr %",
+		"load %tsnc.tagged, ptr %",
+	}
+	expect_text(t, text, wants)
+	testing.expect_value(t, strings.count(text, "alloca"), 1)
+}
+
 // The table is the other half of the one in codegen: an llvm intrinsic where LLVM 20 has one, a
 // libm call otherwise.
 @(test)

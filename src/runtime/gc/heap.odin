@@ -227,6 +227,24 @@ type_table :: proc(heap: ^Heap, id: abi.Type_Table_ID) -> (table: abi.Type_Table
 	return heap.tables[index], true
 }
 
+// array_table finds the program's table for an array of `element` slots. lower makes one table per
+// element kind, and only for the kinds the program uses, which includes the result of every call
+// that answers an array: a `string[]` exists wherever `split` is called.
+array_table :: proc(
+	heap: ^Heap,
+	element: abi.Slot_Kind,
+) -> (
+	table: abi.Type_Table_ID,
+	found: bool,
+) {
+	for program_table, i in heap.tables {
+		if program_table.kind == .Array && program_table.element == element {
+			return abi.Type_Table_ID(len(abi.Builtin_Table) + i), true
+		}
+	}
+	return 0, false
+}
+
 // alloc answers a cell of `size` bytes, header included, zero filled but for the header, which
 // names `table`. A string passes its units on top of the table's size. Running out of memory ends
 // the process: no caller could do anything else.
@@ -330,6 +348,9 @@ table_is_valid :: proc(table: abi.Type_Table) -> bool {
 	case .Array:
 		has_shape := len(table.fields) == 0 && table.size == size_of(abi.Array_Cell)
 		return has_shape && slot_kind_is_valid(table.element)
+	case .Buffer:
+		// The builtin one is the only buffer table: the runtime alone makes buffers.
+		return false
 	case .Object, .Environment:
 		if table.size < size_of(abi.Cell_Header) {
 			return false

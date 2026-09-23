@@ -25,7 +25,9 @@ C_Type :: enum u8 {
 	Boolean, // b64, 0 or 1
 	// A Tagged travels as two word parameters, the tag and then the payload's bits. A 16-byte
 	// struct does not travel alike everywhere: Win64 passes a pointer to a copy, SysV and arm64 two
-	// registers. For the same reason no export returns one.
+	// registers. For the same reason a Tagged result comes back through the caller's slot: codegen
+	// passes the address of a Tagged on its stack ahead of the other parameters, the export writes
+	// it and returns nothing. That is Win64's hidden pointer, spelled out on every target.
 	Tagged,
 }
 
@@ -60,6 +62,7 @@ Runtime_Proc :: enum u8 {
 	String_Trim, // (text) -> ^String_Cell
 	String_To_Upper, // (text) -> ^String_Cell
 	String_To_Lower, // (text) -> ^String_Cell
+	String_Split, // (text, separator, limit) -> ^Array_Cell of strings
 	// Numbers as strings, requirements 3.1.
 	Number_To_String, // (value) -> ^String_Cell: String(value) and `${value}`
 	Number_To_Fixed, // (value, digits) -> ^String_Cell; fails outside [0, 100] digits
@@ -69,6 +72,17 @@ Runtime_Proc :: enum u8 {
 	Value_Equal, // (a, b: Tagged) -> b64: `===`
 	Value_To_Boolean, // (value) -> b64: truthiness
 	Value_To_String, // (value) -> ^String_Cell: String(value), `${value}`; fails on a function
+	// Arrays, requirements 3.6 and the Array methods of 2.2 that lower does not inline. An element
+	// goes in as a Tagged whatever the array holds; lower boxes it, which costs nothing for a number
+	// or a reference.
+	Array_Push, // (array, value: Tagged) -> f64: the new length; lower calls it once per item
+	Array_Pop, // (array) -> Tagged: the last element, or undefined
+	Array_Index_Of, // (array, search: Tagged, from) -> f64: `===`, so NaN is never found
+	Array_Includes, // (array, search: Tagged, from) -> b64: SameValueZero, so NaN finds NaN
+	Array_Slice, // (array, start, end) -> ^Array_Cell: always a new array
+	Array_Join, // (array, separator) -> ^String_Cell; fails on a function, as Value_To_String does
+	Array_Sort, // (array, compare: ^Closure_Cell) -> the array
+	Array_Sort_Default, // (array) -> the array, in the order of its strings; fails as Array_Join does
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1
 }
 
@@ -107,8 +121,9 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Math_Min = {symbol = "tsnc_math_min", params = {.Number, .Number}, result = .Number},
 	// An argument TypeScript lets a call leave out still arrives, as the number the specification
 	// treats exactly as `undefined` there: +Infinity for an end, 0 for a start, a position or a
-	// digit count. Lower passes the same number for an `undefined` known only at run time. Never
-	// NaN: slice(0, NaN) is "", while slice(0) is the whole string.
+	// digit count, 4294967295 for a limit. Lower passes the same number for an `undefined` known
+	// only at run time. Never NaN: slice(0, NaN) is "", while slice(0) is the whole string. A
+	// separator join was not given is the string constant ",".
 	.String_Concat = {symbol = "tsnc_string_concat", params = {.Ptr, .Ptr}, result = .Ptr},
 	.String_Equal = {symbol = "tsnc_string_equal", params = {.Ptr, .Ptr}, result = .Boolean},
 	.String_Less = {symbol = "tsnc_string_less", params = {.Ptr, .Ptr}, result = .Boolean},
@@ -141,6 +156,7 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.String_Trim = {symbol = "tsnc_string_trim", params = {.Ptr}, result = .Ptr},
 	.String_To_Upper = {symbol = "tsnc_string_to_upper", params = {.Ptr}, result = .Ptr},
 	.String_To_Lower = {symbol = "tsnc_string_to_lower", params = {.Ptr}, result = .Ptr},
+	.String_Split = {symbol = "tsnc_string_split", params = {.Ptr, .Ptr, .Number}, result = .Ptr},
 	.Number_To_String = {symbol = "tsnc_number_to_string", params = {.Number}, result = .Ptr},
 	.Number_To_Fixed = {
 		symbol = "tsnc_number_to_fixed",
@@ -152,6 +168,22 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Value_Equal = {symbol = "tsnc_value_equal", params = {.Tagged, .Tagged}, result = .Boolean},
 	.Value_To_Boolean = {symbol = "tsnc_value_to_boolean", params = {.Tagged}, result = .Boolean},
 	.Value_To_String = {symbol = "tsnc_value_to_string", params = {.Tagged}, result = .Ptr},
+	.Array_Push = {symbol = "tsnc_array_push", params = {.Ptr, .Tagged}, result = .Number},
+	.Array_Pop = {symbol = "tsnc_array_pop", params = {.Ptr}, result = .Tagged},
+	.Array_Index_Of = {
+		symbol = "tsnc_array_index_of",
+		params = {.Ptr, .Tagged, .Number},
+		result = .Number,
+	},
+	.Array_Includes = {
+		symbol = "tsnc_array_includes",
+		params = {.Ptr, .Tagged, .Number},
+		result = .Boolean,
+	},
+	.Array_Slice = {symbol = "tsnc_array_slice", params = {.Ptr, .Number, .Number}, result = .Ptr},
+	.Array_Join = {symbol = "tsnc_array_join", params = {.Ptr, .Ptr}, result = .Ptr},
+	.Array_Sort = {symbol = "tsnc_array_sort", params = {.Ptr, .Ptr}, result = .Ptr},
+	.Array_Sort_Default = {symbol = "tsnc_array_sort_default", params = {.Ptr}, result = .Ptr},
 	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 

@@ -3,15 +3,19 @@ package codegen
 import "core:fmt"
 import "core:slice"
 
+import "../abi"
 import "../ir"
 import "../llvm"
 
 @(private)
 Body :: struct {
-	func:     ir.Func,
-	function: llvm.LLVMValueRef,
-	blocks:   []llvm.LLVMBasicBlockRef, // by ir.Block_ID; nil when the block cannot be reached
-	values:   []llvm.LLVMValueRef, // by ir.Value_ID
+	func:        ir.Func,
+	function:    llvm.LLVMValueRef,
+	blocks:      []llvm.LLVMBasicBlockRef, // by ir.Block_ID; nil when the block cannot be reached
+	values:      []llvm.LLVMValueRef, // by ir.Value_ID
+	// result_slot is where the runtime writes a tagged result (abi.C_Type.Tagged); nil in a function
+	// that calls for none. Every such call reads it back at once, so one slot serves them all.
+	result_slot: llvm.LLVMValueRef,
 }
 
 // build_func stops at the first instruction codegen cannot emit and leaves the reason in the
@@ -32,6 +36,12 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	for block in order {
 		name: cstring = "entry" if block == ir.ENTRY else fmt.ctprintf("b%d", block)
 		body.blocks[block] = llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, name)
+	}
+	// At the head of the entry block: an alloca anywhere else takes more stack at every pass of a
+	// loop through it.
+	if calls_for_a_tagged_result(func) {
+		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
+		body.result_slot = llvm.LLVMBuildAlloca(m.builder, m.types.tagged, "")
 	}
 
 	phis := make([dynamic]ir.Value_ID, 0, len(func.blocks), context.temp_allocator)
@@ -60,6 +70,18 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		}
 	}
 	patch_phis(m, &body, phis[:])
+}
+
+@(private)
+calls_for_a_tagged_result :: proc(func: ir.Func) -> bool {
+	exports := abi.RUNTIME_EXPORTS
+	for instruction in func.values {
+		call, is_call := instruction.variant.(ir.Call_Runtime)
+		if is_call && exports[call.export].result == .Tagged {
+			return true
+		}
+	}
+	return false
 }
 
 // patch_phis leaves out an edge out of a block that cannot run: it is not an edge of the LLVM

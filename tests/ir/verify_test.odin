@@ -294,6 +294,27 @@ a_tagged_parameter_of_the_runtime_takes_only_a_tagged_value :: proc(t: ^testing.
 }
 
 @(test)
+a_tagged_result_of_the_runtime_is_a_tagged_value :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	params := [?]ir.Type{ir.ref(ir.array_layout(&p, .Number))}
+	last := ir.declare_func(&p, "last", params[:], ir.TAGGED, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, last)
+	array := [?]ir.Value_ID{0}
+	popped := ir.emit(&f, ir.TAGGED, ir.Call_Runtime{export = .Array_Pop, args = array[:]}, at(2))
+	ir.emit(&f, ir.F64, ir.Call_Runtime{export = .Array_Pop, args = array[:]}, at(3))
+	ir.emit(&f, ir.VOID, ir.Return{value = popped}, at(4))
+	ir.end_func(&f)
+
+	found := ir.verify(ir.finish(&p, main, nil), context.temp_allocator)
+
+	// pop answers `number | undefined`, never a bare number, even from a number array.
+	expect_one(t, found, .Result_Type)
+}
+
+@(test)
 a_return_carries_the_result_of_its_function :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	empty := ir.declare_func(&p, "empty", nil, ir.F64, at(1))

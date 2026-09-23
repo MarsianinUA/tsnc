@@ -17,7 +17,8 @@
 // A signature is narrower than tsc's where v1 cannot do more: `filter` takes a predicate that
 // returns a boolean, `Number.isInteger` takes a number, `toString` has no radix, `length` and
 // `process.argv` are readonly, `process.exit` takes only a number. A program that uses the wider
-// form gets a compile error.
+// form gets a compile error. `sort` answers `T[]` where tsc answers `this`, which is the same array
+// here.
 //
 // `reduce` has two signatures, as in tsc: one without an initial value and one with it. They are
 // two members with one name, and check picks the first that fits the call. Without an initial
@@ -126,6 +127,7 @@ interface Array<T> {
 	includes(searchElement: T, fromIndex?: number): boolean;
 	slice(start?: number, end?: number): T[];
 	join(separator?: string): string;
+	sort(compareFn?: (a: T, b: T) => number): T[];
 	map<U>(callbackfn: (value: T, index: number, array: T[]) => U): U[];
 	filter(predicate: (value: T, index: number, array: T[]) => boolean): T[];
 	forEach(callbackfn: (value: T, index: number, array: T[]) => void): void;

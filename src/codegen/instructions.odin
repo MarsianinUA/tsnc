@@ -135,9 +135,12 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		export := exports[v.export]
 		callee := m.runtime[v.export]
 		args := make([dynamic]llvm.LLVMValueRef, context.temp_allocator)
+		if export.result == .Tagged {
+			append(&args, body.result_slot)
+		}
 		for arg, i in v.args {
 			// Two C types differ from the register shape: a boolean is b64, not i1, and a tagged
-			// value is its two words.
+			// value is its two words, or the slot it comes back through.
 			operand := body.values[arg]
 			#partial switch export.params[i] {
 			case .Boolean:
@@ -159,8 +162,11 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 			"",
 		)
 		if instruction.type != ir.VOID {
-			if export.result == .Boolean {
+			#partial switch export.result {
+			case .Boolean:
 				result = llvm.LLVMBuildTrunc(m.builder, result, m.types.int1, "")
+			case .Tagged:
+				result = llvm.LLVMBuildLoad2(m.builder, m.types.tagged, body.result_slot, "")
 			}
 			body.values[value] = result
 		}
