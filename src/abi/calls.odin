@@ -16,8 +16,8 @@ TYPE_TABLES_SYMBOL :: "tsnc_type_tables"
 ROOTS_SYMBOL :: "tsnc_roots"
 
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
-// maps each to one LLVM type, a Tagged to two. A boolean is b64 here, the width the package uses for a boolean slot,
-// so no export depends on how a C compiler widens a narrower one.
+// maps each to one LLVM type, a Tagged to two. A boolean is b64 here, the width the package uses
+// for a boolean slot, so no export depends on how a C compiler widens a narrower one.
 C_Type :: enum u8 {
 	Void,
 	Ptr,
