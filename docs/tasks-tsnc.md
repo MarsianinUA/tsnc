@@ -274,14 +274,14 @@ Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundarie
 After: T1.5.
 Done: tests: allocations of different classes, owner lookup by an interior pointer, integrity check on a live heap.
 
-### [ ] T5.2 `gc`: mark-sweep, conservative stack, precise heap
+### [x] T5.2 `gc`: mark-sweep, conservative stack, precise heap
 
 What: an assembly stub per platform (Windows x64, SysV x64, arm64) to spill callee-saved registers and capture the stack bounds; conservative stack scan; precise heap scan by type tables (pointer slots and tagged slots); marking; sweeping into per-class free lists; a trigger threshold; stress mode (a collection on every allocation plus an integrity check) turned on by an environment variable.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `gc`; [Precedents](architecture-plan-tsnc.md#precedents), the item on Go GC, Oilpan, bdwgc; requirements §6, §10 "GC stress mode".
 After: T5.1.
 Done: tests: an allocation loop with a live set on the stack loses no objects; garbage gets freed; stress mode is green.
 
-### [ ] T5.3 `str`: UTF-16 strings and methods
+### [x] T5.3 `str`: UTF-16 strings and methods
 
 What: string cell in the heap; creation from UTF-8 and UTF-16; `string16` into the cell; `length`, `charCodeAt`, indexing, `slice`, `indexOf`, `includes`, `split`, `trim`, `toUpperCase` and `toLowerCase` by full Unicode rules (`ß` becomes `SS`), `startsWith`, `endsWith`, concatenation, comparison by 16-bit units, `===`; exports in `Runtime_Proc`.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `str`; requirements §3.2, §2.2 (methods), §4.5 (row "Strings"), §13 (`string16` from nightly).
@@ -297,7 +297,7 @@ Done: tests for all tags, including `NaN !== NaN` and `-0 === 0`.
 
 ### [ ] T5.5 `arr`: arrays
 
-What: array cell with a buffer in the heap (unboxed elements by element kind); amortized growth; `push`, `pop`, `slice`, `indexOf`, `includes`, `join`; sorting through `slice.stable_sort_by` over a temporary copy with a closure comparator per the `abi` convention (`undefined` goes last); exports. `sort` is not in `src/lib/lib.d.ts` yet, nor in requirements §2.2, which lets the method list grow: declare it in the lib file here, so that T5.8 can sort with a comparator.
+What: array cell with a buffer in the heap (unboxed elements by element kind); amortized growth; `push`, `pop`, `slice`, `indexOf`, `includes`, `join`; sorting through `slice.stable_sort_by` over a temporary copy with a closure comparator per the `abi` convention (`undefined` goes last); exports. `sort` is not in `src/lib/lib.d.ts` yet, nor in requirements §2.2, which lets the method list grow: declare it in the lib file here, so that T5.8 can sort with a comparator. `String.prototype.split` gets its export here as well, since it answers a `string[]`: T5.3 left the algorithm in `str` (`splitter`, `split_next`), and the new `String_Split` row passes 4294967295 for a missing limit.
 Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `arr`; [Interaction map](architecture-plan-tsnc.md#interaction-map), row "`rt` (array sort) to generated code"; requirements §3.6, §4.5 (row "Array sorting").
 After: T5.4.
 Done: tests, including a call to a stub comparator through the calling convention.
@@ -311,7 +311,7 @@ Done: output tests against Node values on a set of simple values.
 
 ### [ ] T5.7 `lower`: objects and arrays
 
-What: canonical layout key from a TS type (fields by name, optional ones as tagged slots, recursive types per the plan's assumption); GC type tables in `Program_IR` (`codegen` emits every layout as a type table since T5.1, so the tables only need interning in `lower`); `alloc` and field access by offset; `store_ref` for reference slots; arrays: literals, indexing with `bounds_check`, a write at `i === length` as `push`, `length`; `map`, `filter`, `forEach`, `reduce` as inlined loops, the rest as runtime calls; `for...of`.
+What: canonical layout key from a TS type (fields by name, optional ones as tagged slots, recursive types per the plan's assumption); GC type tables in `Program_IR` (`codegen` emits every layout as a type table since T5.1, so the tables only need interning in `lower`); `alloc` and field access by offset; `store_ref` for reference slots; arrays: literals, indexing with `bounds_check`, a write at `i === length` as `push`, `length`; `map`, `filter`, `forEach`, `reduce` as inlined loops, the rest as runtime calls; `for...of`. Strings too: `length` becomes a load of `String_Cell.length`, and concatenation, templates, comparison, indexing, the other `String` methods, `String(x)`, `toString`, `toFixed` and `parseFloat`, all `Later` in `src/lower/lib.odin` today, become calls to the rows T5.3 added, with the stand-ins those rows name for a missing argument.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`; [Contracts → Program_IR](architecture-plan-tsnc.md#program_ir-package-ir), invariants; [Assumptions](architecture-plan-tsnc.md#assumptions), the item on recursive types; requirements §3.3, §3.6, §3.8, §4.5 (what the compiler emits).
 After: T4.5, T5.5.
 Done: diff tests for objects and arrays pass in normal and stress mode.

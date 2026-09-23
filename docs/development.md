@@ -82,9 +82,24 @@ error: internal error: heap check failed: dangling reference
 
 The runtime reads the variable once, at startup. Every check walks the whole heap, so a program that allocates a lot runs far slower in this mode.
 
+## Unicode case tables
+
+`toUpperCase` and `toLowerCase` read the tables in `src/runtime/str/case_tables.odin`. A generator writes that file from three files of the Unicode Character Database: `UnicodeData.txt`, `SpecialCasing.txt` and `DerivedCoreProperties.txt`. The version is Unicode 17.0.0, the one Node 24 reports in `process.versions.unicode`, and the first line of the generated file names it.
+
+To regenerate, download the three files into a directory outside the repository and run the generator on it:
+
+```sh
+curl -O https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt
+curl -O https://www.unicode.org/Public/17.0.0/ucd/SpecialCasing.txt
+curl -O https://www.unicode.org/Public/17.0.0/ucd/DerivedCoreProperties.txt
+odin run src/runtime/str/tools -out:dist/case-tables.exe -vet -strict-style -- <ucd dir> src/runtime/str/case_tables.odin
+```
+
+After a version change, update the hashes in `tests/runtime/str/case_test.odin`: the test maps every code point and compares with Node, and the Node command above it prints the new values. Use a Node whose `process.versions.unicode` is the new version. The generator refuses files that hold a rule the runtime cannot follow, such as a context other than Final_Sigma or a mapping longer than three units. CI only type-checks it.
+
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus, with the commands above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, type-checks the case table generator, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus, with the commands above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.

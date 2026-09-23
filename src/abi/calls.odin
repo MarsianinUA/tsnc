@@ -41,6 +41,25 @@ Runtime_Proc :: enum u8 {
 	Math_Round, // (x) -> f64
 	Math_Max, // (a, b) -> f64
 	Math_Min, // (a, b) -> f64
+	// Strings, requirements 3.2, and the String methods of 2.2. `length` has no row: generated code
+	// loads String_Cell.length. A string result may be an argument or a static cell, never a
+	// promised fresh one.
+	String_Concat, // (a, b: ^String_Cell) -> ^String_Cell
+	String_Equal, // (a, b) -> b64: `===`
+	String_Less, // (a, b) -> b64: `a < b` by units; lower swaps and negates for `>`, `<=`, `>=`
+	String_At, // (text, index) -> ^String_Cell: text[index], with the index checked first
+	String_Char_Code_At, // (text, position) -> f64
+	String_Slice, // (text, start, end) -> ^String_Cell
+	String_Index_Of, // (text, search, position) -> f64; includes is Index_Of != -1
+	String_Starts_With, // (text, search, position) -> b64
+	String_Ends_With, // (text, search, end) -> b64
+	String_Trim, // (text) -> ^String_Cell
+	String_To_Upper, // (text) -> ^String_Cell
+	String_To_Lower, // (text) -> ^String_Cell
+	// Numbers as strings, requirements 3.1.
+	Number_To_String, // (value) -> ^String_Cell: String(value) and `${value}`
+	Number_To_Fixed, // (value, digits) -> ^String_Cell; fails outside [0, 100] digits
+	Number_Parse_Float, // (text) -> f64
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1
 }
 
@@ -77,6 +96,49 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Math_Round = {symbol = "tsnc_math_round", params = {.Number}, result = .Number},
 	.Math_Max = {symbol = "tsnc_math_max", params = {.Number, .Number}, result = .Number},
 	.Math_Min = {symbol = "tsnc_math_min", params = {.Number, .Number}, result = .Number},
+	// An argument TypeScript lets a call leave out still arrives, as the number the specification
+	// treats exactly as `undefined` there: +Infinity for an end, 0 for a start, a position or a
+	// digit count. Lower passes the same number for an `undefined` known only at run time. Never
+	// NaN: slice(0, NaN) is "", while slice(0) is the whole string.
+	.String_Concat = {symbol = "tsnc_string_concat", params = {.Ptr, .Ptr}, result = .Ptr},
+	.String_Equal = {symbol = "tsnc_string_equal", params = {.Ptr, .Ptr}, result = .Boolean},
+	.String_Less = {symbol = "tsnc_string_less", params = {.Ptr, .Ptr}, result = .Boolean},
+	.String_At = {symbol = "tsnc_string_at", params = {.Ptr, .Number}, result = .Ptr},
+	.String_Char_Code_At = {
+		symbol = "tsnc_string_char_code_at",
+		params = {.Ptr, .Number},
+		result = .Number,
+	},
+	.String_Slice = {
+		symbol = "tsnc_string_slice",
+		params = {.Ptr, .Number, .Number},
+		result = .Ptr,
+	},
+	.String_Index_Of = {
+		symbol = "tsnc_string_index_of",
+		params = {.Ptr, .Ptr, .Number},
+		result = .Number,
+	},
+	.String_Starts_With = {
+		symbol = "tsnc_string_starts_with",
+		params = {.Ptr, .Ptr, .Number},
+		result = .Boolean,
+	},
+	.String_Ends_With = {
+		symbol = "tsnc_string_ends_with",
+		params = {.Ptr, .Ptr, .Number},
+		result = .Boolean,
+	},
+	.String_Trim = {symbol = "tsnc_string_trim", params = {.Ptr}, result = .Ptr},
+	.String_To_Upper = {symbol = "tsnc_string_to_upper", params = {.Ptr}, result = .Ptr},
+	.String_To_Lower = {symbol = "tsnc_string_to_lower", params = {.Ptr}, result = .Ptr},
+	.Number_To_String = {symbol = "tsnc_number_to_string", params = {.Number}, result = .Ptr},
+	.Number_To_Fixed = {
+		symbol = "tsnc_number_to_fixed",
+		params = {.Number, .Number},
+		result = .Ptr,
+	},
+	.Number_Parse_Float = {symbol = "tsnc_number_parse_float", params = {.Ptr}, result = .Number},
 	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 
@@ -88,6 +150,7 @@ Runtime_Error :: enum i32 {
 	Out_Of_Memory,
 	Internal, // an assertion inside the runtime
 	Exit_Code_Not_Integer, // process.exit with NaN, an infinity or a fraction: Node's RangeError
+	Fraction_Digits_Out_Of_Range, // toFixed outside [0, 100] digits: Node's RangeError
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

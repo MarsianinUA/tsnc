@@ -20,13 +20,14 @@ import "core:os"
 
 import "../../abi"
 import "../num"
+import "../str"
 
 write_string :: proc(err: bool, text: ^abi.String_Cell) {
 	buf: [4096]byte
 	out: bufio.Writer
 	bufio.writer_init_with_buf(&out, os.to_writer(stream(err)), buf[:])
 	// Like C stdio and Go's fmt.Print, a failed write to the console does not stop the program.
-	_, _ = io.write_string16(bufio.writer_to_writer(&out), units(text))
+	_, _ = io.write_string16(bufio.writer_to_writer(&out), str.units(text))
 	_ = bufio.writer_flush(&out)
 }
 
@@ -54,7 +55,7 @@ number_text :: proc(buf: []byte, value: f64) -> string {
 
 // write_line serves the hello world of T1.6, which codegen still builds by hand; T4.4 drops both.
 write_line :: proc(w: io.Writer, text: ^abi.String_Cell) -> io.Error {
-	io.write_string16(w, units(text)) or_return
+	io.write_string16(w, str.units(text)) or_return
 	return io.write_byte(w, '\n')
 }
 
@@ -72,11 +73,4 @@ log_string :: proc(text: ^abi.String_Cell) {
 @(private)
 stream :: proc(err: bool) -> ^os.File {
 	return os.stderr if err else os.stdout
-}
-
-// direct: reads the cell layout here while console is the only reader; the view moves to package
-// str with the rest of the string operations (T5.3).
-@(private)
-units :: proc(text: ^abi.String_Cell) -> string16 {
-	return string16(([^]u16)(&text.units)[:text.length])
 }
