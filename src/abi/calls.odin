@@ -82,6 +82,9 @@ Runtime_Proc :: enum u8 {
 	Value_Equal, // (a, b: Tagged) -> b64: `===`
 	Value_To_Boolean, // (value) -> b64: truthiness
 	Value_To_String, // (value) -> ^String_Cell: String(value), `${value}`; fails on a function
+	// (value) -> ^String_Cell: ToString(ToPrimitive(value)), what `+` joins; fails as
+	// Value_To_String does, and on an object with its own valueOf, which `+` asks first
+	Value_To_Primitive_String,
 	// Arrays, requirements 3.6 and the Array methods of 2.2 that lower does not inline. An element
 	// goes in as a Tagged whatever the array holds; lower boxes it, which costs nothing for a number
 	// or a reference.
@@ -181,6 +184,11 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Value_Equal = {symbol = "tsnc_value_equal", params = {.Tagged, .Tagged}, result = .Boolean},
 	.Value_To_Boolean = {symbol = "tsnc_value_to_boolean", params = {.Tagged}, result = .Boolean},
 	.Value_To_String = {symbol = "tsnc_value_to_string", params = {.Tagged}, result = .Ptr},
+	.Value_To_Primitive_String = {
+		symbol = "tsnc_value_to_primitive_string",
+		params = {.Tagged},
+		result = .Ptr,
+	},
 	.Array_Push = {symbol = "tsnc_array_push", params = {.Ptr, .Tagged}, result = .Number},
 	.Array_Pop = {symbol = "tsnc_array_pop", params = {.Ptr}, result = .Tagged},
 	.Array_Index_Of = {
@@ -212,7 +220,7 @@ Runtime_Error :: enum i32 {
 	Exit_Code_Not_Integer, // process.exit with NaN, an infinity or a fraction: Node's RangeError
 	Fraction_Digits_Out_Of_Range, // toFixed outside [0, 100] digits: Node's RangeError
 	// Node prints a function's source text, which a compiled program does not keep, and calls an
-	// object's own toString.
+	// object's own toString, or for `+` its own valueOf.
 	Not_Convertible_To_String,
 	Invalid_String_Length, // a string past str.MAX_LENGTH units: Node's RangeError
 	// %d of an object with its own valueOf or toString, which Node would call.
@@ -227,6 +235,10 @@ Runtime_Error :: enum i32 {
 	// gave back, a value its own declared type does not allow: through `any`, or through a
 	// function field written through a narrower object type.
 	Value_Of_Other_Kind,
+	// A tagged value read as the type check narrowed it to, or converted into a static type, holds
+	// a kind that type does not allow: it came through `any`, or changed after the test that
+	// narrowed it (requirements 3.8).
+	Tagged_Holds_Other_Kind,
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

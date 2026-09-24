@@ -22,8 +22,10 @@ Code :: enum u16 {
 	Return_Outside_Function,
 
 	// T2xxx: constructs outside the subset. parse reports the syntactic "never" rules of
-	// requirements 2.2 and the v2 and other non-v1 constructs; check (T3.5) reports the five that
-	// need a type, a name or the file the declaration stands in.
+	// requirements 2.2 and the v2 and other non-v1 constructs; check (T3.5, T5.9) reports the seven
+	// that need a type, a name or the file the declaration stands in. lower reports Any_Operation
+	// too, for a value of type `any` that would become a function, which only a flow into a place
+	// of a function type shows.
 	Var_Declaration,
 	With_Statement,
 	Namespace,
@@ -50,10 +52,14 @@ Code :: enum u16 {
 	Prototype_Access, // {0} is the member name: "__proto__", "prototype"
 	Symbol_Global,
 	Namespace_As_Value, // {0} is the local name of the `import * as`
-	// {0} names the construct the way the text reads it, as an object: "objects", "arrays",
-	// "narrowing a union". lower (T4.3) reports it for a construct of the v1 subset that the code
+	// {0} names the construct the way the text reads it, as an object: "rest parameters",
+	// "`Math.hypot`". lower (T4.3) reports it for a construct of the v1 subset that the code
 	// generator does not build yet; the code leaves the registry when the last one is lowered.
 	Not_Lowered,
+	Function_To_String,
+	// {0} is what the value cannot do: "be an operand of `*`", "be called"; {1} is "any" or
+	// "unknown"
+	Any_Operation,
 
 	// T3xxx: types. check (T3.2 on) reports these, the only phase that knows what a type is.
 	Type_Mismatch, // {0} is the type of the value, {1} the type it has to fit
@@ -321,6 +327,16 @@ REGISTRY := [Code]Row {
 		number = 2027,
 		text = "tsnc cannot compile {0} yet",
 		hint = "it is part of the v1 language and lands in milestone 5 of the compiler; `tsnc check` already types the whole program",
+	},
+	.Function_To_String = {
+		number = 2028,
+		text = "a function cannot be converted to a string",
+		hint = "print the function with `console.log(f)`, or write its name as a string: Node would give the function's source text, which a compiled program does not keep",
+	},
+	.Any_Operation = {
+		number = 2029,
+		text = "a value of type `{1}` cannot {0}",
+		hint = "narrow it first, with `typeof x === \"number\"` or `x as number`: tsnc keeps such a value as a tagged value, and does not convert it, look up its fields or check a function's signature at run time",
 	},
 	.Type_Mismatch = {
 		number = 3001,

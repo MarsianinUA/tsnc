@@ -210,11 +210,15 @@ Layout_Test :: struct {
 	layout: Layout_ID,
 }
 
-// Tag_Test answers whether a Tagged value holds this tag. It is what narrowing compiles to.
+// Tag_Test answers whether the tag of a Tagged value is in the set. It is what narrowing compiles
+// to. A set says in one instruction what would otherwise be a chain of branches, since Binary takes
+// numbers only: `x == null` is {Undefined, Null}, `typeof x === "object"` is {Object, Null}.
 Tag_Test :: struct {
 	value: Value_ID,
-	tag:   abi.Tag,
+	tags:  Tag_Set,
 }
+
+Tag_Set :: bit_set[abi.Tag]
 
 // Box wraps a statically typed value as Tagged. Unbox reads it back, and the type of the
 // instruction says as what. Unbox does not check: a Tag_Test, or a Fail, comes before it.

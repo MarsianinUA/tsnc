@@ -13,7 +13,7 @@ import "str"
 import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 39)
+#assert(len(abi.Runtime_Proc) == 40)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -243,6 +243,17 @@ value_to_string :: proc "c" (tag: abi.Tag, payload: u64) -> ^abi.String_Cell {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	text, ok := arr.to_string(&heap, tagged(tag, payload))
+	if !ok {
+		fail.at({error = .Not_Convertible_To_String})
+	}
+	return text
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Value_To_Primitive_String].symbol)
+value_to_primitive_string :: proc "c" (tag: abi.Tag, payload: u64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	text, ok := arr.to_primitive_string(&heap, tagged(tag, payload))
 	if !ok {
 		fail.at({error = .Not_Convertible_To_String})
 	}

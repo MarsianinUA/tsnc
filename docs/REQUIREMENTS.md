@@ -71,7 +71,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 ### 3.2 Strings
 - Immutable sequences of 16-bit units (UTF-16). `length`, `charCodeAt`, `slice`, and indexing match TS for any characters, including Cyrillic and emoji.
 - Conversion to UTF-8 happens only at the OS boundary: console, files, arguments.
-- Converting a function to a string (`String(f)`, `` `${f}` ``) is a runtime error: Node prints the function's source text, which a compiled program does not keep. So is converting an object with its own `toString` field, which Node would call.
+- Converting a function to a string (`String(f)`, `` `${f}` ``, `"a" + f`) is a compile error where the type says the value is a function, and a runtime error where it comes through a union or `any`: Node prints the function's source text, which a compiled program does not keep. Converting an object with its own `toString` field is a runtime error, since Node would call it, and so is `+` with an object that has its own `valueOf`, which `+` asks first.
 - A string holds at most 536,870,888 units, as in Node 24. Building a longer one, by `+`, `join` or any other method, is a runtime error with Node's message, `Invalid string length`, where Node throws a `RangeError`.
 - Inside the runtime, a string is a header in the GC heap followed by `u16` data; operations work through Odin's built-in `string16` type, which points inside the object. A custom "pointer plus length" pair is not needed, and the console re-encodes its line to UTF-8 on the way out (4.5).
 - v2: hybrid Latin-1 / UTF-16 storage to save memory, as in V8. The semantics do not change.
@@ -88,6 +88,8 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 - A value of type `any` or a union takes 16 bytes: a type tag and a payload. `number`, `boolean`, `null`, `undefined` are stored inline without allocation; strings, objects, arrays, functions by pointer.
 - Optional fields and `T | undefined` use the same representation.
 - Type narrowing (`typeof`, a literal field, `switch`, comparison with `null`) compiles to a tag check. After narrowing, the value works as a statically typed one.
+- `any` and `unknown` narrow by `typeof` as in tsc: inside `typeof x === "number"` the value is a `number`, while `"object"` and `"function"` leave it as it was.
+- A value of type `any` can be printed, compared with `===`, tested for truth, turned into a string and given to a static type, with the check of 3.8. Whatever else JavaScript would do to it by converting it or looking something up at run time is a compile error that asks to narrow it first: arithmetic, `<` and the other orderings, reading a field, indexing, calling, `for...of`. So is an `any` that would become a function anywhere in the type it goes into, since only its tag could be checked, never its signature.
 - v2: NaN-boxing down to 8 bytes as an optimization, only together with precise GC roots.
 
 ### 3.5 Functions and closures
@@ -114,6 +116,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - writing `arr[i]`: when `i === arr.length`, append to the end, beyond that an error;
 - `x!`: a check, error on `null` / `undefined`;
 - reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
+- a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
 - division by zero and overflow follow f64 semantics (`Infinity`, `NaN`), without errors.
 
@@ -188,7 +191,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 - Inference is local, as in tsc: variable type from the initializer, return type from the function body, array element type from the literal, literal types for `const`.
 - Contextual typing: arrow function parameters get their type from the expected signature (`arr.map(x => x * 2)`, `x: number`).
 - Instantiation of generic signatures of built-in types: `map<U>` infers `U` from the body of the passed function.
-- Union narrowing: `typeof`, `===` on a field with a literal type, `switch` on such a field, `null` / `undefined` checks, `!`.
+- Union narrowing: `typeof`, also of `any` and `unknown`, `===` on a field with a literal type, `switch` on such a field, `null` / `undefined` checks, `!`.
 - Object compatibility by the exact-type rule (3.3), primitives and union by TS rules.
 - Diagnostics: several errors per pass, format `file:line:col: error[T0123]: text`, a stable error code from a registry in the repository, each code with a hint on how to rewrite; with parallel checking the output order is deterministic.
 

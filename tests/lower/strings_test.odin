@@ -21,8 +21,10 @@ joining_turns_each_operand_into_a_string :: proc(t: ^testing.T) {
 	body, _ := func_named(result.output, "m1.join")
 	testing.expectf(t, calls_to(body, .String_Concat) == 3, "%s", result.text)
 	testing.expectf(t, calls_to(body, .Number_To_String) == 1, "%s", result.text)
-	// A boolean and an array go through the one conversion that answers Node's words for both.
-	testing.expectf(t, calls_to(body, .Value_To_String) == 2, "%s", result.text)
+	// A boolean goes through the conversion that answers Node's words, an array through the one `+`
+	// asks, which asks an object for its valueOf first.
+	testing.expectf(t, calls_to(body, .Value_To_String) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(body, .Value_To_Primitive_String) == 1, "%s", result.text)
 }
 
 @(test)

@@ -371,7 +371,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, "tag_test ") or_return
 		write_value(w, v.value) or_return
 		io.write_byte(w, ' ') or_return
-		io.write_string(w, TAG_TEXT[v.tag]) or_return
+		first := true
+		for tag in v.tags {
+			if !first {
+				io.write_byte(w, '|') or_return
+			}
+			io.write_string(w, TAG_TEXT[tag]) or_return
+			first = false
+		}
 
 	case Box:
 		io.write_string(w, "box ") or_return
@@ -743,6 +750,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Reduce_Of_Empty_Array        = "reduce_of_empty_array",
 	.Field_Holds_Other_Kind       = "field_holds_other_kind",
 	.Value_Of_Other_Kind          = "value_of_other_kind",
+	.Tagged_Holds_Other_Kind      = "tagged_holds_other_kind",
 }
 
 @(private, rodata)

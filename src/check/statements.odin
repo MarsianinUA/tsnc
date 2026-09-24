@@ -148,8 +148,12 @@ check_type_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 // the shorter way to say the same thing, and the hint asks for it.
 @(private)
 for_of_element :: proc(c: ^Checker, iterable: ast.Node_ID, type: Type_ID) -> Type_ID {
-	if type == ERROR || type == ANY {
-		return type // a value the rules already gave up on says nothing more here
+	if type == ERROR {
+		return ERROR // a value the rules already gave up on says nothing more here
+	}
+	if type == ANY {
+		report_any(c, span_of(c, iterable), "be looped over with `for...of`")
+		return ERROR
 	}
 	if array, is_array := c.table.types[type].(Array); is_array {
 		return array.element

@@ -350,16 +350,6 @@ a_void_result_takes_the_result_of_its_class :: proc(t: ^testing.T) {
 }
 
 @(test)
-calling_a_value_of_type_any_is_reported :: proc(t: ^testing.T) {
-	result := expect_later(
-		t,
-		"function call(f: any): void {\nf();\n}\ncall(1);\n",
-		{{.Not_Lowered, 2, 1}},
-	)
-	testing.expect(t, slice.equal(result.constructs, []string{"calling a value of type any"}))
-}
-
-@(test)
 a_function_with_a_rest_parameter_is_reported :: proc(t: ^testing.T) {
 	result := expect_later(
 		t,

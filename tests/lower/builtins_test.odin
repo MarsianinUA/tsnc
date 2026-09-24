@@ -421,29 +421,31 @@ the_four_math_names_the_ir_cannot_say_are_reported :: proc(t: ^testing.T) {
 
 
 @(test)
-a_union_is_reported_where_it_is_used :: proc(t: ^testing.T) {
-	// The binding itself is a tagged value, which lower holds and stores; everything that reads a
-	// number back out of it is the tag check of milestone 5.
-	result := expect_later(
+a_non_null_assertion_tests_the_tag_before_the_number_is_read :: proc(t: ^testing.T) {
+	// The binding itself is a tagged value. `x!` fails where it is null or undefined, at the start
+	// of `x!`, and the number is then unboxed after a test of its own tag.
+	result := lower_text(
 		t,
 		"let x: number | undefined = 1;\nfunction f(): number {\nreturn x! + 1;\n}\n",
-		{{.Not_Lowered, 3, 8}},
 	)
 	testing.expect(t, len(result.output.globals) == 1)
 	testing.expect(t, result.output.globals[0].type == ir.TAGGED)
-}
 
-@(test)
-a_union_on_the_right_of_arithmetic_is_reported :: proc(t: ^testing.T) {
-	// A number on the left used to hide the operand on the right: `n + a` compiled with a tagged
-	// operand and crashed at run time, and `n -= a` left n as it was.
-	expect_later(
-		t,
-		"function f(a: any, n: number): number {\nreturn n + a;\n}\n" +
-		"function g(a: any, n: number): number {\nreturn n * a;\n}\n" +
-		"function h(a: any, n: number): number {\nn -= a;\nreturn n;\n}\n",
-		{{.Not_Lowered, 2, 8}, {.Not_Lowered, 5, 8}, {.Not_Lowered, 8, 1}},
-	)
+	body, _ := func_named(result.output, "m1.f")
+	tests := instructions_of(body, ir.Tag_Test)
+	fails := instructions_of(body, ir.Fail)
+	if !testing.expectf(t, len(tests) == 2 && len(fails) == 2, "%s", result.text) {
+		return
+	}
+	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Undefined, .Null})
+	testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Number})
+	non_null := result.output.fail_sites[fails[0].site]
+	testing.expect_value(t, non_null.error, abi.Runtime_Error.Non_Null_Assertion)
+	testing.expect_value(t, non_null.line, 3)
+	testing.expect_value(t, non_null.column, 8)
+	kind := result.output.fail_sites[fails[1].site].error
+	testing.expect_value(t, kind, abi.Runtime_Error.Tagged_Holds_Other_Kind)
+	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 1, "%s", result.text)
 }
 
 @(private = "file")

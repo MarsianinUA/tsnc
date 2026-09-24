@@ -772,7 +772,7 @@ build_clean :: proc() -> ir.Program_IR {
 	boxed := ir.emit(&s, ir.TAGGED, ir.Box{value = root}, at(3))
 	ir.emit(&s, ir.VOID, ir.Element_Store_Ref{array = 3, index = checked, value = boxed}, at(3))
 	ir.emit(&s, ir.VOID, ir.Field_Store{cell = 4, field = 0, value = sum}, at(3))
-	is_number := ir.emit(&s, ir.BOOL, ir.Tag_Test{value = 1, tag = .Number}, at(3))
+	is_number := ir.emit(&s, ir.BOOL, ir.Tag_Test{value = 1, tags = {.Number}}, at(3))
 	branch := ir.Branch {
 		condition  = is_number,
 		then_block = done,

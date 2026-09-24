@@ -215,14 +215,21 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 	   !flow_intact(s, s.typed.node_types[node.init], s.typed.node_types[id], span) {
 		return
 	}
+	type: ir.Type
 	if is_global {
-		stored := coerce(s, value, s.low.builder.globals[global].type, span)
-		if stored != ir.NO_VALUE {
-			ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = stored}, span)
-		}
-		return
+		type = s.low.builder.globals[global].type
+	} else {
+		type = local_type(s, symbol)
 	}
-	write_local(s, symbol, coerce(s, value, local_type(s, symbol), span), span)
+	if type == ir.VOID {
+		return // a binding typed `never` holds nothing (store_place)
+	}
+	stored := coerce(s, value, type, span)
+	if !is_global {
+		write_local(s, symbol, stored, span)
+	} else if stored != ir.NO_VALUE {
+		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = stored}, span)
+	}
 }
 
 // lower_return inside an inlined arrow ends the arrow and not the function around it: a bare one as
@@ -539,7 +546,7 @@ leave_loop :: proc(
 // join of the test that picked it and of the case above it, when that one fell through.
 @(private)
 lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: source.Span) {
-	subject := lower_expression(s, node.value)
+	subject := switch_subject(s, node.value)
 	// Before the first test: a case test may call a function declared in one of the cases.
 	enter_scope(s, s.bound.node_scopes[id], span)
 	bodies := make([]ir.Block_ID, len(node.cases), context.temp_allocator)
@@ -559,7 +566,7 @@ lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: so
 			otherwise = i
 			continue
 		}
-		test := case_test(s, subject, value)
+		test := case_test(s, &subject, value)
 		next := ir.add_block(&s.fb)
 		append(&incoming[i], here(s))
 		branch := ir.Branch {
@@ -609,11 +616,18 @@ lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: so
 // case_test stays quiet about a subject this build cannot compare: the expression itself reported
 // it.
 @(private)
-case_test :: proc(s: ^Func_State, subject: ir.Value_ID, value: ast.Node_ID) -> ir.Value_ID {
+case_test :: proc(s: ^Func_State, subject: ^Switch_Subject, value: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[value].span
+	if subject.of_tagged {
+		if test, matched := typeof_case_test(s, subject, value); matched {
+			return test
+		}
+	}
 	other := lower_expression(s, value)
-	if subject != ir.NO_VALUE && other != ir.NO_VALUE {
-		if test := lower_compare(s, .Equal, subject, other, span); test != ir.NO_VALUE {
+	if subject.value != ir.NO_VALUE && other != ir.NO_VALUE {
+		values := [2]ir.Value_ID{subject.value, other}
+		types := [2]check.Type_ID{subject.type, s.typed.node_types[value]}
+		if test := lower_compare(s, .Equal, values, types, span); test != ir.NO_VALUE {
 			return test
 		}
 	}

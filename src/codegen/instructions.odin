@@ -107,9 +107,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		body.values[value] = build_layout_test(m, body.values[v.cell], v.layout)
 
 	case ir.Tag_Test:
-		tag := llvm.LLVMBuildExtractValue(m.builder, body.values[v.value], 0, "")
-		want := llvm.LLVMConstInt(m.types.int64, u64(v.tag), false)
-		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, tag, want, "")
+		body.values[value] = build_tag_test(m, body.values[v.value], v.tags)
 
 	case ir.Box:
 		body.values[value] = build_box(m, body.values[v.value], body.func.values[v.value].type)
@@ -412,6 +410,27 @@ build_layout_test :: proc(
 		table := llvm.LLVMConstInt(m.types.int32, u64(ir.table_id(ir.Layout_ID(row))), false)
 		same := llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, header, table, "")
 		answer = llvm.LLVMBuildOr(m.builder, answer, same, "")
+	}
+	return answer
+}
+
+// build_tag_test compares the tag with each tag of the set and ORs the answers; InstCombine turns a
+// run of neighbours such as Undefined and Null into one unsigned comparison.
+@(private)
+build_tag_test :: proc(
+	m: ^Module,
+	tagged: llvm.LLVMValueRef,
+	tags: ir.Tag_Set,
+) -> llvm.LLVMValueRef {
+	tag := llvm.LLVMBuildExtractValue(m.builder, tagged, 0, "")
+	answer: llvm.LLVMValueRef
+	for want in tags {
+		constant := llvm.LLVMConstInt(m.types.int64, u64(want), false)
+		same := llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, tag, constant, "")
+		answer = same if answer == nil else llvm.LLVMBuildOr(m.builder, answer, same, "")
+	}
+	if answer == nil {
+		return llvm.LLVMConstInt(m.types.int1, 0, false)
 	}
 	return answer
 }

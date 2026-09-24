@@ -50,7 +50,7 @@ a_read_through_the_narrow_type_checks_the_tag :: proc(t: ^testing.T) {
 	if !testing.expectf(t, len(tests) == 1, "%s", result.text) {
 		return
 	}
-	testing.expect_value(t, tests[0].tag, abi.Tag.Number)
+	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number})
 	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 1, "%s", result.text)
 	fails := instructions_of(body, ir.Fail)
 	if testing.expectf(t, len(fails) == 1, "%s", result.text) {

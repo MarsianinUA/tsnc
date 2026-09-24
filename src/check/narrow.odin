@@ -54,9 +54,10 @@ make_narrowing :: proc(allocator := context.allocator) -> Narrowing {
 // that path in node_flow for the three shapes a read can take, an ast.Ident, an ast.Member and an
 // ast.Index, and the walk follows it backwards.
 //
-// Only a union is walked for. Requirements 3.4 makes narrowing a tag check over a tagged value, and
-// a type with one kind of value is statically typed already; skipping the rest also keeps the cost
-// of the walk proportional to the feature rather than to the size of the program.
+// Only a union, `any` and `unknown` are walked for. Requirements 3.4 makes narrowing a tag check
+// over a tagged value, and a type with one kind of value is statically typed already; skipping the
+// rest also keeps the cost of the walk proportional to the feature rather than to the size of the
+// program.
 //
 // Every file the checker reads has fact tables, its own partition's or a scratch set (see Facts), so
 // the walk works the same in a file this call types and in one it only reads to learn the type of an
@@ -64,7 +65,8 @@ make_narrowing :: proc(allocator := context.allocator) -> Narrowing {
 // checker that owns the file and another in a checker that merely reads it.
 @(private)
 narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Type_ID {
-	if _, is_union := c.table.types[declared].(Union); !is_union {
+	_, is_union := c.table.types[declared].(Union)
+	if !is_union && declared != ANY && declared != UNKNOWN {
 		return declared
 	}
 	flow := c.at.bound.node_flow[id]
@@ -789,18 +791,41 @@ narrow_by_discriminant :: proc(
 	return union_type(&c.table, kept[:])
 }
 
-// narrow_by_typeof lets a member whose answer is not fixed, such as `any`, survive either way.
+// narrow_by_typeof lets a member whose answer is not fixed survive either way. `any` and `unknown`
+// become the one type an answer of a primitive names where the test holds, as tsc has them; for
+// "object" and "function" they stay, as tsc keeps `any`.
 @(private)
 narrow_by_typeof :: proc(c: ^Checker, id: Type_ID, answer: string, equals: bool) -> Type_ID {
 	members := union_members(c, id)
 	kept := make([dynamic]Type_ID, 0, len(members), context.temp_allocator)
 	for member in members {
+		if (member == ANY || member == UNKNOWN) && equals {
+			append(&kept, typeof_named(answer, member))
+			continue
+		}
 		word := typeof_answer(c, member)
 		if word == "" || (word == answer) == equals {
 			append(&kept, member)
 		}
 	}
 	return union_type(&c.table, kept[:])
+}
+
+// typeof_named is the type every value `typeof` answers this word for has, or `otherwise` where
+// values of several types answer it.
+@(private)
+typeof_named :: proc(answer: string, otherwise: Type_ID) -> Type_ID {
+	switch answer {
+	case "boolean":
+		return BOOLEAN
+	case "number":
+		return NUMBER
+	case "string":
+		return STRING
+	case "undefined":
+		return UNDEFINED
+	}
+	return otherwise
 }
 
 // typeof_answer is "" where the answer is not fixed. The words are the ones TYPEOF_ANSWERS lists,

@@ -636,3 +636,58 @@ function area(s: Shape): number {
 if (s.kind === "circle") { return s.r; }
 return s.side;
 }`
+
+// `any` and `unknown`.
+
+@(test)
+typeof_narrows_any_and_unknown_to_a_primitive :: proc(t: ^testing.T) {
+	// As tsc has them: a primitive's word names one type, while "object" and "function" leave
+	// `any` as it was.
+	c := expect_checked(
+		t,
+		lines(
+			`function f(a: any, u: unknown): number {`, //
+			`if (typeof a === "number" && typeof u === "string") { return a + u.length; }`,
+			`if (typeof a === "object") { return a === null ? 0 : 2; }`,
+			`if (typeof u === "undefined") { return u === undefined ? 3 : 4; }`,
+			`return 1;`,
+			`}`,
+		),
+	)
+	testing.expect_value(t, use_text(c, "a", 0), "any")
+	testing.expect_value(t, use_text(c, "a", 1), "number")
+	testing.expect_value(t, use_text(c, "u", 1), "string")
+	testing.expect_value(t, use_text(c, "a", 3), "any")
+	testing.expect_value(t, use_text(c, "u", 3), "undefined")
+}
+
+// Fields of a union.
+
+@(test)
+a_write_to_a_field_of_a_union_fits_every_member :: proc(t: ^testing.T) {
+	// The object may be any one of the members, so the value has to fit the field of each. The
+	// field of the union holds what any member holds, which would let a number into the member
+	// whose field is a string.
+	expect_errors(
+		t,
+		lines(
+			`interface A { x: number; }`, //
+			`interface B { x: string; y: number; }`,
+			`function set(u: A | B): void {`,
+			`u.x = 1;`,
+			`}`,
+		),
+		[]Error{{.Type_Mismatch, 4, 7}},
+	)
+	expect_checked(
+		t,
+		lines(
+			`interface A { x: number; }`, //
+			`interface B { x: number; y: string; }`,
+			`function set(u: A | B): void {`,
+			`u.x = 1;`,
+			`u.x += 2;`,
+			`}`,
+		),
+	)
+}

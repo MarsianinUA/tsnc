@@ -20,14 +20,24 @@ Short-circuit operators, the ternary and the two expanded lib names open blocks 
 come back together in a phi, which is also where the locals of the two sides are reconciled.
 */
 
-// lower_expression is the value of an expression, already of the IR type its node was typed with.
+// lower_expression is the value of an expression, already of the IR type its node was typed with:
+// a tagged value read where check narrowed it is unboxed here (narrowed, unions.odin).
+lower_expression :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
+	return narrowed(s, lower_raw(s, id), id, s.tree.nodes[id].span)
+}
+
+// lower_raw is lower_expression without the unbox of a narrowed read, for a consumer that boxes the
+// value anyway: console.log, a tagged argument of the runtime, and an expression whose value is
+// dropped. check narrows a read by an assignment across calls that may write the variable again
+// (narrow.odin), so an unbox there could fail where Node only prints the value.
 //
 // It is also the net under poison. An expression check typed with a value that answers NO_VALUE
 // while nothing has been reported yet swallowed a construct somewhere below it, and the build
 // would succeed with a wrong program; naming the innermost such expression fails it instead. The
 // test on the whole list is sound because every declaration a body could read was declared, and
 // refused if it had to be, before the first body was built.
-lower_expression :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
+@(private)
+lower_raw :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	value := lower_node(s, id)
 	if value != ir.NO_VALUE || len(s.low.diagnostics) > 0 {
 		return value
@@ -55,7 +65,7 @@ lower_effect :: proc(s: ^Func_State, id: ast.Node_ID) {
 		lower_conditional(s, id, v, ir.VOID)
 		return
 	}
-	lower_expression(s, id)
+	lower_raw(s, id)
 }
 
 // lower_node is lower_expression without the net: the one switch over the kinds of expression.
@@ -93,7 +103,7 @@ lower_node :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	case ast.Member:
 		return lower_member(s, id, v)
 	case ast.As:
-		return coerce(s, lower_expression(s, v.expr), node_type(s, id), span)
+		return lower_as(s, id, v)
 	case ast.Non_Null:
 		return lower_non_null(s, id, v)
 	case ast.Template:
@@ -130,9 +140,10 @@ node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
 	return type if ok else ir.VOID
 }
 
-// coerce has one conversion, boxing a statically typed value into a tagged one; reading one back
-// needs the tag check of T5.9, or unwrap where the value is known to be of the type. Two objects
-// check lets meet share one layout, and two functions one signature, so neither ever needs
+// coerce boxes a statically typed value into a tagged one, and reads one back after a check that
+// fails with Tagged_Holds_Other_Kind: that is an `any` going into a static type, or a union of
+// objects going into one object type that covers every member, whose classes share the layout. Two
+// objects check lets meet share one layout, and two functions one signature, so neither ever needs
 // converting into the other.
 @(private)
 coerce :: proc(
@@ -161,8 +172,7 @@ coerce :: proc(
 		return ir.NO_VALUE
 	}
 	if have == ir.TAGGED {
-		// Reading a statically typed value back out of a tagged one is what narrowing compiles to.
-		return later(s, span, "narrowing a union")
+		return unbox_checked(s, value, target, .Tagged_Holds_Other_Kind, span)
 	}
 	return later(s, span, "this conversion")
 }
@@ -182,7 +192,7 @@ unwrap :: proc(
 		return value
 	}
 	if value_type(s, value) == ir.TAGGED {
-		return read_widened(s, value, want, .Value_Of_Other_Kind, span)
+		return unbox_checked(s, value, want, .Value_Of_Other_Kind, span)
 	}
 	return later(s, span, "this conversion")
 }
@@ -191,8 +201,16 @@ unwrap :: proc(
 // moves into a function type of another signature class would be called with arguments it does not
 // take, which LLVM may fold into unreachable once it sees both sides. A difference is a checker bug,
 // reported rather than compiled.
+//
+// It also refuses a value of type `any` flowing into a type that may hold a function anywhere
+// (unions.odin), since only the tag of a function out of `any` could be checked: without that,
+// `let f: F | undefined = a; if (f) f(1)` would call a closure of any signature through F.
 @(private)
 flow_intact :: proc(s: ^Func_State, given, wanted: check.Type_ID, span: source.Span) -> bool {
+	if given == check.ANY && holds_function(s.types, wanted) {
+		report(s.low, .Any_Operation, span, "become a function", "any")
+		return false
+	}
 	_, given_is_function := s.types[given].(check.Function)
 	_, wanted_is_function := s.types[wanted].(check.Function)
 	if !given_is_function || !wanted_is_function || given == wanted {
@@ -218,14 +236,19 @@ boxable :: proc(type: ir.Type) -> bool {
 
 // truthy tests a number by its magnitude being above zero, which is one intrinsic and one
 // comparison and is false for NaN and for both zeros without a branch. A string is true when it
-// has a unit, and an object, an array and a function always are.
+// has a unit, and an object, an array and a function always are. A tagged value is tested by
+// read_as, the check type it was read with, where the caller knows it (truthy_tagged).
 @(private)
-truthy :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+truthy :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	span: source.Span,
+	read_as := check.ERROR,
+) -> ir.Value_ID {
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
-	type := value_type(s, value)
-	switch type.kind {
+	switch value_type(s, value).kind {
 	case .Bool:
 		return value
 	case .F64:
@@ -236,7 +259,7 @@ truthy :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Valu
 	case .Ref, .Closure:
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
 	case .Tagged:
-		return later(s, span, "narrowing a union")
+		return truthy_tagged(s, value, read_as, span)
 	case .Void:
 	}
 	return ir.NO_VALUE
@@ -255,7 +278,7 @@ above_zero :: proc(s: ^Func_State, number: ir.Value_ID, span: source.Span) -> ir
 
 @(private)
 lower_condition :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
-	return truthy(s, lower_expression(s, id), s.tree.nodes[id].span)
+	return truthy(s, lower_expression(s, id), s.tree.nodes[id].span, s.typed.node_types[id])
 }
 
 // lower_ident relies on check having resolved the name across files, so the answer names the
@@ -318,8 +341,9 @@ lower_lib_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Spa
 }
 
 // lower_member reads, in this order: an export of a module through `import * as m`, a value of the
-// lib such as Math.PI or process.argv, a field of an object, and the length of a string or an
-// array. A method named without being called is a function value.
+// lib such as Math.PI or process.argv, a field of an object or of a union of objects, and the
+// length of a string, an array or a union of the two. A method named without being called is a
+// function value.
 @(private)
 lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -340,7 +364,7 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 		return later(s, span, construct_of(strategy, node.name.text))
 	}
 
-	if is_object_type(s, node.object) {
+	if has_fields(s, node.object) {
 		place, ok := lower_place(s, id)
 		if !ok {
 			return ir.NO_VALUE
@@ -350,6 +374,9 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 	receiver := lower_expression(s, node.object)
 	if receiver == ir.NO_VALUE {
 		return ir.NO_VALUE
+	}
+	if value_type(s, receiver) == ir.TAGGED && node.name.text == "length" {
+		return union_length(s, receiver, s.typed.node_types[node.object], span)
 	}
 	strategy, found := instance_strategy(s, receiver, node.name.text)
 	if !found {
@@ -361,10 +388,13 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 	return later(s, span, construct_of(strategy, node.name.text))
 }
 
+// has_fields says whether an expression is an object, or a union of objects, whose members are
+// fields of the program rather than methods of the lib.
 @(private)
-is_object_type :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
-	_, is_object := s.types[s.typed.node_types[id]].(check.Object)
-	return is_object
+has_fields :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
+	type := s.typed.node_types[id]
+	_, is_object := s.types[type].(check.Object)
+	return is_object || is_object_union(s.types, type)
 }
 
 // lower_process_argv reads one global, so every read answers the same array, as in Node. main
@@ -421,7 +451,8 @@ instance_strategy :: proc(
 		return lib_strategy(.Instance, owner, name)
 	}
 	if type == ir.TAGGED {
-		return Later{"narrowing a union"}, true
+		// check calls no method of a union: it types the member as a union of signatures.
+		return Later{"a method of a union"}, true
 	}
 	return Later{"calling a function value"}, true
 }
@@ -439,12 +470,14 @@ lib_root :: proc(s: ^Func_State, id: ast.Node_ID) -> (string, bool) {
 	return s.low.prog.bound[program.LIB].symbols[ref.symbol].name.text, true
 }
 
+// lower_non_null fails the program where the value is null or undefined, and leaves it tagged:
+// lower_expression unboxes it into the type check gave `x!`.
 @(private)
 lower_non_null :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Non_Null) -> ir.Value_ID {
 	value := lower_expression(s, node.expr)
 	if value != ir.NO_VALUE && value_type(s, value) == ir.TAGGED {
-		// The check that `x!` stands for is a tag test, which milestone 5 brings.
-		return later(s, s.tree.nodes[id].span, "narrowing a union")
+		span := s.tree.nodes[id].span
+		fail_if(s, tag_test(s, value, {.Undefined, .Null}, span), .Non_Null_Assertion, span)
 	}
 	return value
 }
@@ -469,11 +502,11 @@ lower_unary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Unary) -> ir.Valu
 	case .Bit_Not:
 		return unary_number(s, .Bit_Not, operand, span)
 	case .Not:
-		test := truthy(s, operand, span)
+		test := truthy(s, operand, span, s.typed.node_types[node.operand])
 		if test == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
-		return ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = test}, span)
+		return negated(s, test, span)
 	case .Typeof:
 		unreachable()
 	}
@@ -493,25 +526,28 @@ unary_number :: proc(
 	return ir.emit(&s.fb, ir.F64, ir.Unary{op = op, operand = operand}, span)
 }
 
-// lower_typeof answers the word for the type the operand already has. A tagged value carries its
-// tag at run time, and reading it is the tag test of milestone 5.
+// lower_typeof answers the word for the type the operand already has, and asks the runtime for the
+// word of a tagged value. `typeof x === "number"` never gets here: it is a tag test
+// (lower_typeof_test).
 @(private)
 lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
+	if is_tagged(s, operand) {
+		value := lower_expression(s, operand)
+		if value == ir.NO_VALUE {
+			return ir.NO_VALUE
+		}
+		call := ir.Call_Runtime {
+			export = .Value_Typeof,
+			args   = {value},
+		}
+		return ir.emit(&s.fb, ir.STR, call, span)
+	}
 	word := typeof_word(s, operand)
 	if word == "" {
 		type := s.typed.node_types[operand]
-		if _, ok := representation(s.types, type); !ok {
-			return later(s, span, construct_text(s.types, type))
-		}
-		return later(s, span, "`typeof` of a union")
+		return later(s, span, construct_text(s.types, type))
 	}
-	// The operand of a typeof still runs: it may call something. Reading a name runs nothing, and
-	// lowering a name that holds a function would report a function value.
-	_, is_ident := s.tree.nodes[operand].variant.(ast.Ident)
-	names_something := s.typed.node_symbols[operand].symbol != bind.NO_SYMBOL
-	if !is_ident && !names_something {
-		lower_expression(s, operand)
-	}
+	evaluate_typeof_operand(s, operand)
 	return ir.emit(
 		&s.fb,
 		ir.STR,
@@ -526,7 +562,7 @@ lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) ->
 typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 	type := s.typed.node_types[operand]
 	switch type {
-	case check.UNDEFINED:
+	case check.UNDEFINED, check.VOID:
 		return "undefined"
 	case check.NULL:
 		return "object"
@@ -554,6 +590,9 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 // lower_binary never sees `&&`, `||` and `??`: they branch, and are lower_logical.
 @(private)
 lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Value_ID {
+	if test, matched := lower_typeof_test(s, id, node); matched {
+		return test
+	}
 	span := s.tree.nodes[id].span
 	left := lower_expression(s, node.left)
 	right := lower_expression(s, node.right)
@@ -562,7 +601,8 @@ lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Va
 	}
 
 	if op, is_compare := compare_op(node.op); is_compare {
-		return lower_compare(s, op, left, right, span)
+		types := [2]check.Type_ID{s.typed.node_types[node.left], s.typed.node_types[node.right]}
+		return lower_compare(s, op, {left, right}, types, span)
 	}
 	op, is_arithmetic := binary_op(node.op)
 	if !is_arithmetic {
@@ -589,22 +629,31 @@ arithmetic :: proc(
 }
 
 // lower_compare lets the IR compare two numbers, two booleans or two references itself; a string
-// holds its contents and goes through the runtime, and a tagged value needs the tag check of T5.9.
-// Two objects check lets `===` compare share one layout, so their references compare as they are.
+// holds its contents and goes through the runtime, and so does a tagged value, unless the other
+// side is null or undefined (compare_tagged). types are the check types of the two sides. Two
+// objects check lets `===` compare share one layout, so their references compare as they are.
 @(private)
 lower_compare :: proc(
 	s: ^Func_State,
 	op: ir.Compare_Op,
-	left, right: ir.Value_ID,
+	values: [2]ir.Value_ID,
+	types: [2]check.Type_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
+	left, right := values[0], values[1]
+	ordered := op != .Equal && op != .Not_Equal
+	if value_type(s, left) == ir.TAGGED || value_type(s, right) == ir.TAGGED {
+		if ordered {
+			// check orders two numbers or two strings, and `any` not at all.
+			return later(s, span, "ordering a tagged value")
+		}
+		return compare_tagged(s, op, values, types, span)
+	}
 	type := value_type(s, left)
 	if type != value_type(s, right) {
-		// One side is a tagged value and the other is not, which is a comparison that reads a tag.
-		// Nothing else reaches here: check compares two values of one type.
-		return later(s, span, "narrowing a union")
+		// check compares two values of one type, and gives two objects it lets meet one layout.
+		return later(s, span, "comparing two representations")
 	}
-	ordered := op != .Equal && op != .Not_Equal
 	switch type.kind {
 	case .F64:
 		return ir.emit(&s.fb, ir.BOOL, ir.Compare{op = op, left = left, right = right}, span)
@@ -614,16 +663,14 @@ lower_compare :: proc(
 		}
 	case .Str:
 		return compare_strings(s, op, left, right, span)
-	case .Tagged:
-		return later(s, span, "narrowing a union")
-	case .Void:
+	case .Tagged, .Void:
 	}
 	return ir.NO_VALUE
 }
 
-// operand_not_lowered names why an arithmetic operand is not a number: a tagged value narrowing has
-// not opened yet, or a string, whose operations are the runtime of milestone 5. It always reports,
-// since an operation that goes on without its operand is a wrong program.
+// operand_not_lowered is the net under an arithmetic operand that is not a number, which check
+// refuses. It always reports, since an operation that goes on without its operand is a wrong
+// program.
 @(private)
 operand_not_lowered :: proc(
 	s: ^Func_State,
@@ -632,7 +679,7 @@ operand_not_lowered :: proc(
 ) -> ir.Value_ID {
 	#partial switch value_type(s, operand).kind {
 	case .Tagged:
-		return later(s, span, "narrowing a union")
+		return later(s, span, "arithmetic on a tagged value")
 	case .Str:
 		return later(s, span, "string operations")
 	}
@@ -654,6 +701,11 @@ operands_not_lowered :: proc(
 // lower_logical answers one of the two sides, not a boolean, and the side that does not run must
 // not be evaluated, so each opens a block of its own. A result of VOID means nobody reads the
 // value, and the two sides meet without a phi.
+//
+// The left side is tested in its own type: truthy for `&&` and `||`, and for `??` neither null nor
+// undefined, where only a tagged value can be either. It turns into the type of the result on the
+// edge that keeps it: boxed before the branch, or unboxed after it in a block of its own, since
+// `name || "none"` is a string exactly where name is truthy.
 @(private)
 lower_logical :: proc(
 	s: ^Func_State,
@@ -663,58 +715,70 @@ lower_logical :: proc(
 ) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	if node.op == .Coalesce {
-		return lower_coalesce(s, node, result, span)
+		switch s.typed.node_types[node.left] {
+		case check.UNDEFINED, check.NULL:
+			lower_expression(s, node.left)
+			return coerce(s, lower_expression(s, node.right), result, span)
+		}
+		if !is_tagged(s, node.left) {
+			// Never nullish, so the right side never runs.
+			return coerce(s, lower_expression(s, node.left), result, span)
+		}
 	}
 
-	left := coerce(s, lower_expression(s, node.left), result, span)
-	test := truthy(s, left, span)
-	if left == ir.NO_VALUE || test == ir.NO_VALUE {
+	left := lower_expression(s, node.left)
+	if left == ir.NO_VALUE {
+		return ir.NO_VALUE
+	}
+	test: ir.Value_ID
+	if node.op == .Coalesce {
+		test = negated(s, tag_test(s, left, {.Undefined, .Null}, span), span)
+	} else {
+		test = truthy(s, left, span, s.typed.node_types[node.left])
+	}
+	unboxing := value_type(s, left) == ir.TAGGED && result != ir.VOID && result != ir.TAGGED
+	kept := left
+	if !unboxing {
+		kept = coerce(s, left, result, span)
+	}
+	if test == ir.NO_VALUE || kept == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
 
 	other := ir.add_block(&s.fb)
 	join := ir.add_block(&s.fb)
-	short := here(s)
+	keep := join
+	if unboxing {
+		keep = ir.add_block(&s.fb)
+	}
+	entering := here(s)
+	// `&&` keeps the left side where it is falsy, `||` and `??` where the test holds.
 	branch := ir.Branch {
 		condition  = test,
-		then_block = other if node.op == .And else join,
-		else_block = join if node.op == .And else other,
+		then_block = other if node.op == .And else keep,
+		else_block = keep if node.op == .And else other,
 	}
 	ir.emit(&s.fb, ir.VOID, branch, span)
 
 	edges := make([dynamic]Edge, 0, 2, context.temp_allocator)
 	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
-	append(&edges, short)
-	append(&values, left)
+	if unboxing {
+		ir.use_block(&s.fb, keep)
+		kept = unbox_checked(s, left, result, .Tagged_Holds_Other_Kind, span)
+		append(&edges, here(s))
+		ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	} else {
+		append(&edges, entering)
+	}
+	append(&values, kept)
 
 	ir.use_block(&s.fb, other)
-	copy(s.locals, short.values)
+	copy(s.locals, entering.values)
 	if edge, value, comes_back := lower_arm(s, node.right, join, result, span); comes_back {
 		append(&edges, edge)
 		append(&values, value)
 	}
 	return join_values(s, join, edges[:], values[:], result, span)
-}
-
-// lower_coalesce meets in this slice a left side that is either never nullish, and the right one
-// never runs, or a tagged value, whose test is the tag check of milestone 5.
-@(private)
-lower_coalesce :: proc(
-	s: ^Func_State,
-	node: ast.Binary,
-	result: ir.Type,
-	span: source.Span,
-) -> ir.Value_ID {
-	switch s.typed.node_types[node.left] {
-	case check.UNDEFINED, check.NULL:
-		lower_expression(s, node.left)
-		return coerce(s, lower_expression(s, node.right), result, span)
-	}
-	left := lower_expression(s, node.left)
-	if left != ir.NO_VALUE && value_type(s, left) == ir.TAGGED {
-		return later(s, span, "narrowing a union")
-	}
-	return coerce(s, left, result, span)
 }
 
 // lower_conditional takes a result of VOID to mean nobody reads the value, and the two sides then
@@ -830,7 +894,7 @@ lower_update :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Update) -> ir.Va
 	if !ok {
 		return ir.NO_VALUE
 	}
-	before := load_place(s, &place, span)
+	before := narrowed(s, load_place(s, &place, span), node.operand, span)
 	if before == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
@@ -868,7 +932,7 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 		return store_place(s, &place, value, span)
 	}
 
-	before := load_place(s, &place, span) if ok else ir.NO_VALUE
+	before := narrowed(s, load_place(s, &place, span), node.target, span) if ok else ir.NO_VALUE
 	right := lower_expression(s, node.value)
 	if before == ir.NO_VALUE || right == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -917,6 +981,7 @@ Place :: union {
 	Global_Place,
 	Field_Place,
 	Element_Place,
+	Union_Field_Place,
 }
 
 // lower_place evaluates what the place needs and nothing more: the object of a field, the array and
@@ -936,9 +1001,14 @@ lower_place :: proc(s: ^Func_State, target: ast.Node_ID) -> (place: Place, ok: b
 		if cell == ir.NO_VALUE {
 			return nil, false
 		}
-		object, is_object := s.types[s.typed.node_types[v.object]].(check.Object)
+		type := s.typed.node_types[v.object]
+		if is_object_union(s.types, type) && value_type(s, cell) == ir.TAGGED {
+			return union_field_place(s, cell, type, v.name.text, span)
+		}
+		object, is_object := s.types[type].(check.Object)
 		if !is_object || value_type(s, cell).kind != .Ref {
-			later(s, span, "narrowing a union")
+			// check reads a field of an object or of a union of objects, and nothing else.
+			later(s, span, "a field of this value")
 			return nil, false
 		}
 		return field_place(s, cell, object, v.name.text)
@@ -978,12 +1048,16 @@ load_place :: proc(s: ^Func_State, place: ^Place, span: source.Span) -> ir.Value
 		return load_field(s, p, span)
 	case Element_Place:
 		return load_element(s, &p, span)
+	case Union_Field_Place:
+		return load_union_field(s, p, span)
 	}
 	return ir.NO_VALUE
 }
 
 // store_place converts the value into the type the place holds, so a binding always holds the type
-// it was declared with, and answers the value as it came, which is the value of the assignment.
+// it was declared with, and answers the value as it came, which is the value of the assignment. A
+// binding typed `never`, as in `const n: never = s` after a switch that covered every member, holds
+// nothing: the value is not written, or a join would meet a value where it expects none.
 @(private)
 store_place :: proc(
 	s: ^Func_State,
@@ -996,13 +1070,21 @@ store_place :: proc(
 	}
 	switch &p in place {
 	case Local_Place:
-		stored := coerce(s, value, local_type(s, p.symbol), span)
+		type := local_type(s, p.symbol)
+		if type == ir.VOID {
+			return value
+		}
+		stored := coerce(s, value, type, span)
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
 		write_local(s, p.symbol, stored, span)
 	case Global_Place:
-		stored := coerce(s, value, s.low.builder.globals[p.global].type, span)
+		type := s.low.builder.globals[p.global].type
+		if type == ir.VOID {
+			return value
+		}
+		stored := coerce(s, value, type, span)
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
@@ -1013,6 +1095,10 @@ store_place :: proc(
 		}
 	case Element_Place:
 		if !store_element(s, p, value, span) {
+			return ir.NO_VALUE
+		}
+	case Union_Field_Place:
+		if !store_union_field(s, p, value, span) {
 			return ir.NO_VALUE
 		}
 	}

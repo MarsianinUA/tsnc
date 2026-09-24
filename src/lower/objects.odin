@@ -122,9 +122,6 @@ array_index :: proc(key: string) -> (index: u64, ok: bool) {
 	return index, index < 4294967295
 }
 
-// field_place finds the slot by name: the cell's layout is its widening class, whose fields are
-// the object's own. What a read answers is the field's declared type, undefined included for an
-// optional one.
 @(private)
 field_place :: proc(
 	s: ^Func_State,
@@ -135,26 +132,46 @@ field_place :: proc(
 	place: Place,
 	ok: bool,
 ) {
+	field, type := field_in(s, value_type(s, cell).layout, object, name) or_return
+	return Field_Place{cell = cell, field = field, type = type}, true
+}
+
+// field_in finds the slot by name: the layout is the object's widening class, whose fields are the
+// object's own. type is what a read answers, the field's declared type, undefined included for an
+// optional one.
+@(private)
+field_in :: proc(
+	s: ^Func_State,
+	layout: ir.Layout_ID,
+	object: check.Object,
+	name: string,
+) -> (
+	field: i32,
+	type: ir.Type,
+	ok: bool,
+) {
 	declared := ir.TAGGED
-	for field in object.fields {
-		if field.name != name {
+	for one in object.fields {
+		if one.name != name {
 			continue
 		}
-		if !field.optional {
-			declared = ir_type(s.low, s.types, field.type) or_return
+		if !one.optional {
+			declared = ir_type(s.low, s.types, one.type) or_return
 		}
 		if declared == ir.VOID {
 			declared = ir.TAGGED // a field of `void` holds undefined
 		}
-		for slot, i in s.low.builder.layouts[value_type(s, cell).layout].fields {
+		for slot, i in s.low.builder.layouts[layout].fields {
 			if slot.name == name {
-				return Field_Place{cell = cell, field = i32(i), type = declared}, true
+				return i32(i), declared, true
 			}
 		}
 	}
-	return nil, false
+	return 0, {}, false
 }
 
+// load_field reads a widened slot through the field's declared type with a check: a write through
+// the wider type may have left another kind there, or another layout.
 @(private)
 load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.Value_ID {
 	load := ir.Field_Load {
@@ -165,66 +182,7 @@ load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.
 		return ir.emit(&s.fb, place.type, load, span)
 	}
 	held := ir.emit(&s.fb, ir.TAGGED, load, span)
-	return read_widened(s, held, place.type, .Field_Holds_Other_Kind, span)
-}
-
-// read_widened unboxes what a widened slot, or a parameter or a result of a signature class, holds
-// as the type declared for it. A write through the wider type may have left another kind there, or
-// for an object an object of another layout, which the declared type cannot hold: that fails with
-// `error` rather than reading it wrong.
-@(private)
-read_widened :: proc(
-	s: ^Func_State,
-	held: ir.Value_ID,
-	declared: ir.Type,
-	error: abi.Runtime_Error,
-	span: source.Span,
-) -> ir.Value_ID {
-	tag: abi.Tag
-	switch declared.kind {
-	case .F64:
-		tag = .Number
-	case .Bool:
-		tag = .Boolean
-	case .Str:
-		tag = .String
-	case .Ref:
-		tag = .Object
-	case .Closure:
-		tag = .Function
-	case .Void, .Tagged:
-		return held
-	}
-	fits := ir.emit(&s.fb, ir.BOOL, ir.Tag_Test{value = held, tag = tag}, span)
-	unboxed := ir.add_block(&s.fb)
-	failed := ir.add_block(&s.fb)
-	ir.emit(
-		&s.fb,
-		ir.VOID,
-		ir.Branch{condition = fits, then_block = unboxed, else_block = failed},
-		span,
-	)
-	ir.use_block(&s.fb, failed)
-	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, error)}, span)
-
-	ir.use_block(&s.fb, unboxed)
-	value := ir.emit(&s.fb, declared, ir.Unbox{value = held}, span)
-	if declared.kind == .Ref {
-		layout := ir.Layout_Test {
-			cell   = value,
-			layout = declared.layout,
-		}
-		right := ir.emit(&s.fb, ir.BOOL, layout, span)
-		checked := ir.add_block(&s.fb)
-		ir.emit(
-			&s.fb,
-			ir.VOID,
-			ir.Branch{condition = right, then_block = checked, else_block = failed},
-			span,
-		)
-		ir.use_block(&s.fb, checked)
-	}
-	return value
+	return unbox_checked(s, held, place.type, .Field_Holds_Other_Kind, span)
 }
 
 // store_field boxes into a widened slot what the declared type holds unboxed.

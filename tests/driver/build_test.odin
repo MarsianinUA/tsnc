@@ -84,6 +84,49 @@ an_executable_is_built_and_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.exit_code, 6)
 }
 
+// A check of requirements 3.8 that fails ends the program after what it printed before: one line
+// on stderr names the check and where it stands, the start of the expression, in the path the
+// compiler was given, and the exit code is 1.
+@(test)
+a_failed_non_null_assertion_ends_the_program :: proc(t: ^testing.T) {
+	expect_failure(t, "main.ts", "driver-non-null.exe", "4\n", "non-null assertion failed", 5, 41)
+}
+
+@(test)
+a_failed_type_assertion_ends_the_program :: proc(t: ^testing.T) {
+	expect_failure(t, "as.ts", "driver-as.exe", "1\n", "type assertion failed", 5, 9)
+}
+
+@(private = "file")
+expect_failure :: proc(
+	t: ^testing.T,
+	entry, output, stdout, failure: string,
+	line, column: int,
+	loc := #caller_location,
+) {
+	built := build_project(build_options("non-null", entry, output))
+	defer driver.destroy(&built.report.check)
+	if !expect_built(t, built, loc) {
+		return
+	}
+
+	state, out, err, run_err := os.process_exec(
+		{command = {built.report.output}},
+		context.allocator,
+	)
+	defer delete(out)
+	defer delete(err)
+	if !testing.expectf(t, run_err == nil, "run %s: %v", built.report.output, run_err, loc = loc) {
+		return
+	}
+	// The entry file is File_ID 1, after the lib.
+	path := built.report.check.program.files[1].path
+	testing.expect_value(t, string(out), stdout, loc = loc)
+	want := fmt.tprintf("error: %s at %s:%d:%d\n", failure, path, line, column)
+	testing.expect_value(t, string(err), want, loc = loc)
+	testing.expect_value(t, state.exit_code, 1, loc = loc)
+}
+
 // A path that is not ASCII goes through the whole pipeline: reading the source, LLVM writing the
 // object, the linker, the rename and the start of the program. main reads the command line of
 // Windows in UTF-8, and this is the rest of tsnc keeping up with it.
