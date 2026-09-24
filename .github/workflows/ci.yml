@@ -1,5 +1,6 @@
 # Build, unit tests, the smoke test and the negative and differential corpora on every v1 platform
-# (requirements 9 and 10). T5.10 (GC stress, ASan) adds its runs to this job.
+# (requirements 9 and 10), the corpus also under GC stress and with the runtime built with
+# AddressSanitizer.
 name: CI
 
 on:
@@ -70,12 +71,20 @@ jobs:
       - name: Runtime object
         run: odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-${{ matrix.target }}.obj -vet -strict-style
 
+      # What `tsnc build -sanitize:address` links in place of the object above.
+      - name: Runtime object with ASan
+        run: odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-${{ matrix.target }}-asan.obj -vet -strict-style
+
       # The case and width table generators run only by hand (docs/development.md), so CI checks that
       # they still compile.
       - name: Table generators
         run: |
           odin check src/runtime/str/tools -vet -strict-style
           odin check src/runtime/console/tools -vet -strict-style
+
+      # The benchmarks run by hand (docs/development.md): timings on a shared runner say little.
+      - name: Benchmark runner
+        run: odin check bench/runner -vet -strict-style
 
       # Every test package: tests/<package> and tests/runtime/<package>. A failing package does not
       # stop the others, so one log shows every failure.
@@ -131,3 +140,18 @@ jobs:
         env:
           TSNC_GC_STRESS: "1"
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+
+      # Under ASan the collector poisons the heap a program may not touch: slot slack, freed cells
+      # past their free list link, page tails and free pages (src/runtime/gc/heap.odin). The test
+      # binary has no rt, whose __asan_default_options turns off the fake stack that hides
+      # address-taken locals from the stack scan, so the variable does it here.
+      - name: GC tests under ASan
+        env:
+          ASAN_OPTIONS: detect_stack_use_after_return=0
+        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+
+      # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
+      - name: Diff under ASan
+        env:
+          TSNC_GC_STRESS: "1"
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address

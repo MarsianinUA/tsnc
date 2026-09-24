@@ -1,5 +1,6 @@
 package gc
 
+import "base:sanitizer"
 import "core:mem/virtual"
 import "core:strconv"
 
@@ -153,10 +154,16 @@ sweep_page :: proc(heap: ^Heap, index: int) {
 	live := 0
 	for slot := PAGE_SIZE / size - 1; slot >= 0; slot -= 1 {
 		cell := (^abi.Cell_Header)(&page[slot * size])
-		if cell.type_table != FREE && .Marked in cell.flags {
-			cell.flags -= {.Marked}
-			live += 1
-			continue
+		if cell.type_table != FREE {
+			if .Marked in cell.flags {
+				cell.flags -= {.Marked}
+				live += 1
+				continue
+			}
+			// Only a cell that dies now: a free slot's body is poisoned already, and poisoning
+			// it again would cost every collection the whole heap in shadow writes.
+			body := page[slot * size + size_of(Free_Slot):]
+			sanitizer.address_poison(body, size - size_of(Free_Slot))
 		}
 		free := (^Free_Slot)(cell)
 		free^ = {
@@ -183,4 +190,5 @@ free_pages :: proc(heap: ^Heap, first, count: int) {
 		heap.pages[index] = {}
 	}
 	heap.first_free = min(heap.first_free, first)
+	sanitizer.address_poison(&heap.base[first * PAGE_SIZE], count * PAGE_SIZE)
 }

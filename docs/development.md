@@ -26,6 +26,9 @@ odin test tests/runtime/<package> -out:dist/runtime-<package>-tests.exe -vet -st
 # runtime object; without -use-single-module Odin writes one .obj per package
 odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style
 
+# the same runtime with AddressSanitizer, for `tsnc build -sanitize:address`
+odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style
+
 # test runs (smoke from T1.8, negative from T2.9, diff from T4.7); smoke links against the
 # runtime object in dist/ and the other two run dist/tsnc.exe, so build both first
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
@@ -74,13 +77,21 @@ npm ci --prefix tests/diff
 
 A program in the corpus stays inside the part of the subset that is lowered, since one that does not compile is a failure rather than a skip. `tests/diff/src/modules/` holds modules that other programs import and that are never run on their own.
 
-A program that needs an environment variable names it on its first line, and the runner sets it for both the Node run and the compiled one, on top of its own environment:
+A program may start with two header lines, each at most once and in either order, and the runner applies both to the Node run and to the compiled one. `// env:` sets environment variables on top of the runner's own environment:
 
 ```ts
 // env: FORCE_COLOR=1 NO_COLOR= NODE_DISABLE_COLORS=
 ```
 
 `tests/diff/src/colors.ts` does this to see colors through the pipe the runner reads. The two empty values keep Node from warning that they are ignored, should the machine set them.
+
+`// args:` passes command line arguments after the program. They are split on whitespace, with no quoting:
+
+```ts
+// args: one two --flag=x
+```
+
+`tests/diff/src/process-argv.ts` reads them from `process.argv`, a Cyrillic word and a character outside the BMP among them. It prints nothing from the first two entries, the executable and the script, since those differ between Node and the build.
 
 ## GC stress mode
 
@@ -97,6 +108,33 @@ To run the differential corpus in this mode, set the variable for the runner; th
 ```sh
 TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
 ```
+
+Three programs of the corpus exist for the collector: `gc-objects.ts`, `gc-closures.ts` and `gc-large.ts` allocate enough to collect at least three times in the normal mode, where the first collection waits for 4 MiB. Each builds its bytes out of few allocations, long strings by doubling and whole arrays, so that under stress, where every allocation collects and checks the heap, a build still runs in about two seconds.
+
+## AddressSanitizer
+
+`tsnc build -sanitize:address` and `tsnc run -sanitize:address` link the runtime built with AddressSanitizer, `tsnc_rt-<target>-asan.obj` next to `tsnc.exe`, which the second runtime command under [Commands](#commands) builds. Only the runtime is instrumented; the code tsnc generates is not.
+
+In that build the collector tells ASan which bytes of its heap a program may touch: the cells in use and the first 16 bytes of each free slot, which hold its free list link. It poisons the rest, as Go's sweep does, so a runtime procedure that reads past the end of a cell or into the body of a freed one stops with ASan's report. A freed cell's first 16 bytes stay open, so a use after free that touches only a length or a header goes unnoticed.
+
+ASan's fake stack is off. With it, every local whose address is taken moves to memory of ASan's own, the stack base the runtime hands the collector among them, and the stack scan would read past the real stack. The runtime answers `detect_stack_use_after_return=0` from `__asan_default_options`; `ASAN_OPTIONS` still overrides it. The gc unit tests have no runtime around them, so they need the variable:
+
+```sh
+ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address
+```
+
+The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both.
+
+## Benchmarks
+
+`bench/runner` builds `bench/hello.ts` with `dist/tsnc.exe -o:speed` and prints the size of the executable and the startup time, the fastest and the median of 20 runs, next to `node bench/hello.ts`. It needs the compiler and the runtime object, and Node on `PATH`.
+
+```sh
+odin run bench/runner -out:dist/bench.exe -vet -strict-style
+```
+
+CI only type-checks it: timings on a shared runner say little. The benchmarks against Node and Go come with milestone 6.
 
 ## Unicode case tables
 
@@ -130,7 +168,7 @@ After a version change, update the hash in `tests/runtime/console/width_test.odi
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and the runtime object, type-checks the case and width table generators, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus, with the commands above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus three times: as it is, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The commands are the ones above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.
@@ -158,7 +196,7 @@ src/lower/    the typed syntax tree to our IR
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, negative and diff corpora
-bench/        benchmarks
+bench/        benchmarks: the hello world starter and its runner
 docs/         requirements, architecture plan, task board, this development guide
 dist/         build output, not in git
 .zed/         Zed tasks and debug config

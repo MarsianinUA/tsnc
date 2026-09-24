@@ -60,6 +60,16 @@ main :: proc() {
 	tsnc_main()
 }
 
+// ASan's fake stack moves every local whose address is taken, stack_base in main among them, off
+// the thread stack, so the collector would scan from its own frame to a base on another mapping.
+// ASan asks this procedure for its defaults at startup; ASAN_OPTIONS still overrides them.
+when .Address in ODIN_SANITIZER_FLAGS {
+	@(require, linkage = "strong", link_name = "__asan_default_options", no_sanitize_address)
+	asan_default_options :: proc "c" () -> cstring {
+		return "detect_stack_use_after_return=0"
+	}
+}
+
 // export_context makes the thread's temp arena the scratch arena of the call: the export rewinds
 // it on return, so core code may allocate freely inside the call. The GC heap never becomes
 // context.allocator (requirements 4.5).

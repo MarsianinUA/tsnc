@@ -16,10 +16,18 @@ tells it from a live cell without a bitmap.
 
 The package keeps no state: the runtime's one heap is a Heap that rt holds, and tests make their
 own. Nothing here allocates through context.allocator, and the heap never becomes it.
+
+In a build with -sanitize:address the heap tells ASan which of its bytes a program may touch, as
+Go's sweep calls asanpoison: the first max(size, size_of(Free_Slot)) bytes of a live cell and the
+Free_Slot of a free slot. The rest of a slot, the tail of a page and every Free page are poisoned,
+so a runtime procedure that reads past the end of a cell, or into a freed cell past its first 16
+bytes, stops with ASan's report. Those 16 bytes stay open because owner and the free lists read
+them. The calls cost nothing in any other build.
 */
 package gc
 
 import "base:intrinsics"
+import "base:sanitizer"
 import "core:mem/virtual"
 
 import "../../abi"
@@ -210,6 +218,8 @@ heap_init :: proc(
 // heap_destroy gives the address space back. The runtime never calls it: its heap lives until the
 // process exits.
 heap_destroy :: proc(heap: ^Heap) {
+	// Poisoned shadow outlives the release, and the next reservation may land on the same range.
+	sanitizer.address_unpoison(heap.base, heap.page_count * PAGE_SIZE)
 	virtual.release(heap.base, uint(heap.page_limit * PAGE_SIZE))
 	virtual.release(heap.pages, uint(page_table_size(heap.page_limit)))
 	virtual.release(heap.marks.cells, uint(mark_stack_size(heap.page_limit)))
@@ -293,8 +303,11 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	heap.used += slot_size
 
 	// A cell of a header alone still clears the free list link after it, so no stale pointer stays
-	// in its slot.
-	intrinsics.mem_zero(cell, max(size, size_of(Free_Slot)))
+	// in its slot. The whole slot is poisoned first: a run of fresh pages never was.
+	extent := max(size, size_of(Free_Slot))
+	sanitizer.address_poison(cell, slot_size)
+	sanitizer.address_unpoison(cell, extent)
+	intrinsics.mem_zero(cell, extent)
 	header := (^abi.Cell_Header)(cell)
 	header.type_table = table
 	return header
@@ -434,9 +447,11 @@ carve_page :: proc(heap: ^Heap, class: int) -> (ok: bool) {
 	}
 	size := CLASS_SIZE[class]
 	page := heap.base[index * PAGE_SIZE:]
+	sanitizer.address_poison(page, PAGE_SIZE)
 	next: ^Free_Slot
 	for slot := PAGE_SIZE / size - 1; slot >= 0; slot -= 1 {
 		free := (^Free_Slot)(&page[slot * size])
+		sanitizer.address_unpoison(free)
 		free^ = {
 			header = {type_table = FREE},
 			next = next,

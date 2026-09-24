@@ -5,7 +5,8 @@ The test runner: one program with a mode per kind of run, started from the repos
 
 smoke (T1.8) checks the infrastructure: codegen, link and the runtime object. negative (T2.9) runs
 the corpus in tests/negative/, where every program must fail to compile the way its header says.
-diff (T4.7) runs the corpus in tests/diff/, where every program must print what Node prints. A mode
+diff (T4.7) runs the corpus in tests/diff/, where every program must print what Node prints; with
+-sanitize:address (T5.10) it builds them against the runtime built with AddressSanitizer. A mode
 prints what failed to stderr, and the runner exits with code 1.
 */
 package main
@@ -15,6 +16,8 @@ import "core:fmt"
 import "core:log"
 import "core:os"
 
+import "../../src/link"
+
 // Mode values are lowercase because core:flags matches them against the command line by exact name.
 Mode :: enum {
 	smoke,
@@ -23,7 +26,8 @@ Mode :: enum {
 }
 
 Options :: struct {
-	mode: Mode `args:"pos=0,required" usage:"smoke, negative or diff"`,
+	mode:     Mode `args:"pos=0,required" usage:"smoke, negative or diff"`,
+	sanitize: link.Sanitizer `usage:"diff: build against the runtime built with -sanitize:address"`,
 }
 
 // COMPILER and the path in COMPILER_BUILD are relative to the current directory, as smoke's dist/
@@ -47,7 +51,7 @@ main :: proc() {
 	case .negative:
 		passed = negative()
 	case .diff:
-		passed = diff()
+		passed = diff(options.sanitize)
 	}
 	if !passed {
 		os.exit(1)

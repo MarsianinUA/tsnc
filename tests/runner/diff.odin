@@ -28,9 +28,14 @@ The walk takes only the `.ts` files directly in tests/diff/src, the way the nega
 the modules under tests/diff/src/modules/ are there to be imported and are never run as programs of
 their own.
 
-A program whose first line is `// env: NAME=value ...` runs, under Node and as the build, in the
-runner's environment with those variables set, an empty value included. colors.ts sets FORCE_COLOR
-that way, which is the one way to see colors through a pipe.
+A program may start with two header lines, each at most once and in either order, and both runs
+follow them. `// env: NAME=value ...` runs it in the runner's environment with those variables set,
+an empty value included; colors.ts sets FORCE_COLOR that way, which is the one way to see colors
+through a pipe. `// args: a b ...` passes those arguments after the program, split on whitespace
+with no quoting; process-argv.ts reads them.
+
+With -sanitize:address every build links the runtime built with AddressSanitizer. Node runs as
+always, so the corpus still compares against the same reference.
 */
 package main
 
@@ -40,6 +45,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 
+import "../../src/link"
 import "../../src/target"
 
 // DIFF_PROJECT and DIFF_CORPUS are relative to the current directory, as the compiler path in
@@ -80,7 +86,7 @@ Output :: struct {
 
 // diff reports every mismatch instead of stopping at the first, so that one CI log shows all of
 // them.
-diff :: proc() -> (passed: bool) {
+diff :: proc(sanitizer: link.Sanitizer) -> (passed: bool) {
 	compiler := compiler_path("diff") or_return
 
 	// The programs keep their relative paths: the compiler inherits this directory, and a short
@@ -100,7 +106,7 @@ diff :: proc() -> (passed: bool) {
 
 	passed = true
 	for name in names {
-		if !compare_program(compiler, dist, name) {
+		if !compare_program(compiler, dist, name, sanitizer) {
 			passed = false
 		}
 	}
@@ -169,12 +175,13 @@ gate :: proc() -> (ok: bool) {
 }
 
 @(private = "file")
-compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
+compare_program :: proc(compiler, dist, name: string, sanitizer: link.Sanitizer) -> (ok: bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
 	path := fmt.tprintf("%s/%s", DIFF_CORPUS, name)
-	environment := program_environment(path) or_return
-	want := execute(path, "node", {NODE, path}, environment) or_return
+	header := read_header(path) or_return
+	node := slice.concatenate([][]string{{NODE, path}, header.arguments}, context.temp_allocator)
+	want := execute(path, "node", node, header.environment) or_return
 	if want.code >= 1 && want.code <= SIGNAL_MAX {
 		fmt.eprintfln(
 			"diff: %s: exit code %d is also a signal's number; a corpus program exits with 0 or %d..125",
@@ -197,7 +204,7 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 			ok = false
 			continue
 		}
-		if !compare_level(compiler, path, program, level, want, environment) {
+		if !compare_level(compiler, path, program, level, sanitizer, want, header) {
 			ok = false
 		}
 	}
@@ -208,12 +215,17 @@ compare_program :: proc(compiler, dist, name: string) -> (ok: bool) {
 compare_level :: proc(
 	compiler, path, program: string,
 	level: Level,
+	sanitizer: link.Sanitizer,
 	want: Output,
-	environment: []string,
+	header: Header,
 ) -> (
 	ok: bool,
 ) {
-	command := [?]string{compiler, "build", path, level.flag, fmt.tprintf("-out:%s", program)}
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, compiler, "build", path, level.flag, fmt.tprintf("-out:%s", program))
+	if sanitizer != .none {
+		append(&command, fmt.tprintf("-sanitize:%v", sanitizer))
+	}
 	built := execute(path, "tsnc build", command[:]) or_return
 	if built.code != 0 || built.stdout != "" || built.stderr != "" {
 		// A corpus program compiles. Whatever the compiler said about this one is the whole answer,
@@ -224,7 +236,8 @@ compare_level :: proc(
 		return false
 	}
 
-	got := execute(path, program, {program}, environment) or_return
+	run := slice.concatenate([][]string{{program}, header.arguments}, context.temp_allocator)
+	got := execute(path, program, run, header.environment) or_return
 	ok = true
 	if !same_stream(path, level, "stdout", got.stdout, want.stdout) {
 		ok = false
@@ -245,22 +258,50 @@ compare_level :: proc(
 	return ok
 }
 
-// program_environment answers nil for a program with no `// env:` line, which keeps the runner's
-// environment. A name the line sets replaces the runner's own, whose case Windows ignores.
 @(private = "file")
-program_environment :: proc(path: string) -> (environment: []string, ok: bool) {
-	HEADER :: "// env: "
+Header :: struct {
+	environment: []string, // nil keeps the runner's own
+	arguments:   []string,
+}
+
+@(private = "file")
+read_header :: proc(path: string) -> (header: Header, ok: bool) {
+	ENV :: "// env: "
+	ARGS :: "// args: "
 	data, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
 		fmt.eprintfln("diff: read %s: %v", path, read_err)
-		return nil, false
+		return {}, false
 	}
-	first, _, _ := strings.partition(string(data), "\n")
-	first = strings.trim_right(first, "\r")
-	if !strings.has_prefix(first, HEADER) {
-		return nil, true
+
+	settings: []string
+	has_env, has_args: bool
+	text := string(data)
+	lines: for line in strings.split_lines_iterator(&text) {
+		switch {
+		case strings.has_prefix(line, ENV) && !has_env:
+			settings = strings.fields(line[len(ENV):], context.temp_allocator)
+			has_env = true
+		case strings.has_prefix(line, ARGS) && !has_args:
+			header.arguments = strings.fields(line[len(ARGS):], context.temp_allocator)
+			has_args = true
+		case strings.has_prefix(line, ENV), strings.has_prefix(line, ARGS):
+			fmt.eprintfln("diff: %s: a second header line %q", path, line)
+			return {}, false
+		case:
+			break lines
+		}
 	}
-	settings := strings.fields(first[len(HEADER):], context.temp_allocator)
+	if has_env {
+		header.environment = environment_with(path, settings) or_return
+	}
+	return header, true
+}
+
+// environment_with lets a name the program sets replace the runner's own, whose case Windows
+// ignores.
+@(private = "file")
+environment_with :: proc(path: string, settings: []string) -> (environment: []string, ok: bool) {
 	inherited, env_err := os.environ(context.temp_allocator)
 	if env_err != nil {
 		fmt.eprintfln("diff: %s: read the environment: %v", path, env_err)

@@ -426,7 +426,7 @@ expect_text :: proc(t: ^testing.T, text: ^abi.String_Cell, length: int, loc := #
 // copies of the pointers they handled. One volatile store per word: LLVM deletes a call whose
 // only effect is a volatile memset of a local, as mem_zero_volatile is, at -o:speed. And no ASan:
 // it would put redzones around the buffer, which the loop never writes.
-@(private = "file", no_sanitize_address)
+@(no_sanitize_address)
 scrub_stack :: #force_no_inline proc() {
 	buffer: [2048]u64 = ---
 	for &word in buffer {
@@ -436,12 +436,10 @@ scrub_stack :: #force_no_inline proc() {
 
 // hide keeps an address in a form no scan takes for a pointer, so a test can ask about a cell
 // without keeping it alive.
-@(private = "file")
 hide :: proc(p: rawptr) -> uintptr {
 	return ~uintptr(p)
 }
 
-@(private = "file")
 unhide :: proc(hidden: uintptr) -> rawptr {
 	return rawptr(~hidden)
 }

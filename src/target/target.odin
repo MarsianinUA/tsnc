@@ -1,6 +1,6 @@
 /*
 Target platforms as data: for each platform tsnc builds for, the LLVM triple, the linker, the link
-flags, the runtime object name and the pointer size. codegen, link and driver read this table, so
+flags, the runtime object names and the pointer size. codegen, link and driver read this table, so
 platform knowledge lives in one place. The package imports nothing, not even core.
 
 The link flags follow Odin dev-2026-09-nightly:a2fb372, so the program links the way Odin links
@@ -50,12 +50,13 @@ Linker :: enum u8 {
 }
 
 Spec :: struct {
-	triple:            cstring, // LLVM target triple, the one Odin gives the runtime object
-	linker:            Linker,
-	link_flags:        []string, // one command line argument per element, unquoted
-	runtime_object:    string, // file name; link looks for it next to tsnc
-	executable_suffix: string,
-	pointer_size:      int, // bytes
+	triple:              cstring, // LLVM target triple, the one Odin gives the runtime object
+	linker:              Linker,
+	link_flags:          []string, // one command line argument per element, unquoted
+	runtime_object:      string, // file name; link looks for it next to tsnc
+	asan_runtime_object: string, // the same runtime built with -sanitize:address
+	executable_suffix:   string,
+	pointer_size:        int, // bytes
 }
 
 // SPECS is @(rodata) rather than a constant: Odin indexes a constant array only by a constant.
@@ -77,24 +78,27 @@ SPECS := #partial [Target]Spec {
 			"bcrypt.lib",
 		},
 		runtime_object = "tsnc_rt-windows_amd64.obj",
+		asan_runtime_object = "tsnc_rt-windows_amd64-asan.obj",
 		executable_suffix = ".exe",
 		pointer_size = 8,
 	},
 	.linux_amd64 = {
-		triple            = "x86_64-pc-linux-gnu",
-		linker            = .Cc,
+		triple              = "x86_64-pc-linux-gnu",
+		linker              = .Cc,
 		// -no-pie: distributions build PIE executables by default, and Odin and LLVM emit
 		// position-dependent code by default.
-		link_flags        = {"-no-pie", "-Wl,-z,now", "-Wl,-z,relro", "-lm", "-lc"},
-		runtime_object    = "tsnc_rt-linux_amd64.obj",
-		executable_suffix = "",
-		pointer_size      = 8,
+		link_flags          = {"-no-pie", "-Wl,-z,now", "-Wl,-z,relro", "-lm", "-lc"},
+		runtime_object      = "tsnc_rt-linux_amd64.obj",
+		asan_runtime_object = "tsnc_rt-linux_amd64-asan.obj",
+		executable_suffix   = "",
+		pointer_size        = 8,
 	},
 	.darwin_arm64 = {
 		triple = "arm64-apple-macosx11.0.0",
 		linker = .Cc,
 		link_flags = {"-target", "arm64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_arm64.obj",
+		asan_runtime_object = "tsnc_rt-darwin_arm64-asan.obj",
 		executable_suffix = "",
 		pointer_size = 8,
 	},
@@ -103,6 +107,7 @@ SPECS := #partial [Target]Spec {
 		linker = .Cc,
 		link_flags = {"-target", "x86_64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_amd64.obj",
+		asan_runtime_object = "tsnc_rt-darwin_amd64-asan.obj",
 		executable_suffix = "",
 		pointer_size = 8,
 	},
