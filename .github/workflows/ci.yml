@@ -145,10 +145,18 @@ jobs:
       # past their free list link, page tails and free pages (src/runtime/gc/heap.odin). The test
       # binary has no rt, whose __asan_default_options turns off the fake stack that hides
       # address-taken locals from the stack scan, so the variable does it here.
+      #
+      # On macOS Odin links with Xcode's clang, whose ASan runtime the LLVM 20 instrumentation cannot
+      # link against, so ODIN_CLANG_PATH points it at the clang of Homebrew's llvm@20, the one tsnc
+      # itself links an ASan build with there (src/link/link.odin).
       - name: GC tests under ASan
         env:
           ASAN_OPTIONS: detect_stack_use_after_return=0
-        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            export ODIN_CLANG_PATH="$(brew --prefix llvm@20)/bin/clang"
+          fi
+          odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
 
       # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
       - name: Diff under ASan

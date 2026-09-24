@@ -126,6 +126,12 @@ TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -
 
 The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both.
 
+On macOS an ASan build does not link through `cc`. Xcode's clang brings Apple's ASan runtime, which names its version check after Apple's clang, while the runtime object is instrumented by LLVM 20 and calls LLVM's name: the link fails with an undefined `___asan_version_mismatch_check_v8`. So `tsnc build -sanitize:address` links through the clang of Homebrew's `llvm@20`, the one the compiler already needs, and passes it the SDK from `xcrun --show-sdk-path`. Odin has the same problem with its own `-sanitize:address`, and `ODIN_CLANG_PATH` points it at that clang for the gc unit tests:
+
+```sh
+ODIN_CLANG_PATH="$(brew --prefix llvm@20)/bin/clang" ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+```
+
 ## Benchmarks
 
 `bench/runner` builds `bench/hello.ts` with `dist/tsnc.exe -o:speed` and prints the size of the executable and the startup time, the fastest and the median of 20 runs, next to `node bench/hello.ts`. It needs the compiler and the runtime object, and Node on `PATH`.
