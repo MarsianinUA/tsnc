@@ -223,6 +223,10 @@ Runtime_Error :: enum i32 {
 	// A field read through its declared type holds a value of another kind, which a write through a
 	// wider type of the same object put there (requirements 3.8).
 	Field_Holds_Other_Kind,
+	// A function called through the wider signature of its class (requirements 3.5) was given, or
+	// gave back, a value its own declared type does not allow: through `any`, or through a
+	// function field written through a narrower object type.
+	Value_Of_Other_Kind,
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

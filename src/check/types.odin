@@ -1005,32 +1005,67 @@ object_assignable :: proc(
 	return true
 }
 
-// list_widenings adds to `out` every pair of object types that an accepted flow of source into
-// target passes through. A union source flows member by member, a union target takes the members
-// the source fits, and two objects walk their fields, which the exact-type rule has matched one for
-// one. Arrays are invariant and function values wait for closures, so neither adds a pair. A pair
-// already in the list ends the walk, which is what stops it on an interface that names itself.
+// list_widenings adds to `out` every pair of object types, and every pair of function types, that
+// an accepted flow of source into target passes through. A union source flows member by member, a
+// union target takes the members the source fits, and two objects walk their fields, which the
+// exact-type rule has matched one for one. Two functions walk their parameters the other way round,
+// since a value flows into a parameter from the caller, and their results, unless the target throws
+// its result away. Arrays are invariant and add nothing. A pair already in the list ends the walk,
+// which is what stops it on an interface that names itself.
+//
+// `functions` false leaves out the pair of the two functions at the top of this flow, but not the
+// pairs inside them: a callback of the lib is never called through its parameter type.
 @(private)
 list_widenings :: proc(
 	types: []Type,
 	source, target: Type_ID,
 	out: ^[dynamic]Widening,
 	trail: ^Trail,
+	functions := true,
 ) {
 	if source == target {
 		return
 	}
 	if members, is_union := types[source].(Union); is_union {
 		for member in members.members {
-			list_widenings(types, member, target, out, trail)
+			list_widenings(types, member, target, out, trail, functions)
 		}
 		return
 	}
 	if members, is_union := types[target].(Union); is_union {
 		for member in members.members {
 			if assignable(types, source, member, trail) {
-				list_widenings(types, source, member, out, trail)
+				list_widenings(types, source, member, out, trail, functions)
 			}
+		}
+		return
+	}
+
+	source_function, source_is_function := types[source].(Function)
+	target_function, target_is_function := types[target].(Function)
+	if source_is_function && target_is_function {
+		if functions {
+			pair := Widening {
+				source = source,
+				target = target,
+			}
+			if slice.contains(out[:], pair) {
+				return
+			}
+			append(out, pair)
+		}
+		shared := min(len(source_function.params), len(target_function.params))
+		for i in 0 ..< shared {
+			list_widenings(
+				types,
+				target_function.params[i].type,
+				source_function.params[i].type,
+				out,
+				trail,
+			)
+		}
+		if target_function.result != VOID {
+			list_widenings(types, source_function.result, target_function.result, out, trail)
 		}
 		return
 	}

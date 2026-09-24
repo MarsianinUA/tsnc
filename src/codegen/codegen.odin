@@ -47,7 +47,6 @@ Artifact :: enum u8 {
 Error :: enum u8 {
 	None,
 	Unsupported_Target, // no target.SPECS row, or LLVM has no backend for the triple
-	Unsupported_Instruction, // an IR instruction whose runtime arrives with milestone 5
 	Invalid_Module, // the LLVM verifier rejected the module: a codegen bug
 	Passes_Failed, // LLVMRunPasses rejected the pipeline: a codegen bug
 	Write_Failed, // the artifact could not be written to the path

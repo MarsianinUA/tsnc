@@ -52,8 +52,11 @@ Array_Cell :: struct {
 // Closure_Cell is a function value. `code` points to a procedure with the closure calling
 // convention: proc "c" (env: ^Environment_Cell, <TS parameters>) -> <TS result>. env comes first
 // even when it is nil, and a parameter travels as it does into a runtime export (C_Type): a boolean
-// as b64, a tagged value as its two words. One Odin type cannot describe every TS signature, so the
-// runtime casts `code` to the concrete type it calls, as the array sort does with a comparator.
+// as b64, a tagged value as its two words. A boolean result is b64 as well; a tagged result comes
+// back as the two-word struct itself, which only generated code ever calls for, since the runtime
+// calls nothing but comparators and they answer f64. One Odin type cannot describe every TS
+// signature, so the runtime casts `code` to the concrete type it calls, as the array sort does
+// with a comparator.
 Closure_Cell :: struct {
 	using header: Cell_Header,
 	code:         rawptr,
@@ -156,6 +159,7 @@ Type_Table :: struct {
 Builtin_Table :: enum u32 {
 	String,
 	Buffer, // only the runtime makes one, as the elements of an array
+	Closure, // every function value, whatever its signature
 }
 
 // BUILTIN_TABLES is @(rodata) for the reason SLOT_SIZE is: the runtime indexes it by a table id.
@@ -163,6 +167,7 @@ Builtin_Table :: enum u32 {
 BUILTIN_TABLES := [Builtin_Table]Type_Table {
 	.String = {kind = .String, size = size_of(String_Cell)},
 	.Buffer = {kind = .Buffer, size = size_of(Cell_Header)},
+	.Closure = {kind = .Closure, size = size_of(Closure_Cell)},
 }
 
 // Root is a module global that holds a reference. The compiler lists them (ROOTS_SYMBOL): nothing
@@ -187,6 +192,7 @@ Root :: struct {
 #assert(size_of(Field) == 32 && offset_of(Field, offset) == 16 && offset_of(Field, kind) == 24)
 #assert(offset_of(Field, optional) == 25)
 #assert(size_of(Closure_Cell) == 32 && offset_of(Closure_Cell, info) == 24)
+#assert(offset_of(Closure_Cell, code) == 8 && offset_of(Closure_Cell, env) == 16)
 #assert(size_of(Function_Info) == 24 && offset_of(Function_Info, has_prototype) == 16)
 #assert(size_of(Type_Table) == 40 && offset_of(Type_Table, size) == 8)
 #assert(offset_of(Type_Table, fields) == 16 && offset_of(Type_Table, element) == 32)

@@ -1,6 +1,7 @@
 package lower_tests
 
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 import "../../src/abi"
@@ -317,8 +318,8 @@ typeof_folds_to_the_word_for_a_static_type :: proc(t: ^testing.T) {
 
 @(test)
 typeof_a_function_is_the_word_function :: proc(t: ^testing.T) {
-	// A function value is milestone 5, but the type of the name already says what `typeof`
-	// answers, and reading the name runs nothing.
+	// The type of the name already says what `typeof` answers, and reading the name runs nothing,
+	// so no closure is made.
 	result := lower_text(t, "function one(): number {\n\treturn 1;\n}\nconsole.log(typeof one);\n")
 	words := pool_words(result.output)
 	testing.expectf(t, slice.contains(words, "function"), "the pool has no function: %v", words)
@@ -399,8 +400,18 @@ string_length_and_process_argv_lower :: proc(t: ^testing.T) {
 // What this build refuses. Each construct is named once, where it stands.
 
 @(test)
-an_arrow_function_is_reported :: proc(t: ^testing.T) {
-	expect_later(t, "const f = (x: number): number => x;\n", {{.Not_Lowered, 1, 7}})
+an_arrow_function_is_a_new_closure :: proc(t: ^testing.T) {
+	result := lower_text(t, "const f = (x: number): number => x;\nconsole.log(f(2));\n")
+	init, _ := func_named(result.output, "init$m1")
+	made := instructions_of(init, ir.Make_Closure)
+	if !testing.expectf(t, len(made) == 1, "%s", result.text) {
+		return
+	}
+	arrow := result.output.funcs[made[0].func]
+	info, described := arrow.info.?
+	testing.expectf(t, described && strings.has_prefix(arrow.name, "m1.f$"), "%s", result.text)
+	testing.expect(t, info.length == 1 && !info.has_prototype)
+	testing.expect_value(t, pool_words(result.output)[info.name], "f")
 }
 
 @(test)

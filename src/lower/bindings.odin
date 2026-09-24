@@ -2,6 +2,7 @@ package lower
 
 import "core:slice"
 
+import "../abi"
 import "../ast"
 import "../bind"
 import "../check"
@@ -17,6 +18,10 @@ declaration a symbol of its own, so two blocks that both declare `x` never colli
 needs no scope stack. Every local of a function is given the zero of its type in the entry block,
 which is the rule of the package doc and also what makes the array total: a read always finds a
 value, and a join can compare the two sides symbol by symbol.
+
+A variable a closure shares (closures.odin) lives in a box instead, and its entry in the array is
+the box, made when its scope is entered (enter_scope) or when it is bound. Every read and write of a
+local goes through read_local, write_local and bind_local, which are the one place that knows.
 
 A join takes the edges that reach it, each carrying the block control left and a copy of that array.
 Opening the block creates one phi per symbol the edges disagree about, walked in symbol order so the
@@ -50,52 +55,84 @@ Inline_Frame :: struct {
 }
 
 Func_State :: struct {
-	low:     ^Lowering,
-	fb:      ir.Func_Builder,
-	file:    source.File_ID,
-	tree:    ^ast.File_AST,
-	bound:   ^bind.Bound_File,
-	typed:   ^check.Typed_File,
-	types:   []check.Type,
-	result:  ir.Type, // what a `return` has to produce
-	locals:  []ir.Value_ID, // by bind.Symbol_ID; NO_VALUE outside this function, or poisoned
-	loops:   [dynamic]Loop_Frame,
-	inlines: [dynamic]Inline_Frame, // the innermost last
+	low:      ^Lowering,
+	fb:       ir.Func_Builder,
+	file:     source.File_ID,
+	tree:     ^ast.File_AST,
+	bound:    ^bind.Bound_File,
+	typed:    ^check.Typed_File,
+	types:    []check.Type,
+	// What a `return` produces: the result of the function's signature class, and its own
+	// declared result, which the class may hold boxed (types.odin).
+	result:   ir.Type,
+	declared: ir.Type,
+	returns:  check.Type_ID, // the declared result as check typed it; ERROR outside a function
+	// By bind.Symbol_ID: the value of a local, or its box. NO_VALUE outside this function, for a
+	// box whose scope has not been entered, and for a variable refused.
+	locals:   []ir.Value_ID,
+	refused:  []bool, // by bind.Symbol_ID: a local zero_locals reported
+	loops:    [dynamic]Loop_Frame,
+	inlines:  [dynamic]Inline_Frame, // the innermost last
 }
 
-// begin_function leaves the parameters out of the zeroing: those arrive as the values begin_func
-// already emitted, in order.
+// begin_function opens the body of a function: node is its declaration or arrow, ast.ROOT for a
+// module init. A closure first takes what its environment holds, then each parameter, which
+// arrives in the type of the signature class and is unboxed into its own.
 @(private)
 begin_function :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
 	id: ir.Func_ID,
+	node: ast.Node_ID,
 	scope: bind.Scope_ID,
 	params: []ast.Node_ID,
-	result: ir.Type,
 	span: source.Span,
 ) -> Func_State {
 	s := Func_State {
-		low     = low,
-		fb      = ir.begin_func(&low.builder, id),
-		file    = file,
-		tree    = &low.prog.trees[file],
-		bound   = &low.prog.bound[file],
-		typed   = low.facts[file].typed,
-		types   = low.facts[file].result.types,
-		result  = result,
-		loops   = make([dynamic]Loop_Frame, context.temp_allocator),
-		inlines = make([dynamic]Inline_Frame, context.temp_allocator),
+		low      = low,
+		fb       = ir.begin_func(&low.builder, id),
+		file     = file,
+		tree     = &low.prog.trees[file],
+		bound    = &low.prog.bound[file],
+		typed    = low.facts[file].typed,
+		types    = low.facts[file].result.types,
+		result   = low.builder.funcs[id].result,
+		declared = ir.VOID,
+		returns  = check.ERROR,
+		loops    = make([dynamic]Loop_Frame, context.temp_allocator),
+		inlines  = make([dynamic]Inline_Frame, context.temp_allocator),
 	}
 	s.locals = make([]ir.Value_ID, len(s.bound.symbols), context.temp_allocator)
 	slice.fill(s.locals, ir.NO_VALUE)
+	s.refused = make([]bool, len(s.bound.symbols), context.temp_allocator)
+	if node != ast.ROOT {
+		function := s.types[s.typed.node_types[node]].(check.Function)
+		s.returns = function.result
+		s.declared, _ = ir_type(low, s.types, function.result)
+	}
 
 	zero_locals(&s, scope, span)
+	if env := low.builder.funcs[id].env; env != ir.NO_LAYOUT {
+		cell := ir.emit(&s.fb, ir.ref(env), ir.Env{}, span)
+		for symbol, i in low.closures[file].env[node] {
+			type := local_type(&s, symbol)
+			if low.closures[file].boxed[symbol] {
+				type = box_type(&s, type)
+			}
+			load := ir.Field_Load {
+				cell  = cell,
+				field = i32(i),
+			}
+			s.locals[symbol] = ir.emit(&s.fb, type, load, span)
+		}
+	}
 	for param, i in params {
 		symbol := s.bound.node_symbols[param]
-		if symbol != bind.NO_SYMBOL {
-			s.locals[symbol] = ir.Value_ID(i)
+		if symbol == bind.NO_SYMBOL || s.refused[symbol] {
+			continue
 		}
+		value := unwrap(&s, ir.Value_ID(i), local_type(&s, symbol), span)
+		bind_local(&s, symbol, value, span)
 	}
 	return s
 }
@@ -123,11 +160,140 @@ zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 				node := s.tree.nodes[declared.declaration]
 				text := construct_text(s.types, s.typed.node_types[declared.declaration])
 				report(s.low, .Not_Lowered, node.span, text)
+				s.refused[symbol] = true
 				continue
 			}
-			s.locals[symbol] = zero_value(s, type, span)
+			// A box is made where its scope is entered, or where its variable is bound.
+			if !s.low.closures[s.file].boxed[symbol] {
+				s.locals[symbol] = zero_value(s, type, span)
+			}
 		}
 	}
+}
+
+// enter_scope makes what a block, a `for` or a `switch` holds before its first statement runs: the
+// boxes of its variables, each holding the zero of its type, then the closures of the function
+// declarations hoisted there, in source order, since any statement of the scope may call one. The
+// module scope holds globals, and the variable of a `for...of` is bound at every step instead.
+@(private)
+enter_scope :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
+	if scope == bind.MODULE_SCOPE {
+		return
+	}
+	facts := &s.low.closures[s.file]
+	for symbol in s.bound.scopes[scope].symbols {
+		entry := s.bound.symbols[symbol]
+		is_variable := entry.kind == .Let || entry.kind == .Const || entry.kind == .Function
+		if !is_variable || !facts.boxed[symbol] || s.refused[symbol] {
+			continue
+		}
+		type := local_type(s, symbol)
+		bind_local(s, symbol, zero_value(s, type, span), span)
+	}
+	for symbol in s.bound.scopes[scope].symbols {
+		entry := s.bound.symbols[symbol]
+		if entry.kind != .Function {
+			continue
+		}
+		if facts.env_free[entry.declaration] && !facts.value_used[symbol] {
+			continue // every call of it is direct
+		}
+		write_local(s, symbol, make_closure(s, entry.declaration, span), span)
+	}
+}
+
+// local_type is the type of what a local holds, never of its box.
+@(private)
+local_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
+	type, _ := symbol_type(s.low, s.file, symbol)
+	return type
+}
+
+// box_type is the type of a box holding a value of this type: an environment of one slot.
+@(private)
+box_type :: proc(s: ^Func_State, type: ir.Type) -> ir.Type {
+	slots := [1]abi.Slot_Kind{slot_of(type.kind)}
+	return ir.ref(ir.environment_layout(&s.low.builder, slots[:]))
+}
+
+// read_local answers NO_VALUE for a local that was refused, or that holds nothing yet.
+@(private)
+read_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -> ir.Value_ID {
+	value := s.locals[symbol]
+	if value == ir.NO_VALUE || !s.low.closures[s.file].boxed[symbol] {
+		return value
+	}
+	load := ir.Field_Load {
+		cell  = value,
+		field = 0,
+	}
+	return ir.emit(&s.fb, local_type(s, symbol), load, span)
+}
+
+// write_local gives a local a new value where it already lives: into its box, which every closure
+// that shares it reads.
+@(private)
+write_local :: proc(
+	s: ^Func_State,
+	symbol: bind.Symbol_ID,
+	value: ir.Value_ID,
+	span: source.Span,
+) {
+	if value == ir.NO_VALUE {
+		return
+	}
+	if !s.low.closures[s.file].boxed[symbol] {
+		s.locals[symbol] = value
+		return
+	}
+	if box := s.locals[symbol]; box != ir.NO_VALUE {
+		store_slot(s, box, 0, value, span)
+	}
+}
+
+// bind_local starts a new binding of a local: a boxed one gets a box of its own, so the closures made
+// before keep the one they share.
+@(private)
+bind_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, value: ir.Value_ID, span: source.Span) {
+	if value == ir.NO_VALUE {
+		return
+	}
+	if !s.low.closures[s.file].boxed[symbol] {
+		s.locals[symbol] = value
+		return
+	}
+	type := box_type(s, local_type(s, symbol))
+	box := ir.emit(&s.fb, type, ir.Alloc{layout = type.layout}, span)
+	store_slot(s, box, 0, value, span)
+	s.locals[symbol] = box
+}
+
+// store_slot writes a slot of a cell, through the store that ends in _Ref where the collector
+// traces what the slot holds.
+@(private)
+store_slot :: proc(
+	s: ^Func_State,
+	cell: ir.Value_ID,
+	field: i32,
+	value: ir.Value_ID,
+	span: source.Span,
+) {
+	kind := s.low.builder.layouts[value_type(s, cell).layout].fields[field].kind
+	if kind == .Ref || kind == .Tagged {
+		store := ir.Field_Store_Ref {
+			cell  = cell,
+			field = field,
+			value = value,
+		}
+		ir.emit(&s.fb, ir.VOID, store, span)
+		return
+	}
+	store := ir.Field_Store {
+		cell  = cell,
+		field = field,
+		value = value,
+	}
+	ir.emit(&s.fb, ir.VOID, store, span)
 }
 
 // owning_function answers MODULE_SCOPE for a scope that no function encloses. MODULE_SCOPE is its
@@ -262,11 +428,16 @@ patch_header :: proc(s: ^Func_State, phis: []ir.Value_ID, assigned: []bind.Symbo
 	}
 }
 
-// assigned_symbols lists the locals a subtree writes to, in symbol order. It is the set a loop
-// header needs a phi for; a symbol it names that the loop leaves alone only costs a dead phi.
+// assigned_symbols lists the locals a subtree writes to, and `also`, in symbol order. It is the set a
+// loop header needs a phi for; a symbol it names that the loop leaves alone only costs a dead phi.
 @(private)
-assigned_symbols :: proc(s: ^Func_State, root: ast.Node_ID) -> []bind.Symbol_ID {
+assigned_symbols :: proc(
+	s: ^Func_State,
+	root: ast.Node_ID,
+	also: []bind.Symbol_ID = nil,
+) -> []bind.Symbol_ID {
 	found := make([dynamic]bind.Symbol_ID, 0, 8, context.temp_allocator)
+	append(&found, ..also)
 	stack := make([dynamic]ast.Node_ID, 0, 32, context.temp_allocator)
 	append(&stack, root)
 	for id in ast.walk(s.tree.nodes, &stack) {

@@ -466,6 +466,61 @@ one_type_and_arrays_record_nothing :: proc(t: ^testing.T) {
 	testing.expectf(t, len(c.result.widenings) == 0, "%v", widening_texts(c))
 }
 
+// A function that flows into another function type is a widening too, which lower turns into one
+// signature for both. Its parameters flow the other way, from a caller into the function.
+@(test)
+a_function_flow_lists_its_pair_and_its_parameters_the_other_way :: proc(t: ^testing.T) {
+	c := expect_checked(
+		t,
+		lines(
+			`interface Narrow { v: number; }`, //
+			`interface Wide { v: number | string; }`,
+			`function show(w: Wide): Narrow { return { v: 1 }; }`,
+			`const f: (n: Narrow) => Wide = show;`,
+		),
+	)
+	want := []string{"(w: Wide) => Narrow -> (n: Narrow) => Wide", "Narrow -> Wide"}
+	testing.expectf(t, slice.equal(widening_texts(c), want), "%v", widening_texts(c))
+}
+
+// A callback of the lib is never called through the lib's parameter type, so its own pair is left
+// out; the objects inside it still flow.
+@(test)
+a_lib_callback_lists_no_pair_of_its_own :: proc(t: ^testing.T) {
+	c := expect_checked(
+		t,
+		lines(
+			`interface Narrow { v: number; }`, //
+			`interface Wide { v: number | string; }`,
+			`const ns: Narrow[] = [{ v: 1 }];`,
+			`ns.forEach((w: Wide) => {});`,
+			`console.log([1, 2].map((x, i) => x + i), [3, 1].sort((a, b) => a - b));`,
+		),
+	)
+	testing.expectf(
+		t,
+		slice.equal(widening_texts(c), []string{"Narrow -> Wide"}),
+		"%v",
+		widening_texts(c),
+	)
+}
+
+// push stores the value it is given, so a function pushed into an array of another function type
+// flows into that type.
+@(test)
+a_function_pushed_into_an_array_lists_its_pair :: proc(t: ^testing.T) {
+	c := expect_checked(
+		t,
+		lines(
+			`const fs: ((x: number) => void)[] = [];`, //
+			`function show(x: number | string): void {}`,
+			`fs.push(show);`,
+		),
+	)
+	want := []string{"(x: number | string) => void -> (x: number) => void"}
+	testing.expectf(t, slice.equal(widening_texts(c), want), "%v", widening_texts(c))
+}
+
 @(private = "file")
 widening_texts :: proc(c: Checked) -> []string {
 	texts := make([]string, len(c.result.widenings), context.temp_allocator)

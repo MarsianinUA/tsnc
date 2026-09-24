@@ -239,8 +239,8 @@ set_field :: proc(cell: ^abi.Cell_Header, field: abi.Field, v: abi.Tagged) {
 	}
 }
 
-// function makes a closure whose Function_Info lives in the temp allocator, where T5.8 will emit
-// static data.
+// function makes a closure whose Function_Info lives in the temp allocator, where a compiled
+// program has static data.
 function :: proc(heap: ^gc.Heap, name: string, length: int, has_prototype: bool) -> abi.Tagged {
 	info := new(abi.Function_Info, context.temp_allocator)
 	info^ = {

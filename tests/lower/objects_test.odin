@@ -157,13 +157,19 @@ the_place_is_evaluated_before_the_value :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_object_with_a_function_field_is_reported :: proc(t: ^testing.T) {
-	result := expect_later(
+a_function_field_holds_a_closure_and_is_called_through_it :: proc(t: ^testing.T) {
+	result := lower_text(
 		t,
-		"interface Shape { area(): number; }\nfunction show(s: Shape): void {}\n",
-		{{.Not_Lowered, 2, 15}},
+		"interface Shape { area(): number; }\nfunction show(s: Shape): number {\nreturn s.area();\n}\n",
 	)
-	testing.expect(t, slice.equal(result.constructs, []string{"function values"}))
+	show, _ := func_named(result.output, "m1.show")
+	loads := instructions_of(show, ir.Field_Load)
+	if !testing.expectf(t, len(loads) == 1, "%s", result.text) {
+		return
+	}
+	shape := result.output.layouts[show.params[0].layout]
+	testing.expect_value(t, shape.fields[0].kind, abi.Slot_Kind.Ref)
+	testing.expectf(t, len(instructions_of(show, ir.Call_Closure)) == 1, "%s", result.text)
 }
 
 // field_names lists the fields of a layout row in the order the row holds them, which is the order

@@ -403,7 +403,7 @@ run_codegen :: proc(
 	case .Write_Failed:
 		// The only one of these a user can do anything about, and the path is the whole of it.
 		return {.Output_Unwritable, strings.clone(paths.output, allocator)}
-	case .Unsupported_Target, .Unsupported_Instruction, .Invalid_Module, .Passes_Failed:
+	case .Unsupported_Target, .Invalid_Module, .Passes_Failed:
 	}
 	return {.Codegen_Failed, fmt.aprintf("%v", err, allocator = allocator)}
 }

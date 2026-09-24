@@ -113,6 +113,19 @@ write_func :: proc(w: io.Writer, files: []source.File, p: Program_IR, id: Func_I
 		io.write_string(w, " env ") or_return
 		io.write_int(w, int(func.env)) or_return
 	}
+	if info, described := func.info.?; described {
+		io.write_string(w, " closure ") or_return
+		if int(info.name) < len(p.strings) {
+			write_units(w, p.strings[info.name]) or_return
+		} else {
+			io.write_byte(w, '?') or_return
+		}
+		io.write_string(w, " length ") or_return
+		io.write_int(w, int(info.length)) or_return
+		if info.has_prototype {
+			io.write_string(w, " prototype") or_return
+		}
+	}
 	write_place(w, files, func.span) or_return
 	io.write_byte(w, '\n') or_return
 
@@ -377,6 +390,22 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_int(w, int(v.global)) or_return
 		io.write_string(w, " = ") or_return
 		write_value(w, v.value) or_return
+
+	case Env:
+		io.write_string(w, "env") or_return
+
+	case Func_Ref:
+		io.write_string(w, "func_ref ") or_return
+		io.write_int(w, int(v.func)) or_return
+
+	case Make_Closure:
+		io.write_string(w, "make_closure ") or_return
+		io.write_int(w, int(v.func)) or_return
+		io.write_byte(w, '(') or_return
+		if v.env != NO_VALUE {
+			write_value(w, v.env) or_return
+		}
+		io.write_byte(w, ')') or_return
 
 	case Call:
 		io.write_string(w, "call ") or_return
@@ -713,6 +742,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Not_Convertible_To_Json      = "not_convertible_to_json",
 	.Reduce_Of_Empty_Array        = "reduce_of_empty_array",
 	.Field_Holds_Other_Kind       = "field_holds_other_kind",
+	.Value_Of_Other_Kind          = "value_of_other_kind",
 }
 
 @(private, rodata)
@@ -732,4 +762,5 @@ VIOLATION_TEXT := [Violation_Kind]string {
 	.Unchecked_Index       = "an index that is not the answer of a bounds check",
 	.Unknown_Id            = "a layout, global, string, fail site or function that is not there",
 	.Entry_Signature       = "an entry point that does not take nothing and return void",
+	.Environment           = "an environment that does not match its function",
 }

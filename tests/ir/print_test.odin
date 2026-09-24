@@ -120,6 +120,69 @@ the_dump_spells_every_instruction :: proc(t: ^testing.T) {
 }
 
 @(test)
+the_dump_spells_the_closure_instructions :: proc(t: ^testing.T) {
+	// A described function names what it prints as in its header; a closure with an environment
+	// names the value that holds it, one without names nothing.
+	table := file_table()
+	p := ir.make_builder(context.temp_allocator)
+	slots := [?]abi.Slot_Kind{.Number}
+	env := ir.environment_layout(&p, slots[:])
+	params := [?]ir.Type{ir.F64}
+	inner := ir.declare_func(&p, "inner", params[:], ir.F64, at(table, 2), env)
+	ir.describe_func(&p, inner, "pick", 1, true)
+	plain := ir.declare_func(&p, "plain", nil, ir.VOID, at(table, 4))
+	ir.describe_func(&p, plain, "", 0, false)
+	outer := ir.declare_func(&p, "outer", nil, ir.VOID, at(table, 5))
+
+	f := ir.begin_func(&p, inner)
+	cell := ir.emit(&f, ir.ref(env), ir.Env{}, at(table, 3))
+	held := ir.emit(&f, ir.F64, ir.Field_Load{cell = cell, field = 0}, at(table, 3))
+	ir.emit(&f, ir.VOID, ir.Return{value = held}, at(table, 3))
+	ir.end_func(&f)
+	g := ir.begin_func(&p, plain)
+	ir.emit(&g, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(table, 4))
+	ir.end_func(&g)
+	h := ir.begin_func(&p, outer)
+	made := ir.emit(&h, ir.ref(env), ir.Alloc{layout = env}, at(table, 5))
+	ir.emit(&h, ir.CLOSURE, ir.Make_Closure{func = inner, env = made}, at(table, 5))
+	ir.emit(&h, ir.CLOSURE, ir.Make_Closure{func = plain, env = ir.NO_VALUE}, at(table, 5))
+	ir.emit(&h, ir.CLOSURE, ir.Func_Ref{func = plain}, at(table, 5))
+	ir.emit(&h, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(table, 5))
+	ir.end_func(&h)
+	program := ir.finish(&p, outer, nil)
+
+	expect_dump(
+		t,
+		strings.concatenate(
+			{
+				func_dump(table, program, inner),
+				func_dump(table, program, plain),
+				func_dump(table, program, outer),
+			},
+			context.temp_allocator,
+		),
+		{
+			"func 0 inner(f64) -> f64 env 1 closure \"pick\" length 1 prototype at main.ts:2:1",
+			"  b0:",
+			"    %0 = param 0 : f64 ; 2:1",
+			"    %1 = env : ref(1) ; 3:1",
+			"    %2 = field_load %1 field 0 : f64 ; 3:1",
+			"    return %2 ; 3:1",
+			"func 1 plain() -> void closure \"\" length 0 at main.ts:4:1",
+			"  b0:",
+			"    return ; 4:1",
+			"func 2 outer() -> void at main.ts:5:1",
+			"  b0:",
+			"    %0 = alloc 1 : ref(1) ; 5:1",
+			"    %1 = make_closure 0(%0) : closure ; 5:1",
+			"    %2 = make_closure 1() : closure ; 5:1",
+			"    %3 = func_ref 1 : closure ; 5:1",
+			"    return ; 5:1",
+		},
+	)
+}
+
+@(test)
 a_number_prints_as_the_shortest_form_that_reads_back :: proc(t: ^testing.T) {
 	// The sign bit alone is negative zero: an Odin constant -0.0 folds to positive zero, and the
 	// dump has to tell the two apart.

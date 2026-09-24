@@ -507,6 +507,116 @@ a_heap_instruction_of_the_wrong_kind_is_a_violation :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+closures_with_the_environment_of_their_function_pass :: proc(t: ^testing.T) {
+	expect_none(t, ir.verify(build_closures(.None), context.temp_allocator))
+}
+
+@(test)
+an_environment_that_does_not_match_its_function_is_a_violation :: proc(t: ^testing.T) {
+	for fault in Closure_Fault {
+		if fault == .None {
+			continue
+		}
+		found := ir.verify(build_closures(fault), context.temp_allocator)
+		testing.expectf(
+			t,
+			len(found) == 1 && found[0].kind == .Environment,
+			"%v: %v",
+			fault,
+			found,
+		)
+	}
+}
+
+@(private = "file")
+Closure_Fault :: enum {
+	None,
+	Env_Without_Environment, // an Env in a function that takes none
+	Environment_Not_An_Environment, // a Func.env that names an object layout
+	Direct_Call_With_Environment,
+	Func_Ref_With_Environment,
+	Env_Operand_Missing, // Make_Closure of a function with an environment, given none
+	Env_Operand_Given, // Make_Closure of a function without one, given one
+	Env_Operand_Of_Other_Layout,
+	Closure_Of_Main,
+	Closure_Of_Undescribed,
+	Entry_With_Environment,
+}
+
+// build_closures makes `inner`, which takes an environment, and `plain`, which does not, and
+// closures of both in `outer`; the fault breaks one of them.
+@(private = "file")
+build_closures :: proc(fault: Closure_Fault) -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	slots := [?]abi.Slot_Kind{.Number}
+	env := ir.environment_layout(&p, slots[:])
+	if fault == .Environment_Not_An_Environment {
+		fields := [?]ir.Slot{{name = "x", kind = .Number}}
+		env = ir.object_layout(&p, fields[:])
+	}
+	other_slots := [?]abi.Slot_Kind{.Tagged}
+	other := ir.environment_layout(&p, other_slots[:])
+
+	params := [?]ir.Type{ir.F64}
+	inner := ir.declare_func(&p, "inner", params[:], ir.F64, at(1), env)
+	ir.describe_func(&p, inner, "inner", 1, true)
+	plain := ir.declare_func(&p, "plain", nil, ir.VOID, at(2))
+	ir.describe_func(&p, plain, "", 0, false)
+	undescribed := ir.declare_func(&p, "undescribed", nil, ir.VOID, at(3))
+	outer := ir.declare_func(&p, "outer", params[:], ir.VOID, at(4))
+	main_env := env if fault == .Entry_With_Environment else ir.NO_LAYOUT
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, at(5), main_env)
+	build_return_body(&p, undescribed)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, inner)
+	cell := ir.emit(&f, ir.ref(env), ir.Env{}, at(1))
+	held := ir.emit(&f, ir.F64, ir.Field_Load{cell = cell, field = 0}, at(1))
+	ir.emit(&f, ir.VOID, ir.Return{value = held}, at(1))
+	ir.end_func(&f)
+
+	g := ir.begin_func(&p, plain)
+	if fault == .Env_Without_Environment {
+		ir.emit(&g, ir.ref(env), ir.Env{}, at(2))
+	}
+	ir.emit(&g, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(2))
+	ir.end_func(&g)
+
+	h := ir.begin_func(&p, outer)
+	made := ir.emit(&h, ir.ref(env), ir.Alloc{layout = env}, at(4))
+	ir.emit(&h, ir.VOID, ir.Field_Store{cell = made, field = 0, value = 0}, at(4))
+	stranger := ir.emit(&h, ir.ref(other), ir.Alloc{layout = other}, at(4))
+	given := made
+	#partial switch fault {
+	case .Env_Operand_Missing:
+		given = ir.NO_VALUE
+	case .Env_Operand_Of_Other_Layout:
+		given = stranger
+	}
+	ir.emit(&h, ir.CLOSURE, ir.Make_Closure{func = inner, env = given}, at(4))
+	bare := made if fault == .Env_Operand_Given else ir.NO_VALUE
+	ir.emit(&h, ir.CLOSURE, ir.Make_Closure{func = plain, env = bare}, at(4))
+	referred := plain
+	#partial switch fault {
+	case .Func_Ref_With_Environment:
+		referred = inner
+	case .Closure_Of_Main:
+		referred = main
+	case .Closure_Of_Undescribed:
+		referred = undescribed
+	}
+	ir.emit(&h, ir.CLOSURE, ir.Func_Ref{func = referred}, at(4))
+	if fault == .Direct_Call_With_Environment {
+		args := [?]ir.Value_ID{0}
+		ir.emit(&h, ir.F64, ir.Call{func = inner, args = args[:]}, at(4))
+	}
+	ir.emit(&h, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(4))
+	ir.end_func(&h)
+
+	return ir.finish(&p, main, nil)
+}
+
 @(private = "file")
 Heap_Fault :: enum {
 	None,

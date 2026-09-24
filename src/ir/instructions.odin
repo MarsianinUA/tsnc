@@ -59,6 +59,11 @@ Variant :: union #no_nil {
 	Global_Load,
 	Global_Store,
 
+	// Function values.
+	Env,
+	Func_Ref,
+	Make_Closure,
+
 	// Calls.
 	Call,
 	Call_Closure,
@@ -73,7 +78,8 @@ Variant :: union #no_nil {
 }
 
 // Param is the value of a TS parameter. begin_func emits one per entry of Func.params, in order, so
-// parameter i is Value_ID(i). An environment is not a Param: it arrives ahead of them all.
+// parameter i is Value_ID(i). An environment is not a Param but an Env: it arrives ahead of them
+// all.
 Param :: struct {
 	index: i32,
 }
@@ -123,8 +129,8 @@ Phi :: struct {
 }
 
 // Alloc takes a cell from the GC heap, zero filled, and answers a reference to it. Only an object
-// or an environment layout: an array is New_Array, and a string and a closure are made by the
-// runtime. The header names `table`, a row that lists the fields of the layout in another print
+// or an environment layout: an array is New_Array, a closure Make_Closure, and a string is made by
+// the runtime. The header names `table`, a row that lists the fields of the layout in another print
 // order (see Program_IR.base); NO_LAYOUT names the layout's own row.
 Alloc :: struct {
 	layout: Layout_ID,
@@ -229,13 +235,36 @@ Global_Store :: struct {
 	value:  Value_ID,
 }
 
-// Call names a function of this program. Every direct call resolves statically.
+// Env is the environment of a closure body, typed ref(Func.env) of the function it stands in.
+Env :: struct {}
+
+// Func_Ref answers the static closure of a function with no environment, a module-level
+// declaration: Node makes that value once, when the module is instantiated, so every read of the
+// name answers the same cell. The function must be described (describe_func).
+Func_Ref :: struct {
+	func: Func_ID,
+}
+
+// Make_Closure answers a new closure cell, since Node gives every evaluation of an arrow or of a
+// nested declaration an identity of its own. env is a ref(Func.env) the caller filled, or NO_VALUE
+// exactly when the function has no environment. The cell takes env without a store of its own, so
+// the write barrier of v2 has to look here as well as at the stores that end in _Ref. The function
+// must be described (describe_func).
+Make_Closure :: struct {
+	func: Func_ID,
+	env:  Value_ID,
+}
+
+// Call names a function of this program, one with no environment. Every direct call resolves
+// statically.
 Call :: struct {
 	func: Func_ID,
 	args: []Value_ID,
 }
 
-// Call_Closure calls a function value: code and environment, in the abi calling convention.
+// Call_Closure calls a function value: code and environment, in the abi calling convention. A
+// closure carries no signature, so the arguments and the type of the instruction are those of the
+// function behind it, which lower guarantees.
 Call_Closure :: struct {
 	callee: Value_ID, // a Closure
 	args:   []Value_ID,
@@ -292,6 +321,8 @@ terminates :: proc(variant: Variant) -> bool {
 	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test:
 		return false
 	case Tag_Test, Box, Unbox, Global_Load, Global_Store:
+		return false
+	case Env, Func_Ref, Make_Closure:
 		return false
 	case Call, Call_Closure, Call_Runtime, Intrinsic:
 		return false
