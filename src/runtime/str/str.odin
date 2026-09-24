@@ -167,6 +167,19 @@ unit_at :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, index: f64) -> ^abi.Stri
 	return cell
 }
 
+// code_point_at is what the string iterator of `for...of` yields at `index`: a surrogate pair is one
+// code point of two units, and a lone surrogate is one of its own. The index is checked the way
+// unit_at's is.
+code_point_at :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, index: f64) -> ^abi.String_Cell {
+	in_range := 0 <= index && index < f64(text.length)
+	ensure(in_range && index == math.trunc(index), "a string index out of range")
+	at := int(index)
+	_, width := rune_at(unit_slice(text), at)
+	cell, dst := new_cell(heap, width)
+	copy(dst, unit_slice(text)[at:at + width])
+	return cell
+}
+
 @(private)
 unit_slice :: proc "contextless" (text: ^abi.String_Cell) -> []u16 {
 	return ([^]u16)(&text.units)[:text.length]

@@ -40,17 +40,27 @@ Loop_Frame :: struct {
 	breaks:    [dynamic]Edge,
 }
 
+// Inline_Frame is an arrow being inlined into the loop of map, filter, forEach or reduce. Its
+// `return` is a jump to join rather than a Return of the function around it.
+Inline_Frame :: struct {
+	join:   ir.Block_ID,
+	result: ir.Type, // what the arrow's `return` produces; VOID when nothing reads it
+	edges:  [dynamic]Edge,
+	values: [dynamic]ir.Value_ID, // one per edge
+}
+
 Func_State :: struct {
-	low:    ^Lowering,
-	fb:     ir.Func_Builder,
-	file:   source.File_ID,
-	tree:   ^ast.File_AST,
-	bound:  ^bind.Bound_File,
-	typed:  ^check.Typed_File,
-	types:  []check.Type,
-	result: ir.Type, // what a `return` has to produce
-	locals: []ir.Value_ID, // by bind.Symbol_ID; NO_VALUE outside this function, or poisoned
-	loops:  [dynamic]Loop_Frame,
+	low:     ^Lowering,
+	fb:      ir.Func_Builder,
+	file:    source.File_ID,
+	tree:    ^ast.File_AST,
+	bound:   ^bind.Bound_File,
+	typed:   ^check.Typed_File,
+	types:   []check.Type,
+	result:  ir.Type, // what a `return` has to produce
+	locals:  []ir.Value_ID, // by bind.Symbol_ID; NO_VALUE outside this function, or poisoned
+	loops:   [dynamic]Loop_Frame,
+	inlines: [dynamic]Inline_Frame, // the innermost last
 }
 
 // begin_function leaves the parameters out of the zeroing: those arrive as the values begin_func
@@ -66,15 +76,16 @@ begin_function :: proc(
 	span: source.Span,
 ) -> Func_State {
 	s := Func_State {
-		low    = low,
-		fb     = ir.begin_func(&low.builder, id),
-		file   = file,
-		tree   = &low.prog.trees[file],
-		bound  = &low.prog.bound[file],
-		typed  = low.facts[file].typed,
-		types  = low.facts[file].result.types,
-		result = result,
-		loops  = make([dynamic]Loop_Frame, context.temp_allocator),
+		low     = low,
+		fb      = ir.begin_func(&low.builder, id),
+		file    = file,
+		tree    = &low.prog.trees[file],
+		bound   = &low.prog.bound[file],
+		typed   = low.facts[file].typed,
+		types   = low.facts[file].result.types,
+		result  = result,
+		loops   = make([dynamic]Loop_Frame, context.temp_allocator),
+		inlines = make([dynamic]Inline_Frame, context.temp_allocator),
 	}
 	s.locals = make([]ir.Value_ID, len(s.bound.symbols), context.temp_allocator)
 	slice.fill(s.locals, ir.NO_VALUE)
@@ -107,7 +118,7 @@ zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 			if declared.kind != .Let && declared.kind != .Const && declared.kind != .Param {
 				continue
 			}
-			type, ok := ir_type(s.types, s.typed.node_types[declared.declaration])
+			type, ok := ir_type(s.low, s.types, s.typed.node_types[declared.declaration])
 			if !ok {
 				node := s.tree.nodes[declared.declaration]
 				text := construct_text(s.types, s.typed.node_types[declared.declaration])
@@ -131,7 +142,9 @@ owning_function :: proc(bound: ^bind.Bound_File, scope: bind.Scope_ID) -> bind.S
 }
 
 // zero_value gives a string the empty cell rather than a null pointer, so no reader and no
-// collector has to know about one.
+// collector has to know about one. An object or an array has no empty value to take, so its
+// binding starts as the null reference, which the collector skips and check never lets a program
+// read before a value is stored.
 @(private)
 zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value_ID {
 	switch type.kind {
@@ -144,8 +157,10 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 	case .Str:
 		text := ir.intern_string(&s.low.builder, "")
 		return ir.emit(&s.fb, ir.STR, ir.Const_String{text = text}, span)
-	case .Void, .Closure, .Ref:
-		// Not in this slice; the declaration that named one was reported already.
+	case .Ref, .Closure:
+		return ir.emit(&s.fb, type, ir.Const_Null{}, span)
+	case .Void:
+		// The declaration that named one was reported already.
 		return ir.NO_VALUE
 	}
 	return ir.NO_VALUE
@@ -170,6 +185,9 @@ value_type :: proc(s: ^Func_State, value: ir.Value_ID) -> ir.Type {
 
 // open_join answers false for a block no edge reaches. Such a block cannot be entered, and takes an
 // inert terminator so that the statements written after it still have a block to land in.
+//
+// A symbol one edge has no value for is left without one: it is a local of an inlined arrow, which
+// has a value only inside the loop that holds the arrow, and nothing after the join reads it.
 @(private)
 open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: source.Span) -> bool {
 	ir.use_block(&s.fb, block)
@@ -185,12 +203,14 @@ open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: sourc
 	copy(s.locals, edges[0].values)
 	for symbol in 0 ..< len(s.locals) {
 		first := edges[0].values[symbol]
-		if first == ir.NO_VALUE {
-			continue
-		}
-		same := true
+		same, missing := true, first == ir.NO_VALUE
 		for edge in edges[1:] {
 			same &&= edge.values[symbol] == first
+			missing ||= edge.values[symbol] == ir.NO_VALUE
+		}
+		if missing {
+			s.locals[symbol] = ir.NO_VALUE
+			continue
 		}
 		if same {
 			continue

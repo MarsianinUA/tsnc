@@ -38,6 +38,16 @@ new_array :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, capacity: int) -> ^a
 	return array
 }
 
+// new_zeroed answers an array of `length` elements, each the zero of its kind, which generated code
+// then fills in place: an array literal and the result of map. A Ref element starts as nil, which
+// the collector skips and nothing else may read, so the caller stores every one of them before the
+// program can reach the array.
+new_zeroed :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, length: int) -> ^abi.Array_Cell {
+	array := new_array(heap, table, length)
+	array.length = length
+	return array
+}
+
 // push answers the new length. `value` must be of the kind the array holds.
 push :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, value: abi.Tagged) -> int {
 	kind := element_kind(heap, array)

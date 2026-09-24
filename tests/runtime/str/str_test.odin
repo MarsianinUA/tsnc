@@ -229,6 +229,25 @@ unit_at_answers_one_unit :: proc(t: ^testing.T) {
 	expect_units(t, str.unit_at(&heap, text, NEGATIVE_ZERO), {0x0061})
 }
 
+// for (const c of "a" + String.fromCodePoint(0x1f600) + "\ud800b\udc00") takes a pair whole and a
+// lone surrogate of either half by itself.
+@(test)
+code_point_at_answers_what_for_of_yields :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	text := cell(&heap, {0x0061, 0xd83d, 0xde00, 0xd800, 0x0062, 0xdc00})
+	expect_units(t, str.code_point_at(&heap, text, 0), {0x0061})
+	expect_units(t, str.code_point_at(&heap, text, 1), {0xd83d, 0xde00})
+	expect_units(t, str.code_point_at(&heap, text, 2), {0xde00})
+	expect_units(t, str.code_point_at(&heap, text, 3), {0xd800})
+	expect_units(t, str.code_point_at(&heap, text, 4), {0x0062})
+	expect_units(t, str.code_point_at(&heap, text, 5), {0xdc00})
+	high_at_the_end := cell(&heap, {0x0061, 0xd83d})
+	expect_units(t, str.code_point_at(&heap, high_at_the_end, 1), {0xd83d})
+}
+
 // "abc".indexOf(search, position) and the other two, 0 for a missing position and +Infinity for
 // a missing end
 @(test)

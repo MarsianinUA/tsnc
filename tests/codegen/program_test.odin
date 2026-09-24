@@ -103,6 +103,25 @@ a_program_builds_an_object_and_llvm_ir :: proc(t: ^testing.T) {
 			}
 		`,
 		},
+		{
+			"heap",
+			`
+			interface Point { x: number; y: number; }
+			interface Loose { x: number | string; y: number; }
+			function widen(p: Point): Loose { return p; }
+			const points: Point[] = [{ y: 2, x: 1 }, { x: 3, y: 4 }];
+			points[points.length] = { x: 5, y: 6 };
+			const sums = points.map((p, i) => p.x + p.y + i);
+			const big = points.filter(p => p.x > 2);
+			let total = 0;
+			points.forEach(p => { total += widen(p).y; });
+			const joined = sums.reduce((text, n) => text + n + ",", "");
+			for (const c of "ab") {
+				total += c.length;
+			}
+			console.log(points[0].x, big.length, total, joined.slice(1), joined + "!" < "z");
+		`,
+		},
 	}
 
 	for source in sources {

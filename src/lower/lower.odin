@@ -3,11 +3,12 @@ The typed program becomes IR here. lower is the last phase that knows what TypeS
 the frozen Program and the typing facts of check, and answers a Program_IR in which every rule is an
 instruction. codegen below it knows only the instruction set.
 
-Scope of this build (T4.3), the scalar slice: numbers, booleans, null, undefined, string literals,
-functions that capture nothing, calls, the whole of control flow, module initialization and the
-entry point. Objects, arrays, string operations, closures and union narrowing are part of the v1
-language and are reported as Not_Lowered until milestone 5 builds them, so a program outside the
-slice gets a compile error with a place in it and never a wrong program.
+Scope of this build (T5.7): numbers, booleans, null, undefined, strings and their operations,
+objects, arrays and their methods, `for...of`, functions that capture nothing, calls, the whole of
+control flow, module initialization and the entry point. An arrow passed straight to map, filter,
+forEach or reduce is inlined where it is called. Function values, closures and union narrowing are
+part of the v1 language and are reported as Not_Lowered until T5.8 and T5.9 build them, so a program
+outside the build gets a compile error with a place in it and never a wrong program.
 
 Shape of the output:
 - One IR function per module, init$m<N>, holding that module's top-level code.
@@ -74,6 +75,12 @@ Lowering :: struct {
 	globals:     map[Decl_Key]ir.Global_ID, // by ast.Declarator
 	// argv holds process.argv, made the first time the program reads it and filled once by main.
 	argv:        Maybe(ir.Global_ID),
+	// The widening classes (types.odin), built before any body: the node of each shallow key that
+	// takes part in a widening, the union-find link of each node, and each node's slots, which a
+	// class root holds joined over the whole class.
+	classes:     map[string]int,
+	class_links: [dynamic]int,
+	class_slots: [dynamic][]ir.Slot,
 	diagnostics: [dynamic]diag.Diagnostic,
 	allocator:   runtime.Allocator,
 }
@@ -100,10 +107,15 @@ lower :: proc(
 		builder     = ir.make_builder(allocator),
 		funcs       = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
 		globals     = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
+		classes     = make(map[string]int, context.temp_allocator),
+		class_links = make([dynamic]int, context.temp_allocator),
+		class_slots = make([dynamic][]ir.Slot, context.temp_allocator),
 		diagnostics = make([dynamic]diag.Diagnostic, allocator),
 		allocator   = allocator,
 	}
 	index_facts(&low, results)
+	// Every layout an object type ends up in is known before the first one is interned.
+	build_classes(&low, results)
 	mark_reachable(&low)
 	order := module_order(&low)
 	for file in order {
@@ -147,6 +159,21 @@ report :: proc(low: ^Lowering, code: diag.Code, span: source.Span, args: ..strin
 		d.args[i] = arg
 	}
 	append(&low.diagnostics, d)
+}
+
+// fail_site names where a check that fails at run time stands. Only source turns an offset into a
+// line and a column, which is why the site is resolved here (see the ir package doc).
+@(private)
+fail_site :: proc(low: ^Lowering, span: source.Span, error: abi.Runtime_Error) -> ir.Fail_Site_ID {
+	file := low.prog.files[span.file]
+	at := source.position(file, span.start)
+	site := abi.Fail_Site {
+		file   = file.path,
+		line   = at.line,
+		column = at.column,
+		error  = error,
+	}
+	return ir.fail_site(&low.builder, site)
 }
 
 // index_facts gives every file of a partition the result that typed it, so a later lookup is an
@@ -247,7 +274,7 @@ declare_functions :: proc(low: ^Lowering, file: source.File_ID) {
 		if !ok {
 			continue
 		}
-		result, result_ok := ir_type(types, signature.result)
+		result, result_ok := ir_type(low, types, signature.result)
 		if !result_ok {
 			report(low, .Not_Lowered, decl.name.span, construct_text(types, signature.result))
 			continue
@@ -276,7 +303,7 @@ param_types :: proc(
 
 	out := make([]ir.Type, len(params), context.temp_allocator)
 	for id, i in params {
-		type, ok := ir_type(types, typed.node_types[id])
+		type, ok := ir_type(low, types, typed.node_types[id])
 		if !ok {
 			node := tree.nodes[id].variant.(ast.Param)
 			report(low, .Not_Lowered, node.name.span, construct_text(types, typed.node_types[id]))
@@ -320,7 +347,7 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 			continue
 		}
 		declared := typed.node_types[entry.declaration]
-		type, ok := ir_type(types, declared)
+		type, ok := ir_type(low, types, declared)
 		if !ok {
 			span := tree.nodes[entry.declaration].span
 			report(low, .Not_Lowered, span, construct_text(types, declared))

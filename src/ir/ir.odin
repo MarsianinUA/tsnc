@@ -25,6 +25,11 @@ Layouts are the GC type tables. lower interns a layout by the canonical shape of
 Layout_ID; the rows are abi.Type_Table values, so what lower interns is exactly what codegen emits
 as static data and what the collector reads at run time. There is no second description of a cell.
 
+A table row is a layout row too, with the slots and offsets of one layout listed in another order:
+Node prints an object's properties in the order the literal wrote them, so `{a, b}` and `{b, a}` are
+one layout, one IR type, and two rows. Only the header of a cell names a table row, through
+Alloc.table; every type names the layout itself, which Program_IR.base gives for any row.
+
 Failure sites are resolved here rather than in codegen. abi.Fail_Site wants a path, a line and a
 column, and only source can turn a byte offset into a line and a column; codegen depends on ir, abi,
 target and llvm, not on source. So lower resolves the position and Program_IR carries the sites.
@@ -139,6 +144,7 @@ Unit :: struct {
 Program_IR :: struct {
 	funcs:      []Func, // indexed by Func_ID
 	layouts:    []abi.Type_Table, // indexed by Layout_ID; the GC type tables; row 0 is reserved
+	base:       []Layout_ID, // by Layout_ID: the layout a table row reorders, a layout's own id
 	globals:    []Global, // indexed by Global_ID
 	strings:    [][]u16, // indexed by String_ID; the units of the cells codegen emits
 	fail_sites: []abi.Fail_Site, // indexed by Fail_Site_ID

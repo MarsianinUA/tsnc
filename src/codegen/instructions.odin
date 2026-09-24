@@ -9,10 +9,12 @@ One case per variant of ir.Variant, in the order the union declares them, so thi
 src/ir/instructions.odin read side by side. The instruction set is closed: a new variant there is a
 new case here.
 
-The cases that report themselves unsupported are the ones whose runtime does not exist yet - a cell
-to allocate, a field or an element to address, a closure to call. lower refuses every construct
-that would build one (Not_Lowered, T2027), so no program reaches them; T5.7 and T5.8 fill them in
-together with the collector and the closure convention.
+Call_Closure is the one case that reports itself unsupported: calling a function value needs the
+closure convention of T5.8. lower refuses every construct that would build one (Not_Lowered, T2027),
+so no program reaches it.
+
+A cell is addressed in bytes: a field and the length of an array or a string sit at the offsets abi
+gives them, and an element is a slot of its kind's storage type in the buffer the array points at.
 */
 @(private)
 build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
@@ -40,7 +42,11 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		body.values[value] = const_tagged(m, .Undefined)
 
 	case ir.Const_Null:
-		body.values[value] = const_tagged(m, .Null)
+		if instruction.type == ir.TAGGED {
+			body.values[value] = const_tagged(m, .Null)
+		} else {
+			body.values[value] = llvm.LLVMConstNull(m.types.ptr)
+		}
 
 	case ir.Const_String:
 		body.values[value] = m.string_cells[v.text]
@@ -58,28 +64,44 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	// Created ahead of the other instructions of its block; its edges are patched afterwards.
 
 	case ir.Alloc:
-		unsupported(m, "alloc")
+		row := v.table if v.table != ir.NO_LAYOUT else v.layout
+		args := [?]llvm.LLVMValueRef{table_word(m, row)}
+		body.values[value] = call_runtime(m, .Alloc, args[:])
+
+	case ir.New_Array:
+		args := [?]llvm.LLVMValueRef{table_word(m, v.layout), body.values[v.length]}
+		body.values[value] = call_runtime(m, .Array_New, args[:])
 
 	case ir.Field_Load:
-		unsupported(m, "field_load")
+		address := field_address(m, body, v.cell, v.field)
+		stored := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		body.values[value] = from_storage(m, stored, instruction.type)
 
 	case ir.Field_Store:
-		unsupported(m, "field_store")
+		store(m, body, v.value, field_address(m, body, v.cell, v.field))
 
 	case ir.Field_Store_Ref:
-		unsupported(m, "field_store_ref")
+		store(m, body, v.value, field_address(m, body, v.cell, v.field))
+
+	case ir.Length:
+		body.values[value] = build_length(m, body.values[v.value])
 
 	case ir.Bounds_Check:
-		unsupported(m, "bounds_check")
+		body.values[value] = build_bounds_check(m, body, v)
 
 	case ir.Element_Load:
-		unsupported(m, "element_load")
+		address := element_address(m, body, v.array, v.index)
+		stored := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		body.values[value] = from_storage(m, stored, instruction.type)
 
 	case ir.Element_Store:
-		unsupported(m, "element_store")
+		store(m, body, v.value, element_address(m, body, v.array, v.index))
 
 	case ir.Element_Store_Ref:
-		unsupported(m, "element_store_ref")
+		store(m, body, v.value, element_address(m, body, v.array, v.index))
+
+	case ir.Layout_Test:
+		body.values[value] = build_layout_test(m, body.values[v.cell], v.layout)
 
 	case ir.Tag_Test:
 		tag := llvm.LLVMBuildExtractValue(m.builder, body.values[v.value], 0, "")
@@ -200,12 +222,157 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		}
 
 	case ir.Fail:
-		fail := m.runtime[.Fail]
-		args := [?]llvm.LLVMValueRef{m.fail_sites[v.site]}
-		llvm.LLVMBuildCall2(m.builder, fail.signature, fail.function, &args[0], len(args), "")
-		// tsnc_fail never returns, and fail ends its block in the IR.
-		llvm.LLVMBuildUnreachable(m.builder)
+		build_fail(m, v.site)
 	}
+}
+
+// build_fail ends the block: tsnc_fail never returns.
+@(private)
+build_fail :: proc(m: ^Module, site: ir.Fail_Site_ID) {
+	args := [?]llvm.LLVMValueRef{m.fail_sites[site]}
+	call_runtime(m, .Fail, args[:])
+	llvm.LLVMBuildUnreachable(m.builder)
+}
+
+// call_runtime passes the arguments as they stand: the caller has spelled each in the C type its
+// row declares.
+@(private)
+call_runtime :: proc(
+	m: ^Module,
+	export: abi.Runtime_Proc,
+	args: []llvm.LLVMValueRef,
+) -> llvm.LLVMValueRef {
+	callee := m.runtime[export]
+	return llvm.LLVMBuildCall2(
+		m.builder,
+		callee.signature,
+		callee.function,
+		raw_data(args),
+		u32(len(args)),
+		"",
+	)
+}
+
+// table_word is the abi.C_Type.Table argument that names a layout's type table.
+@(private)
+table_word :: proc(m: ^Module, layout: ir.Layout_ID) -> llvm.LLVMValueRef {
+	return llvm.LLVMConstInt(m.types.int64, u64(ir.table_id(layout)), false)
+}
+
+@(private)
+byte_offset :: proc(m: ^Module, pointer: llvm.LLVMValueRef, offset: int) -> llvm.LLVMValueRef {
+	bytes := llvm.LLVMConstInt(m.types.int64, u64(offset), false)
+	return llvm.LLVMBuildInBoundsGEP2(m.builder, m.types.int8, pointer, &bytes, 1, "")
+}
+
+// field_address reads the offset from the layout of the cell's own type, which is the layout whose
+// fields the index counts in.
+@(private)
+field_address :: proc(
+	m: ^Module,
+	body: ^Body,
+	cell: ir.Value_ID,
+	field: i32,
+) -> llvm.LLVMValueRef {
+	layout := body.func.values[cell].type.layout
+	return byte_offset(m, body.values[cell], m.program.layouts[layout].fields[field].offset)
+}
+
+// element_address converts an index a bounds check answered, so the conversion is never poison.
+@(private)
+element_address :: proc(m: ^Module, body: ^Body, array, index: ir.Value_ID) -> llvm.LLVMValueRef {
+	kind := m.program.layouts[body.func.values[array].type.layout].element
+	pointer := byte_offset(m, body.values[array], int(offset_of(abi.Array_Cell, elements)))
+	elements := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, pointer, "")
+	position := llvm.LLVMBuildFPToSI(m.builder, body.values[index], m.types.int64, "")
+	return llvm.LLVMBuildInBoundsGEP2(m.builder, slot_type(m, kind), elements, &position, 1, "")
+}
+
+@(private)
+store :: proc(m: ^Module, body: ^Body, value: ir.Value_ID, address: llvm.LLVMValueRef) {
+	stored := to_storage(m, body.values[value], body.func.values[value].type)
+	llvm.LLVMBuildStore(m.builder, stored, address)
+}
+
+// build_length answers the length of a string or an array, which abi puts at one offset in both.
+@(private)
+build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+	#assert(offset_of(abi.Array_Cell, length) == offset_of(abi.String_Cell, length))
+	pointer := byte_offset(m, cell, int(offset_of(abi.String_Cell, length)))
+	length := llvm.LLVMBuildLoad2(m.builder, m.types.int64, pointer, "")
+	return llvm.LLVMBuildSIToFP(m.builder, length, m.types.double, "")
+}
+
+// build_bounds_check splits the block: each failure gets a block of its own, and the code after
+// the check goes on in a third, where the builder is left. An index that equals its truncation is an
+// integer, which NaN is not; an infinity passes that test and fails the range.
+@(private)
+build_bounds_check :: proc(m: ^Module, body: ^Body, v: ir.Bounds_Check) -> llvm.LLVMValueRef {
+	index := body.values[v.index]
+	length := build_length(m, body.values[v.array])
+	argument := [?]llvm.LLVMValueRef{index}
+	whole := build_number_call(m, .Trunc, argument[:])
+	is_integer := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOEQ, index, whole, "")
+
+	integer := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	not_integer := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	inside := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	outside := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, is_integer, integer, not_integer)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, not_integer)
+	build_fail(m, v.not_integer)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, integer)
+	zero := llvm.LLVMConstReal(m.types.double, 0)
+	from_start := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOGE, index, zero, "")
+	before_end := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOLT, index, length, "")
+	in_range := llvm.LLVMBuildAnd(m.builder, from_start, before_end, "")
+	llvm.LLVMBuildCondBr(m.builder, in_range, inside, outside)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, outside)
+	build_fail(m, v.out_of_range)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, inside)
+	return index
+}
+
+// build_layout_test compares the table the header names with every row whose base is the layout: a
+// cell names its own print order, which may be the layout's own row or one that reorders it.
+@(private)
+build_layout_test :: proc(
+	m: ^Module,
+	cell: llvm.LLVMValueRef,
+	layout: ir.Layout_ID,
+) -> llvm.LLVMValueRef {
+	#assert(offset_of(abi.Cell_Header, type_table) == 0)
+	header := llvm.LLVMBuildLoad2(m.builder, m.types.int32, cell, "")
+	answer := llvm.LLVMConstInt(m.types.int1, 0, false)
+	for base, row in m.program.base {
+		if base != layout {
+			continue
+		}
+		table := llvm.LLVMConstInt(m.types.int32, u64(ir.table_id(ir.Layout_ID(row))), false)
+		same := llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, header, table, "")
+		answer = llvm.LLVMBuildOr(m.builder, answer, same, "")
+	}
+	return answer
+}
+
+// slot_type is how a slot of this kind sits in memory, which is storage_type of what it holds.
+@(private)
+slot_type :: proc(m: ^Module, kind: abi.Slot_Kind) -> llvm.LLVMTypeRef {
+	switch kind {
+	case .Number:
+		return m.types.double
+	case .Boolean:
+		return m.types.int64
+	case .Ref:
+		return m.types.ptr
+	case .Tagged:
+		return m.types.tagged
+	}
+	unreachable()
 }
 
 @(private)

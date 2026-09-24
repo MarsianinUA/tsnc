@@ -61,6 +61,36 @@ push_grows_the_buffer_and_keeps_the_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, gc.Heap_Problem.None)
 }
 
+// An array literal and the result of map start at their final length, each element the zero of its
+// kind; a Ref element is nil until generated code stores it.
+@(test)
+new_zeroed_has_its_length_and_zero_elements :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	numbers := arr.new_zeroed(&heap, NUMBERS, 3)
+	booleans := arr.new_zeroed(&heap, BOOLEANS, 3)
+	values := arr.new_zeroed(&heap, VALUES, 3)
+	refs := arr.new_zeroed(&heap, REFS, 3)
+	for i in 0 ..< 3 {
+		expect_tagged(t, arr.element_at(&heap, numbers, i), number(0))
+		expect_tagged(t, arr.element_at(&heap, booleans, i), boolean(false))
+		expect_tagged(t, arr.element_at(&heap, values, i), abi.Tagged{})
+		testing.expect(t, ([^]rawptr)(refs.elements)[i] == nil, "a Ref element that is not nil")
+	}
+	for array in ([?]^abi.Array_Cell{numbers, booleans, values, refs}) {
+		testing.expect_value(t, array.length, 3)
+		testing.expect(t, array.capacity >= 3, "no room for the elements")
+	}
+
+	empty := arr.new_zeroed(&heap, REFS, 0)
+	testing.expect_value(t, empty.length, 0)
+	testing.expect(t, empty.elements == nil, "an empty array with a buffer")
+	problem, _ := gc.verify(&heap)
+	testing.expect_value(t, problem, gc.Heap_Problem.None)
+}
+
 // const p = [1, 2]; console.log(p.push(3), p.pop(), p.pop(), p.pop(), p.pop(), p.length)
 @(test)
 pop_takes_from_the_end_and_answers_undefined_when_empty :: proc(t: ^testing.T) {

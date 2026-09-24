@@ -1005,6 +1005,54 @@ object_assignable :: proc(
 	return true
 }
 
+// list_widenings adds to `out` every pair of object types that an accepted flow of source into
+// target passes through. A union source flows member by member, a union target takes the members
+// the source fits, and two objects walk their fields, which the exact-type rule has matched one for
+// one. Arrays are invariant and function values wait for closures, so neither adds a pair. A pair
+// already in the list ends the walk, which is what stops it on an interface that names itself.
+@(private)
+list_widenings :: proc(
+	types: []Type,
+	source, target: Type_ID,
+	out: ^[dynamic]Widening,
+	trail: ^Trail,
+) {
+	if source == target {
+		return
+	}
+	if members, is_union := types[source].(Union); is_union {
+		for member in members.members {
+			list_widenings(types, member, target, out, trail)
+		}
+		return
+	}
+	if members, is_union := types[target].(Union); is_union {
+		for member in members.members {
+			if assignable(types, source, member, trail) {
+				list_widenings(types, source, member, out, trail)
+			}
+		}
+		return
+	}
+
+	source_object, source_is_object := types[source].(Object)
+	target_object, target_is_object := types[target].(Object)
+	if !source_is_object || !target_is_object {
+		return
+	}
+	pair := Widening {
+		source = source,
+		target = target,
+	}
+	if slice.contains(out[:], pair) {
+		return
+	}
+	append(out, pair)
+	for field, i in source_object.fields {
+		list_widenings(types, field.type, target_object.fields[i].type, out, trail)
+	}
+}
+
 // Printing a type.
 
 // type_text is how a type reads: `number`, `"circle"`, `(a: number) => string`, `number | string`,

@@ -479,6 +479,108 @@ build_branch :: proc(fault: Edge_Fault) -> (ir.Program_IR, ir.Func_ID) {
 	return ir.finish(&p, main, nil), pick
 }
 
+@(test)
+the_cells_generated_code_fills_itself_pass :: proc(t: ^testing.T) {
+	// A string goes into a Ref slot and comes back out as a Str, a Str takes a bounds check, and
+	// a cell names a table row that lists its own layout's fields in another order.
+	expect_none(t, ir.verify(build_heap(.None), context.temp_allocator))
+}
+
+@(test)
+a_heap_instruction_of_the_wrong_kind_is_a_violation :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		fault: Heap_Fault,
+		kind:  ir.Violation_Kind,
+	} {
+		{.Foreign_Table, .Operand_Type},
+		{.Length_Of_Object, .Operand_Type},
+		{.Element_Of_Str, .Operand_Type},
+		{.Null_Str, .Result_Type},
+		{.Array_Of_Object, .Operand_Type},
+		// lower gives two objects one layout wherever check lets them meet, so a comparison of two
+		// layouts is a join that went missing.
+		{.Refs_Of_Two_Layouts, .Operand_Type},
+	}
+	for c in cases {
+		found := ir.verify(build_heap(c.fault), context.temp_allocator)
+		testing.expectf(t, len(found) == 1 && found[0].kind == c.kind, "%v: %v", c.fault, found)
+	}
+}
+
+@(private = "file")
+Heap_Fault :: enum {
+	None,
+	Foreign_Table, // an Alloc whose header names a row of another layout
+	Length_Of_Object,
+	Element_Of_Str,
+	Null_Str,
+	Array_Of_Object,
+	Refs_Of_Two_Layouts,
+}
+
+@(private = "file")
+build_heap :: proc(fault: Heap_Fault) -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	fields := [?]ir.Slot{{name = "a", kind = .Number}, {name = "b", kind = .Ref}}
+	cell := ir.object_layout(&p, fields[:])
+	swapped := ir.object_table(&p, cell, {"b", "a"})
+	other_fields := [?]ir.Slot{{name = "c", kind = .Number}, {name = "d", kind = .Number}}
+	other := ir.object_layout(&p, other_fields[:])
+	other_swapped := ir.object_table(&p, other, {"d", "c"})
+	numbers := ir.array_layout(&p, .Number)
+	not_integer := ir.fail_site(
+		&p,
+		abi.Fail_Site{file = "main.ts", line = 1, column = 1, error = .Index_Not_Integer},
+	)
+	out_of_range := ir.fail_site(
+		&p,
+		abi.Fail_Site{file = "main.ts", line = 1, column = 1, error = .Index_Out_Of_Range},
+	)
+	params := [?]ir.Type{ir.STR, ir.ref(numbers)}
+	sink := ir.declare_func(&p, "sink", params[:], ir.VOID, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, sink)
+	text, array := ir.Value_ID(0), ir.Value_ID(1)
+	table := other_swapped if fault == .Foreign_Table else swapped
+	object := ir.emit(&f, ir.ref(cell), ir.Alloc{layout = cell, table = table}, at(1))
+	ir.emit(&f, ir.VOID, ir.Field_Store_Ref{cell = object, field = 1, value = text}, at(1))
+	read := ir.emit(&f, ir.STR, ir.Field_Load{cell = object, field = 1}, at(1))
+	measured := object if fault == .Length_Of_Object else read
+	ir.emit(&f, ir.F64, ir.Length{value = measured}, at(1))
+	ir.emit(&f, ir.F64, ir.Length{value = array}, at(1))
+	zero := ir.emit(&f, ir.F64, ir.Const_Number{value = 0}, at(1))
+	check := ir.Bounds_Check {
+		array        = text,
+		index        = zero,
+		not_integer  = not_integer,
+		out_of_range = out_of_range,
+	}
+	checked := ir.emit(&f, ir.F64, check, at(1))
+	if fault == .Element_Of_Str {
+		ir.emit(&f, ir.F64, ir.Element_Load{array = text, index = checked}, at(1))
+	}
+	ir.emit(&f, ir.STR if fault == .Null_Str else ir.ref(cell), ir.Const_Null{}, at(1))
+	count := ir.emit(&f, ir.F64, ir.Const_Number{value = 2}, at(1))
+	made := cell if fault == .Array_Of_Object else numbers
+	ir.emit(&f, ir.ref(made), ir.New_Array{layout = made, length = count}, at(1))
+	ir.emit(&f, ir.BOOL, ir.Layout_Test{cell = object, layout = cell}, at(1))
+	if fault == .Refs_Of_Two_Layouts {
+		stranger := ir.emit(&f, ir.ref(other), ir.Alloc{layout = other}, at(1))
+		same := ir.Compare {
+			op    = .Equal,
+			left  = object,
+			right = stranger,
+		}
+		ir.emit(&f, ir.BOOL, same, at(1))
+	}
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(1))
+	ir.end_func(&f)
+
+	return ir.finish(&p, main, nil)
+}
+
 @(private = "file")
 build_clean :: proc() -> ir.Program_IR {
 	p := ir.make_builder(context.temp_allocator)

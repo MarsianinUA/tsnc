@@ -169,3 +169,31 @@ an_imported_binding_is_the_other_modules_global :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, read, "the import did not read the global of the other module")
 }
+
+// `m.x` through `import * as m` is no field of anything: check recorded the export on the member,
+// and the read and the call are those of the declaration itself.
+@(test)
+a_namespace_member_is_the_declaration_it_names :: proc(t: ^testing.T) {
+	result := lower_sources(
+		t,
+		{
+			`import * as m from "./m2";
+			console.log(m.value, m.double(m.value));`,
+			`export const value = 7;
+			export function double(n: number): number { return n * 2; }`,
+		},
+	)
+	testing.expectf(t, len(result.errors) == 0, "lower reported %v", result.errors)
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+
+	reads := 0
+	for load in instructions_of(init, ir.Global_Load) {
+		reads += 1 if result.output.globals[load.global].name == "m2.value" else 0
+	}
+	testing.expect_value(t, reads, 2)
+	calls := instructions_of(init, ir.Call)
+	if testing.expect_value(t, len(calls), 1) {
+		testing.expect_value(t, result.output.funcs[calls[0].func].name, "m2.double")
+	}
+}

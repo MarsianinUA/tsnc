@@ -12,6 +12,9 @@ Body :: struct {
 	func:        ir.Func,
 	function:    llvm.LLVMValueRef,
 	blocks:      []llvm.LLVMBasicBlockRef, // by ir.Block_ID; nil when the block cannot be reached
+	// tails holds, by ir.Block_ID, the LLVM block the IR block ends in. A bounds check splits the
+	// block it stands in, so a phi's edge names the tail and a jump names the head.
+	tails:       []llvm.LLVMBasicBlockRef,
 	values:      []llvm.LLVMValueRef, // by ir.Value_ID
 	// result_slot is where the runtime writes a tagged result (abi.C_Type.Tagged); nil in a function
 	// that calls for none. Every such call reads it back at once, so one slot serves them all.
@@ -31,6 +34,7 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		func     = func,
 		function = m.funcs[func_id].function,
 		blocks   = make([]llvm.LLVMBasicBlockRef, len(func.blocks), context.temp_allocator),
+		tails    = make([]llvm.LLVMBasicBlockRef, len(func.blocks), context.temp_allocator),
 		values   = make([]llvm.LLVMValueRef, len(func.values), context.temp_allocator),
 	}
 
@@ -77,6 +81,7 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 				return
 			}
 		}
+		body.tails[block] = llvm.LLVMGetInsertBlock(m.builder)
 	}
 	patch_phis(m, &body, phis[:])
 }
@@ -111,7 +116,7 @@ rest_capacity :: proc(func: ir.Func) -> int {
 }
 
 // patch_phis leaves out an edge out of a block that cannot run: it is not an edge of the LLVM
-// function either.
+// function either. An edge comes from the tail of its block, where the jump stands.
 @(private)
 patch_phis :: proc(m: ^Module, body: ^Body, phis: []ir.Value_ID) {
 	for value in phis {
@@ -128,7 +133,7 @@ patch_phis :: proc(m: ^Module, body: ^Body, phis: []ir.Value_ID) {
 				continue
 			}
 			append(&values, body.values[edge.value])
-			append(&blocks, body.blocks[edge.block])
+			append(&blocks, body.tails[edge.block])
 		}
 		llvm.LLVMAddIncoming(
 			body.values[value],

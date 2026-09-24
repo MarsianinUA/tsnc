@@ -122,3 +122,12 @@ jobs:
       # object of the steps above.
       - name: Diff
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+
+      # The same corpus with the collector in stress mode (docs/development.md), which the compiled
+      # programs inherit from the runner: every allocation collects first and checks the heap
+      # after, so a cell generated code still needs, kept where the collector does not look, fails
+      # the run instead of a program much later.
+      - name: Diff under GC stress
+        env:
+          TSNC_GC_STRESS: "1"
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff

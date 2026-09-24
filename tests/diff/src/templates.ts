@@ -1,6 +1,6 @@
 // A template string that substitutes nothing is a string literal written with backticks: parse
-// cooks its escapes the same way, so the compiler interns it as the same text. Anything between
-// ${ and } has to be joined at run time, which is milestone 5, so none appears here.
+// cooks its escapes the same way, so the compiler interns it as the same text. What stands between
+// ${ and } is turned into a string and joined at run time, the last section here.
 
 function echo(text: string): void {
   console.log(text);
@@ -27,3 +27,9 @@ echo(dollar);
 echo(empty);
 echo(spread);
 console.log(plain, `and another`, 1);
+
+const count = 3;
+const who = "world";
+echo(`${who}`);
+echo(`hello ${who}, ${count} + ${count} = ${count + count}`);
+echo(`${true}${1e21}${-0}${[1, [2]]}${`nested ${who}`}`);

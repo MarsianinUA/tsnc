@@ -39,13 +39,16 @@ Variant :: union #no_nil {
 
 	// Heap cells. A field index reads the layout of the Ref type of the cell operand.
 	Alloc,
+	New_Array,
 	Field_Load,
 	Field_Store,
 	Field_Store_Ref,
+	Length,
 	Bounds_Check,
 	Element_Load,
 	Element_Store,
 	Element_Store_Ref,
+	Layout_Test,
 
 	// Tagged values.
 	Tag_Test,
@@ -83,9 +86,12 @@ Const_Bool :: struct {
 	value: bool,
 }
 
-// Const_Undefined and Const_Null are Tagged: neither has a type of its own to live in.
+// Const_Undefined is Tagged: it has no type of its own to live in.
 Const_Undefined :: struct {}
 
+// Const_Null is Tagged, or a reference type other than Str: typed as a Ref or a Closure it is the
+// null reference, the zero of a binding that holds an object or a function. A string never holds
+// it, since the zero of a string is the empty cell.
 Const_Null :: struct {}
 
 // Const_String is a Str pointing at a cell codegen puts in read-only data.
@@ -117,10 +123,20 @@ Phi :: struct {
 }
 
 // Alloc takes a cell from the GC heap, zero filled, and answers a reference to it. Only an object
-// or an environment layout: a string, an array and a closure are made by the runtime, which owns
-// their growth and their contents.
+// or an environment layout: an array is New_Array, and a string and a closure are made by the
+// runtime. The header names `table`, a row that lists the fields of the layout in another print
+// order (see Program_IR.base); NO_LAYOUT names the layout's own row.
 Alloc :: struct {
 	layout: Layout_ID,
+	table:  Layout_ID,
+}
+
+// New_Array answers an array of an Array layout holding `length` elements (an F64), each the zero
+// of its kind, which the code after it fills in place. A Ref element starts as the null reference,
+// so every one is stored before anything else can reach the array.
+New_Array :: struct {
+	layout: Layout_ID,
+	length: Value_ID,
 }
 
 Field_Load :: struct {
@@ -144,9 +160,16 @@ Field_Store_Ref :: struct {
 	value: Value_ID,
 }
 
+// Length answers the length of a Str or of an array Ref as F64: one load, since abi puts the two at
+// the same offset.
+Length :: struct {
+	value: Value_ID,
+}
+
 // Bounds_Check answers the index again, as F64, once it has proved that the index is an integer
-// inside the array. The element instructions take that answer, so the check cannot drift away from
-// the access it guards, and the v2 optimization that removes it has an edge to follow.
+// inside the array, or inside the string, which the index of a Str then reads through the runtime.
+// The element instructions take that answer, so the check cannot drift away from the access it
+// guards, and the v2 optimization that removes it has an edge to follow.
 Bounds_Check :: struct {
 	array:        Value_ID,
 	index:        Value_ID,
@@ -171,6 +194,14 @@ Element_Store_Ref :: struct {
 	array: Value_ID,
 	index: Value_ID,
 	value: Value_ID,
+}
+
+// Layout_Test answers Bool: whether the cell's type table is a row whose base is this layout. A
+// Tag_Test says only that a tagged value holds an object; a read of an object out of a slot that
+// holds any object needs this as well before it trusts the layout.
+Layout_Test :: struct {
+	cell:   Value_ID,
+	layout: Layout_ID,
 }
 
 // Tag_Test answers whether a Tagged value holds this tag. It is what narrowing compiles to.
@@ -256,9 +287,9 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Binary, Unary, Compare, Phi:
 		return false
-	case Alloc, Field_Load, Field_Store, Field_Store_Ref:
+	case Alloc, New_Array, Field_Load, Field_Store, Field_Store_Ref, Length:
 		return false
-	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref:
+	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test:
 		return false
 	case Tag_Test, Box, Unbox, Global_Load, Global_Store:
 		return false

@@ -32,8 +32,8 @@ lower_expression :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	if value != ir.NO_VALUE || len(s.low.diagnostics) > 0 {
 		return value
 	}
-	type, ok := ir_type(s.types, s.typed.node_types[id])
-	if ok && type != ir.VOID {
+	kind, ok := representation(s.types, s.typed.node_types[id])
+	if ok && kind != .Void {
 		return later(s, s.tree.nodes[id].span, "this expression")
 	}
 	return ir.NO_VALUE
@@ -97,22 +97,20 @@ lower_node :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	case ast.Non_Null:
 		return lower_non_null(s, id, v)
 	case ast.Template:
-		// A template with no substitution is a string literal written with backticks: parse cooked
-		// its escapes and left one part behind. Joining the parts of one that does substitute needs
-		// a string built at run time, which is the heap of milestone 5.
-		if len(v.expressions) == 0 {
-			text := ir.intern_string(&s.low.builder, v.parts[0])
-			return ir.emit(&s.fb, ir.STR, ir.Const_String{text = text}, span)
-		}
-		return later(s, span, "template strings")
+		return lower_template(s, id, v)
 	case ast.Array_Literal:
-		return later(s, span, "arrays")
+		return lower_array_literal(s, id, v)
 	case ast.Object_Literal:
-		return later(s, span, "objects")
+		return lower_object_literal(s, id, v)
 	case ast.Arrow:
+		// An arrow handed straight to an array method is inlined there and never gets here.
 		return later(s, span, "arrow functions")
 	case ast.Index:
-		return later(s, span, "indexing")
+		place, ok := lower_place(s, id)
+		if !ok {
+			return ir.NO_VALUE
+		}
+		return load_place(s, &place, span)
 	}
 	return ir.NO_VALUE
 }
@@ -128,12 +126,13 @@ later :: proc(s: ^Func_State, span: source.Span, construct: string) -> ir.Value_
 // reported it or is about to.
 @(private)
 node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
-	type, ok := ir_type(s.types, s.typed.node_types[id])
+	type, ok := ir_type(s.low, s.types, s.typed.node_types[id])
 	return type if ok else ir.VOID
 }
 
-// coerce has one conversion in this slice, boxing a statically typed value into a tagged one;
-// reading one back needs the tag check of milestone 5.
+// coerce has one conversion, boxing a statically typed value into a tagged one; reading one back
+// needs the tag check of T5.9. Two objects check lets meet share one layout, so an object never
+// needs converting into another.
 @(private)
 coerce :: proc(
 	s: ^Func_State,
@@ -177,31 +176,40 @@ boxable :: proc(type: ir.Type) -> bool {
 }
 
 // truthy tests a number by its magnitude being above zero, which is one intrinsic and one
-// comparison and is false for NaN and for both zeros without a branch.
+// comparison and is false for NaN and for both zeros without a branch. A string is true when it
+// has a unit, and an object, an array and a function always are.
 @(private)
 truthy :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
 	type := value_type(s, value)
-	#partial switch type.kind {
+	switch type.kind {
 	case .Bool:
 		return value
 	case .F64:
 		size := ir.emit(&s.fb, ir.F64, ir.Intrinsic{op = .Abs, args = {value}}, span)
-		zero := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
-		test := ir.Compare {
-			op    = .Greater,
-			left  = size,
-			right = zero,
-		}
-		return ir.emit(&s.fb, ir.BOOL, test, span)
+		return above_zero(s, size, span)
 	case .Str:
-		return later(s, span, "testing a string for truth")
+		return above_zero(s, ir.emit(&s.fb, ir.F64, ir.Length{value = value}, span), span)
+	case .Ref, .Closure:
+		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
 	case .Tagged:
 		return later(s, span, "narrowing a union")
+	case .Void:
 	}
 	return ir.NO_VALUE
+}
+
+@(private)
+above_zero :: proc(s: ^Func_State, number: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+	zero := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
+	test := ir.Compare {
+		op    = .Greater,
+		left  = number,
+		right = zero,
+	}
+	return ir.emit(&s.fb, ir.BOOL, test, span)
 }
 
 @(private)
@@ -222,6 +230,13 @@ lower_ident :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Ident) -> ir.Valu
 		}
 		return ir.NO_VALUE
 	}
+	return lower_symbol(s, ref, span)
+}
+
+// lower_symbol reads what a name refers to, wherever it was written: an identifier, or `m.x` of an
+// `import * as m`, where check recorded the export on the member.
+@(private)
+lower_symbol :: proc(s: ^Func_State, ref: check.Symbol_Ref, span: source.Span) -> ir.Value_ID {
 	if ref.file == program.LIB {
 		return lower_lib_value(s, ref.symbol, span)
 	}
@@ -255,22 +270,54 @@ lower_lib_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Spa
 	return later(s, span, construct_of(strategy, name))
 }
 
-// lower_member is left with a constant of the lib, such as Math.PI, and process.argv: everything of
-// an object or an array waits for milestone 5.
+// lower_member reads, in this order: an export of a module through `import * as m`, a value of the
+// lib such as Math.PI or process.argv, a field of an object, and the length of a string or an
+// array. A method named without being called is a function value.
 @(private)
 lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	strategy, found := member_strategy(s, node)
+	if ref := s.typed.node_symbols[id]; ref.symbol != bind.NO_SYMBOL {
+		return lower_symbol(s, ref, span)
+	}
+	if root, is_lib := lib_root(s, node.object); is_lib {
+		strategy, found := lib_strategy(.Value, root, node.name.text)
+		if !found {
+			return ir.NO_VALUE
+		}
+		if constant, is_constant := strategy.(Constant); is_constant {
+			return ir.emit(&s.fb, ir.F64, ir.Const_Number{value = constant.value}, span)
+		}
+		if strategy == Builtin.Process_Argv {
+			return lower_process_argv(s, span)
+		}
+		return later(s, span, construct_of(strategy, node.name.text))
+	}
+
+	if is_object_type(s, node.object) {
+		place, ok := lower_place(s, id)
+		if !ok {
+			return ir.NO_VALUE
+		}
+		return load_place(s, &place, span)
+	}
+	receiver := lower_expression(s, node.object)
+	if receiver == ir.NO_VALUE {
+		return ir.NO_VALUE
+	}
+	strategy, found := instance_strategy(s, receiver, node.name.text)
 	if !found {
 		return ir.NO_VALUE
 	}
-	if constant, is_constant := strategy.(Constant); is_constant {
-		return ir.emit(&s.fb, ir.F64, ir.Const_Number{value = constant.value}, span)
-	}
-	if strategy == Builtin.Process_Argv {
-		return lower_process_argv(s, span)
+	if strategy == Builtin.Length {
+		return ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
 	}
 	return later(s, span, construct_of(strategy, node.name.text))
+}
+
+@(private)
+is_object_type :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
+	_, is_object := s.types[s.typed.node_types[id]].(check.Object)
+	return is_object
 }
 
 // lower_process_argv reads one global, so every read answers the same array, as in Node. main
@@ -287,24 +334,49 @@ lower_process_argv :: proc(s: ^Func_State, span: source.Span) -> ir.Value_ID {
 	return ir.emit(&s.fb, type, ir.Global_Load{global = argv}, span)
 }
 
-// member_strategy is the table row that `object.name` names. A lib value in front of the dot picks
-// the value half of the table by that name; anything else is a method of the type the object turned
-// out to have, so the object is lowered to find it out.
+// member_strategy is the table row that `object.name` names, and the receiver it was found on,
+// lowered once. A lib value in front of the dot picks the value half of the table by that name and
+// has no receiver; anything else is a method of the type the object turned out to have.
 @(private)
-member_strategy :: proc(s: ^Func_State, node: ast.Member) -> (Strategy, bool) {
+member_strategy :: proc(
+	s: ^Func_State,
+	node: ast.Member,
+) -> (
+	strategy: Strategy,
+	receiver: ir.Value_ID,
+	found: bool,
+) {
 	if root, is_lib := lib_root(s, node.object); is_lib {
-		return lib_strategy(.Value, root, node.name.text)
+		strategy, found = lib_strategy(.Value, root, node.name.text)
+		return strategy, ir.NO_VALUE, found
 	}
+	receiver = lower_expression(s, node.object)
+	if receiver == ir.NO_VALUE {
+		return Later{}, ir.NO_VALUE, false
+	}
+	strategy, found = instance_strategy(s, receiver, node.name.text)
+	return strategy, receiver, found
+}
 
-	value := lower_expression(s, node.object)
-	if value == ir.NO_VALUE {
-		return Later{}, false
+// instance_strategy is the row of a method of a primitive or an array. An object has no methods of
+// the lib, and a field of it that holds a function is a function value.
+@(private)
+instance_strategy :: proc(
+	s: ^Func_State,
+	receiver: ir.Value_ID,
+	name: string,
+) -> (
+	Strategy,
+	bool,
+) {
+	type := value_type(s, receiver)
+	if owner, has_owner := instance_owner(s.low, type); has_owner {
+		return lib_strategy(.Instance, owner, name)
 	}
-	owner, has_owner := instance_owner(value_type(s, value))
-	if !has_owner {
-		return Later{"objects"}, true
+	if type == ir.TAGGED {
+		return Later{"narrowing a union"}, true
 	}
-	return lib_strategy(.Instance, owner, node.name.text)
+	return Later{"calling a function value"}, true
 }
 
 // lib_root answers the name of the lib value an expression is, as `Math` is in `Math.floor`.
@@ -381,14 +453,16 @@ lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) ->
 	word := typeof_word(s, operand)
 	if word == "" {
 		type := s.typed.node_types[operand]
-		if _, ok := ir_type(s.types, type); !ok {
+		if _, ok := representation(s.types, type); !ok {
 			return later(s, span, construct_text(s.types, type))
 		}
 		return later(s, span, "`typeof` of a union")
 	}
 	// The operand of a typeof still runs: it may call something. Reading a name runs nothing, and
 	// lowering a name that holds a function would report a function value.
-	if _, is_ident := s.tree.nodes[operand].variant.(ast.Ident); !is_ident {
+	_, is_ident := s.tree.nodes[operand].variant.(ast.Ident)
+	names_something := s.typed.node_symbols[operand].symbol != bind.NO_SYMBOL
+	if !is_ident && !names_something {
 		lower_expression(s, operand)
 	}
 	return ir.emit(
@@ -414,13 +488,16 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 	case check.Function, check.Overload:
 		return "function"
 	}
-	#partial switch node_type(s, operand).kind {
+	kind, _ := representation(s.types, type)
+	#partial switch kind {
 	case .F64:
 		return "number"
 	case .Bool:
 		return "boolean"
 	case .Str:
 		return "string"
+	case .Ref:
+		return "object"
 	}
 	return ""
 }
@@ -442,18 +519,29 @@ lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Va
 	if !is_arithmetic {
 		return ir.NO_VALUE
 	}
+	return arithmetic(s, op, left, right, span)
+}
+
+// arithmetic is `+` of a string and anything, which joins them, or an operator on two numbers.
+@(private)
+arithmetic :: proc(
+	s: ^Func_State,
+	op: ir.Binary_Op,
+	left, right: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if op == .Add && (value_type(s, left) == ir.STR || value_type(s, right) == ir.STR) {
+		return lower_concat(s, left, right, span)
+	}
 	if value_type(s, left) != ir.F64 || value_type(s, right) != ir.F64 {
-		if node.op == .Add && (value_type(s, left) == ir.STR || value_type(s, right) == ir.STR) {
-			return later(s, span, "joining strings")
-		}
 		return operands_not_lowered(s, left, right, span)
 	}
 	return ir.emit(&s.fb, ir.F64, ir.Binary{op = op, left = left, right = right}, span)
 }
 
 // lower_compare lets the IR compare two numbers, two booleans or two references itself; a string
-// holds its contents and a tagged value its tag, so both go through the runtime, which milestone 5
-// brings.
+// holds its contents and goes through the runtime, and a tagged value needs the tag check of T5.9.
+// Two objects check lets `===` compare share one layout, so their references compare as they are.
 @(private)
 lower_compare :: proc(
 	s: ^Func_State,
@@ -468,14 +556,18 @@ lower_compare :: proc(
 		return later(s, span, "narrowing a union")
 	}
 	ordered := op != .Equal && op != .Not_Equal
-	if type == ir.F64 || (type == ir.BOOL && !ordered) {
+	switch type.kind {
+	case .F64:
 		return ir.emit(&s.fb, ir.BOOL, ir.Compare{op = op, left = left, right = right}, span)
-	}
-	if type == ir.STR {
-		return later(s, span, "comparing strings")
-	}
-	if type == ir.TAGGED {
+	case .Bool, .Ref, .Closure:
+		if !ordered {
+			return ir.emit(&s.fb, ir.BOOL, ir.Compare{op = op, left = left, right = right}, span)
+		}
+	case .Str:
+		return compare_strings(s, op, left, right, span)
+	case .Tagged:
 		return later(s, span, "narrowing a union")
+	case .Void:
 	}
 	return ir.NO_VALUE
 }
@@ -685,7 +777,11 @@ join_values :: proc(
 @(private)
 lower_update :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Update) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	before := lower_expression(s, node.operand)
+	place, ok := lower_place(s, node.operand)
+	if !ok {
+		return ir.NO_VALUE
+	}
+	before := load_place(s, &place, span)
 	if before == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
@@ -697,14 +793,14 @@ lower_update :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Update) -> ir.Va
 	op :=
 		ir.Binary_Op.Add if node.op == .Pre_Increment || node.op == .Post_Increment else .Subtract
 	after := ir.emit(&s.fb, ir.F64, ir.Binary{op = op, left = before, right = one}, span)
-	stored, ok := store_target(s, node.operand, after, span)
-	if !ok {
+	if store_place(s, &place, after, span) == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
-	return stored if node.op == .Pre_Increment || node.op == .Pre_Decrement else before
+	return after if node.op == .Pre_Increment || node.op == .Pre_Decrement else before
 }
 
-// lower_assign answers what was written, which is the value of the expression.
+// lower_assign answers what was written, which is the value of the expression. The place is
+// evaluated before the value, as in JavaScript: `a[i] = (i = 5)` writes at the old i.
 @(private)
 lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -713,75 +809,164 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 	case .And, .Or, .Coalesce:
 		return later(s, span, "short-circuit assignment")
 	}
+	place, ok := lower_place(s, node.target)
 	if node.op == .Assign {
-		stored, _ := store_target(s, node.target, lower_expression(s, node.value), span)
-		return stored
+		value := lower_expression(s, node.value)
+		if !ok {
+			return ir.NO_VALUE
+		}
+		return store_place(s, &place, value, span)
 	}
 
-	before := lower_expression(s, node.target)
+	before := load_place(s, &place, span) if ok else ir.NO_VALUE
 	right := lower_expression(s, node.value)
 	if before == ir.NO_VALUE || right == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
-	if value_type(s, before) != ir.F64 || value_type(s, right) != ir.F64 {
-		if node.op == .Add && value_type(s, before) == ir.STR {
-			return later(s, span, "joining strings")
-		}
-		return operands_not_lowered(s, before, right, span)
-	}
-	op, ok := binary_op(assign_binary(node.op))
-	if !ok {
+	op, is_arithmetic := binary_op(assign_binary(node.op))
+	if !is_arithmetic {
 		return ir.NO_VALUE
 	}
-	after := ir.emit(&s.fb, ir.F64, ir.Binary{op = op, left = before, right = right}, span)
-	stored, _ := store_target(s, node.target, after, span)
-	return stored
+	return store_place(s, &place, arithmetic(s, op, before, right, span), span)
 }
 
-// store_target writes a value into a binding and answers what was written, which is the value of
-// the assignment expression. The conversion happens here rather than at the call, so that what a
-// binding holds is always of the type the binding was declared with. A field or an element waits
-// for milestone 5, and the parser has already refused everything that is no target at all.
-@(private)
-store_target :: proc(
-	s: ^Func_State,
-	target: ast.Node_ID,
-	value: ir.Value_ID,
-	span: source.Span,
-) -> (
-	ir.Value_ID,
-	bool,
-) {
-	if value == ir.NO_VALUE {
-		return ir.NO_VALUE, false
-	}
-	if _, is_ident := s.tree.nodes[target].variant.(ast.Ident); !is_ident {
-		later(s, span, "writing to a field or an element")
-		return ir.NO_VALUE, false
-	}
-	ref := s.typed.node_symbols[target]
-	if ref.symbol == bind.NO_SYMBOL {
-		return ir.NO_VALUE, false
-	}
+// Places: where an assignment, an update or a read of a field or an element goes.
 
+@(private)
+Local_Place :: struct {
+	symbol: bind.Symbol_ID,
+}
+
+@(private)
+Global_Place :: struct {
+	global: ir.Global_ID,
+}
+
+// Field_Place names a slot of the cell's layout. type is what a read answers, the field's declared
+// type, which a widened slot may hold boxed (objects.odin).
+@(private)
+Field_Place :: struct {
+	cell:  ir.Value_ID,
+	field: i32,
+	type:  ir.Type,
+}
+
+// Element_Place holds the index as the program wrote it until a read checks it; a write to an
+// unchecked index may append (arrays.odin).
+@(private)
+Element_Place :: struct {
+	array:   ir.Value_ID, // an array Ref, or a Str, which only a read may take
+	index:   ir.Value_ID,
+	checked: bool, // index is the answer of a Bounds_Check
+	type:    ir.Type, // the element's declared type
+}
+
+@(private)
+Place :: union {
+	Local_Place,
+	Global_Place,
+	Field_Place,
+	Element_Place,
+}
+
+// lower_place evaluates what the place needs and nothing more: the object of a field, the array and
+// the index of an element. It answers false for a place with nothing to write to, reported where
+// the reason was found or before.
+@(private)
+lower_place :: proc(s: ^Func_State, target: ast.Node_ID) -> (place: Place, ok: bool) {
+	span := s.tree.nodes[target].span
+	#partial switch v in s.tree.nodes[target].variant {
+	case ast.Ident:
+		return symbol_place(s, s.typed.node_symbols[target])
+	case ast.Member:
+		if ref := s.typed.node_symbols[target]; ref.symbol != bind.NO_SYMBOL {
+			return symbol_place(s, ref)
+		}
+		cell := lower_expression(s, v.object)
+		if cell == ir.NO_VALUE {
+			return nil, false
+		}
+		object, is_object := s.types[s.typed.node_types[v.object]].(check.Object)
+		if !is_object || value_type(s, cell).kind != .Ref {
+			later(s, span, "narrowing a union")
+			return nil, false
+		}
+		return field_place(s, cell, object, v.name.text)
+	case ast.Index:
+		return element_place(s, v, span)
+	}
+	// parse has refused everything else a program could write to.
+	return nil, false
+}
+
+@(private)
+symbol_place :: proc(s: ^Func_State, ref: check.Symbol_Ref) -> (place: Place, ok: bool) {
+	if ref.symbol == bind.NO_SYMBOL {
+		return nil, false
+	}
 	declaration := s.low.prog.bound[ref.file].symbols[ref.symbol].declaration
 	if global, is_global := s.low.globals[{ref.file, declaration}]; is_global {
-		stored := coerce(s, value, s.low.builder.globals[global].type, span)
-		if stored == ir.NO_VALUE {
-			return ir.NO_VALUE, false
-		}
-		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = stored}, span)
-		return stored, true
+		return Global_Place{global = global}, true
 	}
 	if ref.file != s.file || s.locals[ref.symbol] == ir.NO_VALUE {
-		return ir.NO_VALUE, false
+		return nil, false
 	}
-	stored := coerce(s, value, value_type(s, s.locals[ref.symbol]), span)
-	if stored == ir.NO_VALUE {
-		return ir.NO_VALUE, false
+	return Local_Place{symbol = ref.symbol}, true
+}
+
+// load_place may check the index of an element, and the place keeps the answer, so a write after
+// the read goes to the index the read checked.
+@(private)
+load_place :: proc(s: ^Func_State, place: ^Place, span: source.Span) -> ir.Value_ID {
+	switch &p in place {
+	case Local_Place:
+		return s.locals[p.symbol]
+	case Global_Place:
+		type := s.low.builder.globals[p.global].type
+		return ir.emit(&s.fb, type, ir.Global_Load{global = p.global}, span)
+	case Field_Place:
+		return load_field(s, p, span)
+	case Element_Place:
+		return load_element(s, &p, span)
 	}
-	s.locals[ref.symbol] = stored
-	return stored, true
+	return ir.NO_VALUE
+}
+
+// store_place converts the value into the type the place holds, so a binding always holds the type
+// it was declared with, and answers the value as it came, which is the value of the assignment.
+@(private)
+store_place :: proc(
+	s: ^Func_State,
+	place: ^Place,
+	value: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value == ir.NO_VALUE {
+		return ir.NO_VALUE
+	}
+	switch &p in place {
+	case Local_Place:
+		stored := coerce(s, value, value_type(s, s.locals[p.symbol]), span)
+		if stored == ir.NO_VALUE {
+			return ir.NO_VALUE
+		}
+		s.locals[p.symbol] = stored
+	case Global_Place:
+		stored := coerce(s, value, s.low.builder.globals[p.global].type, span)
+		if stored == ir.NO_VALUE {
+			return ir.NO_VALUE
+		}
+		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = p.global, value = stored}, span)
+	case Field_Place:
+		if !store_field(s, p, value, span) {
+			return ir.NO_VALUE
+		}
+	case Element_Place:
+		if !store_element(s, p, value, span) {
+			return ir.NO_VALUE
+		}
+	}
+	return value
 }
 
 // binary_op and compare_op split the syntactic operators into the two IR instructions they become.

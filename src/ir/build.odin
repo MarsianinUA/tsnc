@@ -28,6 +28,7 @@ Program_Builder :: struct {
 	allocator:   runtime.Allocator,
 	funcs:       [dynamic]Func,
 	layouts:     [dynamic]abi.Type_Table,
+	base:        [dynamic]Layout_ID, // Program_IR.base, one entry per row of layouts
 	globals:     [dynamic]Global,
 	// Program_IR calls this one strings; here that name belongs to the import.
 	string_pool: [dynamic][]u16,
@@ -49,6 +50,7 @@ make_builder :: proc(allocator := context.allocator) -> Program_Builder {
 		allocator = allocator,
 		funcs = make([dynamic]Func, allocator),
 		layouts = make([dynamic]abi.Type_Table, 1, 16, allocator),
+		base = make([dynamic]Layout_ID, 1, 16, allocator),
 		globals = make([dynamic]Global, allocator),
 		string_pool = make([dynamic][]u16, allocator),
 		fail_sites = make([dynamic]abi.Fail_Site, allocator),
@@ -64,6 +66,61 @@ make_builder :: proc(allocator := context.allocator) -> Program_Builder {
 // and Vec2 share one.
 object_layout :: proc(p: ^Program_Builder, fields: []Slot) -> Layout_ID {
 	return intern_layout(p, .Object, fields, .Number)
+}
+
+// object_table answers the row whose header a cell of `layout` carries when the console must print
+// its fields in `order`, which names every field of the layout once: the same slots at the same
+// offsets, listed in that order. The layout's own order answers NO_LAYOUT, which Alloc reads as the
+// layout's own row.
+object_table :: proc(p: ^Program_Builder, layout: Layout_ID, order: []string) -> Layout_ID {
+	canonical := p.layouts[layout]
+	ensure(
+		p.base[layout] == layout && canonical.kind == .Object,
+		"object_table of no object layout",
+	)
+	ensure(
+		len(order) == len(canonical.fields),
+		"a print order that does not name every field once",
+	)
+	reordered := false
+	for name, i in order {
+		reordered ||= canonical.fields[i].name != name
+	}
+	if !reordered {
+		return NO_LAYOUT
+	}
+
+	// Every layout key opens with a digit, so a key that opens with a letter is never one of them.
+	strings.builder_reset(&p.key)
+	strings.write_byte(&p.key, 't')
+	strings.write_int(&p.key, int(layout))
+	for name in order {
+		strings.write_byte(&p.key, ',')
+		strings.write_quoted_string(&p.key, name)
+	}
+	probe := strings.to_string(p.key)
+	if id, found := p.layout_ids[probe]; found {
+		return id
+	}
+
+	fields := make([]abi.Field, len(order), p.allocator)
+	for name, i in order {
+		found := false
+		for field in canonical.fields {
+			if field.name == name {
+				fields[i], found = field, true
+				break
+			}
+		}
+		ensure(found, "a print order that names a field the layout does not have")
+	}
+	table := canonical
+	table.fields = fields
+	id := Layout_ID(len(p.layouts))
+	append(&p.layouts, table)
+	append(&p.base, layout)
+	p.layout_ids[strings.clone(probe, p.allocator)] = id
+	return id
 }
 
 // environment_layout gives the slots no names: nothing looks a captured variable up by name.
@@ -266,6 +323,7 @@ finish :: proc(p: ^Program_Builder, main: Func_ID, init_order: []Func_ID) -> Pro
 	return {
 		funcs = p.funcs[:],
 		layouts = p.layouts[:],
+		base = p.base[:],
 		globals = p.globals[:],
 		strings = p.string_pool[:],
 		fail_sites = p.fail_sites[:],
@@ -357,6 +415,7 @@ intern_layout :: proc(
 
 	id := Layout_ID(len(p.layouts))
 	append(&p.layouts, table)
+	append(&p.base, id)
 	p.layout_ids[strings.clone(probe, p.allocator)] = id
 	return id
 }

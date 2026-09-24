@@ -91,4 +91,6 @@ NAMES := [abi.Runtime_Error]string {
 	.Invalid_String_Length        = "Invalid string length",
 	.Not_Convertible_To_Number    = "tsnc cannot convert an object with its own valueOf or toString to a number",
 	.Not_Convertible_To_Json      = "tsnc cannot convert an object with its own toJSON to JSON",
+	.Reduce_Of_Empty_Array        = "Reduce of empty array with no initial value",
+	.Field_Holds_Other_Kind       = "a field holds a value its declared type does not allow",
 }

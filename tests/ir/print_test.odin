@@ -1,6 +1,7 @@
 package ir_tests
 
 import "core:math"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -173,6 +174,29 @@ a_string_constant_keeps_every_unit :: proc(t: ^testing.T) {
 	testing.expect_value(t, lines[1], "string 0 \"a\\\"b\\\\c\\u0009d\"")
 	testing.expect_value(t, lines[2], "string 1 \"\\u00e9\\ud83d\\ude00\"")
 	testing.expect_value(t, lines[3], "string 2 \"\\ud800\"")
+}
+
+@(test)
+a_table_row_names_its_layout_and_a_cell_names_its_row :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	fields := [?]ir.Slot{{name = "a", kind = .Number}, {name = "b", kind = .Number}}
+	cell := ir.object_layout(&p, fields[:])
+	swapped := ir.object_table(&p, cell, {"b", "a"})
+	numbers := ir.array_layout(&p, .Number)
+	id := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, {})
+	f := ir.begin_func(&p, id)
+	object := ir.emit(&f, ir.ref(cell), ir.Alloc{layout = cell, table = swapped}, {})
+	count := ir.emit(&f, ir.F64, ir.Const_Number{value = 3}, {})
+	array := ir.emit(&f, ir.ref(numbers), ir.New_Array{layout = numbers, length = count}, {})
+	ir.emit(&f, ir.F64, ir.Length{value = array}, {})
+	ir.emit(&f, ir.BOOL, ir.Layout_Test{cell = object, layout = cell}, {})
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, {})
+	ir.end_func(&f)
+
+	lines := strings.split_lines(dump(nil, ir.finish(&p, id, nil)), context.temp_allocator)
+	for want in ([?]string{"layout 1 object size 24", "layout 2 object size 24 order of 1", "  field 0 \"b\" number at 16", "    %0 = alloc 1 table 2 : ref(1) ; ?:?", "    %2 = new_array 3, %1 : ref(3) ; ?:?", "    %3 = length %2 : f64 ; ?:?", "    %4 = layout_test %0 1 : bool ; ?:?"}) {
+		testing.expectf(t, slice.contains(lines, want), "%q is not in %v", want, lines)
+	}
 }
 
 @(test)
