@@ -11,16 +11,26 @@ or builds one is a runtime row of abi, apart from its length, which is one load.
 
 `+` with a string on either side, a template and String(x) turn each operand into a string first,
 the way ECMAScript's ToString does: a number through the runtime's own shortest decimal, and a
-boolean, an object or an array through Value_To_String, which answers the words Node answers. A
-tagged operand needs the tag check of T5.9 first.
+boolean, an object, an array or a tagged value through Value_To_String, which answers the words
+Node answers. `+` asks ToPrimitive first, and so an object's own valueOf, which Node would call:
+Value_To_Primitive_String refuses such an object where Value_To_String would not. A function is
+refused by both; check reports one whose type says it is a function (T2028).
 */
 
-// to_string answers the string ToString makes of a value; a string is its own.
+// to_string answers the string ToString makes of a value; a string is its own. primitive asks for
+// ToString(ToPrimitive(value)) instead, what `+` joins, which differs only where the value may be
+// an object.
 @(private)
-to_string :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+to_string :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	span: source.Span,
+	primitive := false,
+) -> ir.Value_ID {
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
+	export := abi.Runtime_Proc.Value_To_String
 	switch value_type(s, value).kind {
 	case .Str:
 		return value
@@ -30,15 +40,17 @@ to_string :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.V
 			args   = {value},
 		}
 		return ir.emit(&s.fb, ir.STR, call, span)
-	case .Bool, .Ref, .Closure:
-		boxed := ir.emit(&s.fb, ir.TAGGED, ir.Box{value = value}, span)
+	case .Ref, .Tagged:
+		if primitive {
+			export = .Value_To_Primitive_String
+		}
+		fallthrough
+	case .Bool, .Closure:
 		call := ir.Call_Runtime {
-			export = .Value_To_String,
-			args   = {boxed},
+			export = export,
+			args   = {coerce(s, value, ir.TAGGED, span)},
 		}
 		return ir.emit(&s.fb, ir.STR, call, span)
-	case .Tagged:
-		return later(s, span, "narrowing a union")
 	case .Void:
 	}
 	return ir.NO_VALUE
@@ -46,8 +58,8 @@ to_string :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.V
 
 @(private)
 lower_concat :: proc(s: ^Func_State, left, right: ir.Value_ID, span: source.Span) -> ir.Value_ID {
-	first := to_string(s, left, span)
-	second := to_string(s, right, span)
+	first := to_string(s, left, span, primitive = true)
+	second := to_string(s, right, span, primitive = true)
 	if first == ir.NO_VALUE || second == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
@@ -156,7 +168,7 @@ lower_string_includes :: proc(
 	search := runtime_argument(s, node.args[0], .Ptr)
 	position: ir.Value_ID
 	if len(node.args) > 1 {
-		position = runtime_argument(s, node.args[1], .Number)
+		position = optional_number(s, node.args[1], 0, span)
 	} else {
 		position = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	}

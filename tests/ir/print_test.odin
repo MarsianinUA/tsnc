@@ -111,6 +111,7 @@ the_dump_spells_every_instruction :: proc(t: ^testing.T) {
 			"    %20 = eq %17, %10 : bool ; 3:1",
 			"    %21 = const true : bool ; 3:1",
 			"    %22 = not %21 : bool ; 3:1",
+			"    %23 = tag_test %1 undefined|null : bool ; 3:1",
 			"    call_closure %2(%17) ; 3:1",
 			"    unreachable ; 3:1",
 			"  b2:",
@@ -489,7 +490,7 @@ build_sink :: proc(table: []source.File) -> (ir.Program_IR, ir.Func_ID) {
 	root := ir.emit(&f, ir.F64, ir.Intrinsic{op = .Sqrt, args = root_args[:]}, line)
 	boxed := ir.emit(&f, ir.TAGGED, ir.Box{value = root}, line)
 	ir.emit(&f, ir.VOID, ir.Element_Store_Ref{array = 3, index = checked, value = boxed}, line)
-	is_number := ir.emit(&f, ir.BOOL, ir.Tag_Test{value = 1, tag = .Number}, line)
+	is_number := ir.emit(&f, ir.BOOL, ir.Tag_Test{value = 1, tags = {.Number}}, line)
 	branch := ir.Branch {
 		condition  = is_number,
 		then_block = done,
@@ -504,6 +505,7 @@ build_sink :: proc(table: []source.File) -> (ir.Program_IR, ir.Func_ID) {
 	ir.emit(&f, ir.BOOL, ir.Compare{op = .Equal, left = unboxed, right = sum}, line)
 	flag := ir.emit(&f, ir.BOOL, ir.Const_Bool{value = true}, line)
 	ir.emit(&f, ir.BOOL, ir.Unary{op = .Not, operand = flag}, line)
+	ir.emit(&f, ir.BOOL, ir.Tag_Test{value = 1, tags = {.Undefined, .Null}}, line)
 	closure_args := [?]ir.Value_ID{unboxed}
 	ir.emit(&f, ir.VOID, ir.Call_Closure{callee = 2, args = closure_args[:]}, line)
 	ir.emit(&f, ir.VOID, ir.Unreachable{}, line)

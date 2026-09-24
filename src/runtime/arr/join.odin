@@ -37,6 +37,20 @@ to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok:
 	return value.to_string(heap, v)
 }
 
+// to_primitive_string is ToString(ToPrimitive(v)), the string `+` joins. ToPrimitive asks an object
+// for its valueOf before its toString, so an object with a valueOf of its own answers ok = false,
+// as one with its own toString does. An array has neither, and its elements stay ToString.
+to_primitive_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok: bool) {
+	if v.tag == .Object {
+		for field in gc.table_of(heap, v.payload.ref).fields {
+			if field.name == "valueOf" {
+				return nil, false
+			}
+		}
+	}
+	return to_string(heap, v)
+}
+
 // append_string appends the units of ToString(v), so a caller that only reads the text makes no
 // cell for it. ok = false where to_string would refuse.
 append_string :: proc(units: ^[dynamic]u16, heap: ^gc.Heap, v: abi.Tagged) -> (ok: bool) {

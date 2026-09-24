@@ -3,12 +3,13 @@ The typed program becomes IR here. lower is the last phase that knows what TypeS
 the frozen Program and the typing facts of check, and answers a Program_IR in which every rule is an
 instruction. codegen below it knows only the instruction set.
 
-Scope of this build (T5.8): numbers, booleans, null, undefined, strings and their operations,
+Scope of this build (T5.9): numbers, booleans, null, undefined, strings and their operations,
 objects, arrays and their methods, `for...of`, functions, arrows and closures as values, calls
-direct and through a value, the whole of control flow, module initialization and the entry point.
-An arrow passed straight to map, filter, forEach or reduce is inlined where it is called. Union
-narrowing is part of the v1 language and is reported as Not_Lowered until T5.9 builds it, so a
-program outside the build gets a compile error with a place in it and never a wrong program.
+direct and through a value, unions and `any` with the checks of requirements 3.8 (unions.odin), the
+whole of control flow, module initialization and the entry point. An arrow passed straight to map,
+filter, forEach or reduce is inlined where it is called. What this build does not compile yet is
+reported as Not_Lowered, so a program outside the build gets a compile error with a place in it and
+never a wrong program.
 
 Shape of the output:
 - One IR function per module, init$m<N>, holding that module's top-level code.

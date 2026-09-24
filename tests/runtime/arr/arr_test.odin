@@ -28,6 +28,7 @@ VALUES :: NUMBERS + 3
 POINT :: NUMBERS + 4
 PRINTABLE :: NUMBERS + 5
 CLOSURE :: NUMBERS + 6
+VALUE_OF :: NUMBERS + 7
 
 TABLES := []abi.Type_Table {
 	{kind = .Array, size = size_of(abi.Array_Cell), element = .Number},
@@ -37,6 +38,7 @@ TABLES := []abi.Type_Table {
 	{kind = .Object, size = 16, fields = {{name = "x", offset = 8, kind = .Number}}},
 	{kind = .Object, size = 16, fields = {{name = "toString", offset = 8, kind = .Ref}}},
 	{kind = .Closure, size = size_of(abi.Closure_Cell)},
+	{kind = .Object, size = 16, fields = {{name = "valueOf", offset = 8, kind = .Ref}}},
 }
 
 @(test)

@@ -40,7 +40,7 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 		return set_type(c, id, narrowed)
 	case ast.Template:
 		for expression in v.expressions {
-			check_expression(c, expression)
+			check_string_operand(c, check_expression(c, expression), span_of(c, expression))
 		}
 		return set_type(c, id, STRING)
 	case ast.Unary:
@@ -214,6 +214,10 @@ check_unary :: proc(c: ^Checker, node: ast.Unary) -> Type_ID {
 				return literal_type(&c.table, -value)
 			}
 		}
+		if operand == ANY {
+			report_any(c, span_of(c, node.operand), operand_text(c, UNARY_TEXTS[node.op]))
+			return ERROR
+		}
 		if !based_on(c, operand, NUMBER) {
 			report(
 				c,
@@ -235,6 +239,10 @@ check_unary :: proc(c: ^Checker, node: ast.Unary) -> Type_ID {
 check_update :: proc(c: ^Checker, node: ast.Update) -> Type_ID {
 	operand := check_expression(c, node.operand)
 	_ = check_mutable(c, node.operand)
+	if operand == ANY {
+		report_any(c, span_of(c, node.operand), operand_text(c, UPDATE_TEXTS[node.op]))
+		return ERROR
+	}
 	if !based_on(c, operand, NUMBER) {
 		report(
 			c,
@@ -264,7 +272,8 @@ check_binary :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Binary) -> Type_ID 
 		return union_of(c, part_of(&c.table, left, .Not_Nullish), right)
 
 	case .Add:
-		return add_result(c, span_of(c, id), left, right)
+		spans := [2]source.Span{span_of(c, node.left), span_of(c, node.right)}
+		return add_result(c, BINARY_TEXTS[node.op], span_of(c, id), spans, left, right)
 	case .Subtract,
 	     .Multiply,
 	     .Divide,
@@ -279,7 +288,8 @@ check_binary :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Binary) -> Type_ID 
 		spans := [2]source.Span{span_of(c, node.left), span_of(c, node.right)}
 		return arithmetic_result(c, BINARY_TEXTS[node.op], spans, left, right)
 	case .Less, .Less_Equal, .Greater, .Greater_Equal:
-		return order_result(c, span_of(c, id), left, right)
+		spans := [2]source.Span{span_of(c, node.left), span_of(c, node.right)}
+		return order_result(c, BINARY_TEXTS[node.op], span_of(c, id), spans, left, right)
 	case .Strict_Equal, .Strict_Not_Equal:
 		// Requirements 3.7 asks nothing of `===` itself, but two types with no value in common make
 		// a comparison that is a mistake rather than a test, and tsc reports it as well.
@@ -295,16 +305,30 @@ check_binary :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Binary) -> Type_ID 
 
 // add_result stands apart because `+` is the one operator that works on two kinds of value: it adds
 // two numbers, or joins a string to anything.
+//
+// A value of type `any` is joined as a string like anything else, but next to anything but a string
+// `+` would have to decide at run time whether it adds or joins, which tsnc does not do.
 @(private)
-add_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) -> Type_ID {
+add_result :: proc(
+	c: ^Checker,
+	text: string,
+	span: source.Span,
+	spans: [2]source.Span,
+	left, right: Type_ID,
+) -> Type_ID {
 	if left == ERROR || right == ERROR {
 		return ERROR
 	}
-	if left == ANY || right == ANY {
-		return ANY
+	operands := [2]Type_ID{left, right}
+	for operand, i in operands {
+		if operand != ANY && based_on(c, operand, STRING) {
+			other := operands[1 - i]
+			check_string_operand(c, other, spans[1 - i])
+			return STRING
+		}
 	}
-	if based_on(c, left, STRING) || based_on(c, right, STRING) {
-		return STRING
+	if any_operands(c, text, spans, operands) {
+		return ERROR
 	}
 	if based_on(c, left, NUMBER) && based_on(c, right, NUMBER) {
 		return NUMBER
@@ -326,7 +350,11 @@ arithmetic_result :: proc(
 	operands := [2]Type_ID{left, right}
 	ok := true
 	for operand, i in operands {
-		if !based_on(c, operand, NUMBER) {
+		switch {
+		case operand == ANY:
+			report_any(c, spans[i], operand_text(c, text))
+			ok = false
+		case !based_on(c, operand, NUMBER):
 			report(c, .Operand_Not_Number, spans[i], text, text_of(c, operand))
 			ok = false
 		}
@@ -335,9 +363,18 @@ arithmetic_result :: proc(
 }
 
 @(private)
-order_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) -> Type_ID {
-	if left == ERROR || right == ERROR || left == ANY || right == ANY {
+order_result :: proc(
+	c: ^Checker,
+	text: string,
+	span: source.Span,
+	spans: [2]source.Span,
+	left, right: Type_ID,
+) -> Type_ID {
+	if left == ERROR || right == ERROR {
 		return BOOLEAN
+	}
+	if any_operands(c, text, spans, {left, right}) {
+		return ERROR
 	}
 	numbers := based_on(c, left, NUMBER) && based_on(c, right, NUMBER)
 	strings := based_on(c, left, STRING) && based_on(c, right, STRING)
@@ -535,8 +572,12 @@ check_member :: proc(
 	}
 
 	object := check_expression(c, node.object)
-	if object == ERROR || object == ANY {
-		return object, object
+	if object == ERROR {
+		return ERROR, ERROR
+	}
+	if object == ANY {
+		report_any(c, span_of(c, node.object), "have its fields read")
+		return ERROR, ERROR
 	}
 
 	field, found := field_of(c, object, node.name.text)
@@ -561,11 +602,20 @@ check_index :: proc(
 ) {
 	object := check_expression(c, node.object)
 	index := check_expression(c, node.index)
-	if !based_on(c, index, NUMBER) {
+	if index == ANY {
+		report_any(c, span_of(c, node.index), "be an index")
+	} else if !based_on(c, index, NUMBER) {
 		report_types(c, .Type_Mismatch, span_of(c, node.index), index, NUMBER)
 	}
-	if object == ERROR || object == ANY {
-		return object, object
+	if object == ERROR {
+		return ERROR, ERROR
+	}
+	if object == ANY {
+		report_any(c, span_of(c, node.object), "be indexed")
+		return ERROR, ERROR
+	}
+	if index == ANY {
+		return ERROR, ERROR
 	}
 
 	if array, is_array := c.table.types[object].(Array); is_array {
@@ -659,10 +709,41 @@ check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	}
 	// A binding that cannot take another value has been reported already. Measuring the value
 	// against the one type that binding will ever have would only say the same thing twice.
-	if writable && !fits(c, result, declared) {
-		report_assign_failure(c, span_of(c, node.value), result, declared)
+	if writable && !check_union_field_write(c, node.target, result, span_of(c, node.value)) {
+		if !fits(c, result, declared) {
+			report_assign_failure(c, span_of(c, node.value), result, declared)
+		}
 	}
 	return result
+}
+
+// check_union_field_write measures a write to a field of a union against that field in every
+// member, since the object may be any one of them, and answers whether the target was such a field.
+// The field of the union holds what any member holds, which would let `u.x = 1` into a member whose
+// `x` is a string; tsc has the same rule.
+@(private)
+check_union_field_write :: proc(
+	c: ^Checker,
+	target: ast.Node_ID,
+	value: Type_ID,
+	span: source.Span,
+) -> bool {
+	member, is_member := c.at.tree.nodes[target].variant.(ast.Member)
+	if !is_member || c.at.node_types == nil {
+		return false
+	}
+	object := c.at.node_types[member.object]
+	if _, is_union := c.table.types[object].(Union); !is_union {
+		return false
+	}
+	for one in union_members(c, object) {
+		field, found := field_of(c, one, member.name.text)
+		if found && !fits(c, value, field_read_type(c, field)) {
+			report_assign_failure(c, span, value, field_read_type(c, field))
+			break
+		}
+	}
+	return true
 }
 
 // compound_result answers the way the operator does, because `x += y` and its kin mean
@@ -673,7 +754,8 @@ compound_result :: proc(c: ^Checker, node: ast.Assign, target, value: Type_ID) -
 
 	switch node.op {
 	case .Add:
-		return add_result(c, value_span, target, value)
+		spans := [2]source.Span{target_span, value_span}
+		return add_result(c, ASSIGN_TEXTS[node.op], value_span, spans, target, value)
 	case .And:
 		return union_of(c, part_of(&c.table, target, .Falsy), value)
 	case .Or:
@@ -750,9 +832,12 @@ check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
 @(private)
 check_call :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Call) -> Type_ID {
 	callee := check_expression(c, node.callee)
+	if callee == ANY {
+		report_any(c, span_of(c, node.callee), "be called")
+	}
 	if callee == ERROR || callee == ANY {
 		check_loose_arguments(c, node.args)
-		return callee
+		return ERROR
 	}
 
 	signatures := make([dynamic]Type_ID, 0, 2, context.temp_allocator)
@@ -765,7 +850,9 @@ check_call :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Call) -> Type_ID {
 
 	for signature in signatures {
 		if arity_fits(c.table.types[signature].(Function), len(node.args)) {
-			return check_signature_call(c, id, node, signature)
+			result := check_signature_call(c, id, node, signature)
+			check_string_call(c, node)
+			return result
 		}
 	}
 

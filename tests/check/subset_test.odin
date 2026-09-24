@@ -144,3 +144,130 @@ changing_the_shape_of_an_object_is_already_closed :: proc(t: ^testing.T) {
 		[]Error{{.Unsafe_Assertion, 2, 20}},
 	)
 }
+
+// A function converted to a string (T2028) and an operation on `any` that JavaScript carries out by
+// converting the value or looking something up at run time (T2029), which tsnc does not do.
+
+@(test)
+a_function_converted_to_a_string_is_rejected :: proc(t: ^testing.T) {
+	// Node would give the function's source text, which a compiled program does not keep. `+=`
+	// joins either way round, so the function is reported on whichever side it stands.
+	expect_errors(
+		t,
+		lines(
+			`function f(): number { return 1; }`, //
+			"const a = `${f}`;",
+			`const b = String(f);`,
+			`const c = "x" + f;`,
+			`const d = f + "x";`,
+			`let e = "x";`,
+			`e += f;`,
+			`let g = f;`,
+			`g += "x";`,
+		),
+		[]Error {
+			{.Function_To_String, 2, 14},
+			{.Function_To_String, 3, 18},
+			{.Function_To_String, 4, 17},
+			{.Function_To_String, 5, 11},
+			{.Function_To_String, 7, 6},
+			{.Function_To_String, 9, 1},
+			{.Type_Mismatch, 9, 6},
+		},
+	)
+}
+
+@(test)
+a_union_that_may_hold_a_function_is_converted_at_run_time :: proc(t: ^testing.T) {
+	// The runtime refuses the function where the value turns out to be one.
+	expect_checked(
+		t,
+		lines(
+			`function show(v: (() => number) | string): string {`, //
+			"return `${v}` + v + String(v);",
+			`}`,
+		),
+	)
+}
+
+@(test)
+an_operation_on_any_that_converts_it_is_rejected :: proc(t: ^testing.T) {
+	// A number on the left used to hide the operand on the right: `n + a` compiled with a tagged
+	// operand and crashed at run time, and `n -= a` left n as it was.
+	c := expect_errors(
+		t,
+		lines(
+			`function f(a: any, n: number): number {`, //
+			`return n + a;`,
+			`}`,
+			`function g(a: any, n: number): number {`,
+			`return n * a;`,
+			`}`,
+			`function h(a: any, n: number): number {`,
+			`n -= a;`,
+			`return n;`,
+			`}`,
+		),
+		[]Error{{.Any_Operation, 2, 12}, {.Any_Operation, 5, 12}, {.Any_Operation, 8, 6}},
+	)
+	testing.expectf(
+		t,
+		strings.contains(rendered(c, 1), "a value of type `any` cannot be an operand of `*`"),
+		"%q",
+		rendered(c, 1),
+	)
+}
+
+@(test)
+every_operation_on_any_that_needs_a_lookup_is_rejected :: proc(t: ^testing.T) {
+	// Each is one message, where the value of type `any` stands, and the result is the error type.
+	expect_errors(
+		t,
+		lines(
+			`const a: any = 1;`, //
+			`let n = 0;`,
+			`const neg = -a;`,
+			`const plus = +a;`,
+			`const flip = ~a;`,
+			`const less = a < n;`,
+			`let b: any = 1;`,
+			`b++;`,
+			`const field = a.x;`,
+			`const item = a[0];`,
+			`const pick = [1][a];`,
+			`const called = a();`,
+			`for (const x of a) {}`,
+		),
+		[]Error {
+			{.Any_Operation, 3, 14},
+			{.Any_Operation, 4, 15},
+			{.Any_Operation, 5, 15},
+			{.Any_Operation, 6, 14},
+			{.Any_Operation, 8, 1},
+			{.Any_Operation, 9, 15},
+			{.Any_Operation, 10, 14},
+			{.Any_Operation, 11, 18},
+			{.Any_Operation, 12, 16},
+			{.Any_Operation, 13, 17},
+		},
+	)
+}
+
+@(test)
+any_joins_a_string_and_compares_without_a_conversion :: proc(t: ^testing.T) {
+	// ToString of a tagged value, `===`, truthiness, typeof and `??` all read the tag at run time.
+	c := expect_checked(
+		t,
+		lines(
+			`const a: any = 1;`, //
+			`const text = "n=" + a;`,
+			"const shown = `${a}`;",
+			`const same = a === 1;`,
+			`const truth = !a;`,
+			`const word = typeof a;`,
+			`const other = a ?? 2;`,
+		),
+	)
+	testing.expect_value(t, declared_text(c, "text"), "string")
+	testing.expect_value(t, declared_text(c, "other"), "any")
+}

@@ -87,11 +87,12 @@ NAMES := [abi.Runtime_Error]string {
 	.Internal                     = "internal error",
 	.Exit_Code_Not_Integer        = "process.exit code is not an integer",
 	.Fraction_Digits_Out_Of_Range = "toFixed() digits argument must be between 0 and 100",
-	.Not_Convertible_To_String    = "tsnc cannot convert a function, or an object with its own toString, to a string",
+	.Not_Convertible_To_String    = "tsnc cannot convert a function, or an object with its own toString or valueOf, to a string",
 	.Invalid_String_Length        = "Invalid string length",
 	.Not_Convertible_To_Number    = "tsnc cannot convert an object with its own valueOf or toString to a number",
 	.Not_Convertible_To_Json      = "tsnc cannot convert an object with its own toJSON to JSON",
 	.Reduce_Of_Empty_Array        = "Reduce of empty array with no initial value",
 	.Field_Holds_Other_Kind       = "a field holds a value its declared type does not allow",
 	.Value_Of_Other_Kind          = "a function was given or returned a value its declared type does not allow",
+	.Tagged_Holds_Other_Kind      = "a value holds a kind its type does not allow",
 }

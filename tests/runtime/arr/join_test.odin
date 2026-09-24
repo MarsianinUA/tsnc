@@ -186,6 +186,39 @@ to_string_joins_an_array_and_leaves_the_rest_to_value :: proc(t: ^testing.T) {
 	testing.expect_value(t, same, cell)
 }
 
+// `"" + x` asks ToPrimitive, which asks an object for its own valueOf before its toString; an
+// array's elements go through ToString, which does not:
+//
+//	node -e 'console.log("" + {valueOf: () => 1}, "" + [{valueOf: () => 1}], "" + {x: 1})'
+//
+// prints `1 [object Object] [object Object]`.
+@(test)
+to_primitive_string_refuses_an_object_with_its_own_value_of :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	own := object(gc.alloc(&heap, VALUE_OF, 16))
+	_, own_ok := arr.to_primitive_string(&heap, own)
+	testing.expect(t, !own_ok, "an object with its own valueOf converted")
+	text, text_ok := arr.to_string(&heap, own)
+	testing.expect(t, text_ok, "ToString asked for valueOf")
+	expect_ascii(t, text, "[object Object]")
+
+	holder := arr.new_array(&heap, REFS, 0)
+	arr.push(&heap, holder, own)
+	joined, joined_ok := arr.to_primitive_string(&heap, object(holder))
+	testing.expect(t, joined_ok, "an array holding such an object refused")
+	expect_ascii(t, joined, "[object Object]")
+
+	plain, plain_ok := arr.to_primitive_string(&heap, object(gc.alloc(&heap, POINT, 16)))
+	testing.expect(t, plain_ok, "a plain object refused")
+	expect_ascii(t, plain, "[object Object]")
+	digits, digits_ok := arr.to_primitive_string(&heap, number(1.5))
+	testing.expect(t, digits_ok, "a number refused")
+	expect_ascii(t, digits, "1.5")
+}
+
 expect_join :: proc(
 	t: ^testing.T,
 	heap: ^gc.Heap,

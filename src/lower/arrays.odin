@@ -138,7 +138,8 @@ element_place :: proc(
 	}
 	element, is_array := element_type(s, s.typed.node_types[node.object])
 	if type.kind != .Ref || !is_array {
-		later(s, span, "narrowing a union")
+		// check indexes an array or a string, and nothing else.
+		later(s, span, "indexing this value")
 		return nil, false
 	}
 	return Element_Place{array = array, index = index, type = element}, true
@@ -879,7 +880,8 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 	is_string := iterable != ir.NO_VALUE && value_type(s, iterable) == ir.STR
 	is_array &&= iterable != ir.NO_VALUE && value_type(s, iterable).kind == .Ref
 	if iterable != ir.NO_VALUE && !is_string && !is_array {
-		later(s, span, "narrowing a union")
+		// check loops over an array or a string, and nothing else.
+		later(s, span, "looping over this value")
 	}
 	if !is_string && !is_array || symbol == bind.NO_SYMBOL || s.refused[symbol] {
 		// Whatever is wrong was reported; the body is still walked for what it holds.

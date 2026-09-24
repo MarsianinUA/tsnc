@@ -173,7 +173,7 @@ a_tagged_value_is_two_words :: proc(t: ^testing.T) {
 	id := ir.declare_func(&p, "m1.tag", params[:], ir.F64, at(1))
 	f := ir.begin_func(&p, id)
 	boxed := ir.emit(&f, ir.TAGGED, ir.Box{value = 0}, at(2))
-	ir.emit(&f, ir.BOOL, ir.Tag_Test{value = boxed, tag = .Number}, at(2))
+	ir.emit(&f, ir.BOOL, ir.Tag_Test{value = boxed, tags = {.Number}}, at(2))
 	number := ir.emit(&f, ir.F64, ir.Unbox{value = boxed}, at(2))
 	ir.emit(&f, ir.TAGGED, ir.Const_Undefined{}, at(2))
 	ir.emit(&f, ir.TAGGED, ir.Const_Null{}, at(2))
@@ -193,6 +193,29 @@ a_tagged_value_is_two_words :: proc(t: ^testing.T) {
 		"icmp eq i64",
 	}
 	expect_text(t, text, wants)
+}
+
+// A set of tags is one comparison per tag and an OR of them; at -o:speed InstCombine turns
+// undefined|null, two neighbours, into one unsigned comparison.
+@(test)
+a_tag_test_of_a_set_compares_each_tag :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+
+	params := [?]ir.Type{ir.TAGGED}
+	id := ir.declare_func(&p, "m1.nullish", params[:], ir.BOOL, at(1))
+	f := ir.begin_func(&p, id)
+	test := ir.emit(&f, ir.BOOL, ir.Tag_Test{value = 0, tags = {.Undefined, .Null}}, at(2))
+	ir.emit(&f, ir.VOID, ir.Return{value = test}, at(3))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "tag-set")
+	if text == "" {
+		return
+	}
+	testing.expectf(t, strings.count(text, "icmp eq i64") == 2, "%s", text)
+	expect_text(t, text, {"or i1"})
 }
 
 // A module binding is a zeroed cell in the data segment, because abi.Tag.Undefined is zero: a

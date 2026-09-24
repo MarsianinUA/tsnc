@@ -36,7 +36,7 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 	#partial switch v in s.tree.nodes[node.callee].variant {
 	case ast.Member:
 		if ref.symbol == bind.NO_SYMBOL {
-			if _, is_lib := lib_root(s, v.object); !is_lib && is_object_type(s, v.object) {
+			if _, is_lib := lib_root(s, v.object); !is_lib && has_fields(s, v.object) {
 				return lower_closure_call(s, id, node, span) // a field that holds a function
 			}
 			return lower_method_call(s, id, node, v, span)
@@ -110,10 +110,6 @@ lower_closure_call :: proc(
 	span: source.Span,
 ) -> ir.Value_ID {
 	type := s.typed.node_types[node.callee]
-	if type == check.ANY {
-		// Nothing says what a value of type any takes and gives back.
-		return later(s, span, "calling a value of type any")
-	}
 	callee := lower_expression(s, node.callee)
 	if callee == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -302,12 +298,18 @@ lower_strategy :: proc(
 	return later(s, span, name)
 }
 
-// runtime_argument lowers an argument and hands it over in the C type its row declares: a tagged
-// value boxed, a reference as it is.
+// runtime_argument lowers an argument and hands it over in the C type its row declares: boxed for a
+// tagged parameter, where a narrowed read stays as it is (lower_raw), a reference as it is, and a
+// tagged value unboxed after a check where the parameter is static.
 @(private)
 runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) -> ir.Value_ID {
 	span := s.tree.nodes[arg].span
-	value := lower_expression(s, arg)
+	value: ir.Value_ID
+	if param == .Tagged {
+		value = lower_raw(s, arg)
+	} else {
+		value = lower_expression(s, arg)
+	}
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
@@ -322,9 +324,50 @@ runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) ->
 		#partial switch value_type(s, value).kind {
 		case .Str, .Ref, .Closure:
 			return value
+		case .Tagged:
+			// Every reference an argument of the lib passes here is a string: a search, a
+			// separator, a text.
+			return coerce(s, value, ir.STR, span)
 		}
 	}
 	return operand_not_lowered(s, value, span)
+}
+
+// optional_number hands over a number argument that may be undefined at run time as the number the
+// specification treats exactly as undefined there (abi.MISSING_END and its kin), which is what the
+// runtime takes for an argument the call leaves out.
+@(private)
+optional_number :: proc(
+	s: ^Func_State,
+	arg: ast.Node_ID,
+	missing: f64,
+	span: source.Span,
+) -> ir.Value_ID {
+	value := lower_expression(s, arg)
+	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED {
+		return coerce(s, value, ir.F64, s.tree.nodes[arg].span)
+	}
+	absent := ir.add_block(&s.fb)
+	given := ir.add_block(&s.fb)
+	join := ir.add_block(&s.fb)
+	branch := ir.Branch {
+		condition  = tag_test(s, value, {.Undefined}, span),
+		then_block = absent,
+		else_block = given,
+	}
+	ir.emit(&s.fb, ir.VOID, branch, span)
+
+	ir.use_block(&s.fb, absent)
+	stand_in := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = missing}, span)
+	left_out := here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+
+	ir.use_block(&s.fb, given)
+	number := unbox_checked(s, value, ir.F64, .Tagged_Holds_Other_Kind, s.tree.nodes[arg].span)
+	passed := here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+
+	return join_values(s, join, {left_out, passed}, {stand_in, number}, ir.F64, span)
 }
 
 // lower_runtime stays quiet about a call with the wrong count: check already reported it.
@@ -371,6 +414,8 @@ lower_method :: proc(
 	complete := true
 	for param, i in params[1:] {
 		switch {
+		case i < len(node.args) && param == .Number:
+			args[i + 1] = optional_number(s, node.args[i], method.missing[i], span)
 		case i < len(node.args):
 			args[i + 1] = runtime_argument(s, node.args[i], param)
 		case param == .Number:
@@ -399,12 +444,8 @@ number_args :: proc(s: ^Func_State, node: ast.Call, want: int) -> ([]ir.Value_ID
 	}
 	args := make([]ir.Value_ID, want, context.temp_allocator)
 	for id, i in node.args {
-		args[i] = lower_expression(s, id)
+		args[i] = coerce(s, lower_expression(s, id), ir.F64, s.tree.nodes[id].span)
 		if args[i] == ir.NO_VALUE {
-			return nil, false
-		}
-		if value_type(s, args[i]) != ir.F64 {
-			operand_not_lowered(s, args[i], s.tree.nodes[id].span)
 			return nil, false
 		}
 	}
@@ -458,12 +499,13 @@ lower_console :: proc(
 	return ir.NO_VALUE
 }
 
-// console_argument boxes the argument into the tagged value the runtime takes. An argument typed
-// undefined or null is that constant whatever lowering it answered.
+// console_argument boxes the argument into the tagged value the runtime takes, so a narrowed read
+// stays as it is (lower_raw). An argument typed undefined or null is that constant whatever
+// lowering it answered.
 @(private)
 console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	value := lower_expression(s, id)
+	value := lower_raw(s, id)
 	switch s.typed.node_types[id] {
 	case check.UNDEFINED:
 		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
@@ -479,12 +521,9 @@ console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 lower_process_exit :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	code := ir.NO_VALUE
 	if len(node.args) > 0 {
-		code = lower_expression(s, node.args[0])
+		code = optional_number(s, node.args[0], 0, span)
 		if code == ir.NO_VALUE {
 			return ir.NO_VALUE
-		}
-		if value_type(s, code) != ir.F64 {
-			return operand_not_lowered(s, code, span)
 		}
 	} else {
 		code = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
