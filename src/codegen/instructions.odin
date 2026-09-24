@@ -9,10 +9,6 @@ One case per variant of ir.Variant, in the order the union declares them, so thi
 src/ir/instructions.odin read side by side. The instruction set is closed: a new variant there is a
 new case here.
 
-Call_Closure is the one case that reports itself unsupported: calling a function value needs the
-closure convention of T5.8. lower refuses every construct that would build one (Not_Lowered, T2027),
-so no program reaches it.
-
 A cell is addressed in bytes: a field and the length of an array or a string sit at the offsets abi
 gives them, and an element is a slot of its kind's storage type in the buffer the array points at.
 */
@@ -24,12 +20,19 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		llvm.LLVMBuildUnreachable(m.builder)
 
 	case ir.Param:
-		// A function that captures takes its environment ahead of the TypeScript parameters.
-		index := u32(v.index)
-		if body.func.env != ir.NO_LAYOUT {
-			index += 1
+		// The environment comes first, and every tagged parameter before this one takes two words.
+		index := u32(1)
+		for type in body.func.params[:v.index] {
+			index += 2 if type.kind == .Tagged else 1
 		}
-		body.values[value] = llvm.LLVMGetParam(body.function, index)
+		type := body.func.params[v.index]
+		if type.kind == .Tagged {
+			tag := llvm.LLVMGetParam(body.function, index)
+			payload := llvm.LLVMGetParam(body.function, index + 1)
+			body.values[value] = tagged_words(m, tag, payload)
+		} else {
+			body.values[value] = from_storage(m, llvm.LLVMGetParam(body.function, index), type)
+		}
 
 	case ir.Const_Number:
 		// The bits as lower computed them: -0, NaN and the infinities are all reachable.
@@ -126,31 +129,52 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		stored := to_storage(m, body.values[v.value], type)
 		llvm.LLVMBuildStore(m.builder, stored, m.globals[v.global])
 
-	case ir.Call:
-		// lower calls only functions that capture nothing; a closure goes through call_closure.
-		assert(
-			m.program.funcs[v.func].env == ir.NO_LAYOUT,
-			"a direct call to a function with an environment",
-		)
-		callee := m.funcs[v.func]
-		args := make([]llvm.LLVMValueRef, len(v.args), context.temp_allocator)
-		for arg, i in v.args {
-			args[i] = body.values[arg]
+	case ir.Env:
+		body.values[value] = llvm.LLVMGetParam(body.function, 0)
+
+	case ir.Func_Ref:
+		body.values[value] = static_closure(m, v.func)
+
+	case ir.Make_Closure:
+		// The cell comes zero filled, so a function with no environment leaves that word null.
+		table := [?]llvm.LLVMValueRef {
+			llvm.LLVMConstInt(m.types.int64, u64(abi.Builtin_Table.Closure), false),
 		}
-		result := llvm.LLVMBuildCall2(
-			m.builder,
-			callee.signature,
-			callee.function,
-			raw_data(args),
-			u32(len(args)),
-			"",
-		)
+		cell := call_runtime(m, .Alloc, table[:])
+		code := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, code)))
+		llvm.LLVMBuildStore(m.builder, m.funcs[v.func].function, code)
+		if v.env != ir.NO_VALUE {
+			env := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, env)))
+			llvm.LLVMBuildStore(m.builder, body.values[v.env], env)
+		}
+		info := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, info)))
+		llvm.LLVMBuildStore(m.builder, function_info(m, v.func), info)
+		body.values[value] = cell
+
+	case ir.Call:
+		// A direct call names a function with no environment, which takes a null one.
+		callee := m.funcs[v.func]
+		env := llvm.LLVMConstNull(m.types.ptr)
+		result := call_function(m, body, callee.signature, callee.function, env, v.args)
 		if instruction.type != ir.VOID {
-			body.values[value] = result
+			body.values[value] = from_storage(m, result, instruction.type)
 		}
 
 	case ir.Call_Closure:
-		unsupported(m, "call_closure")
+		cell := body.values[v.callee]
+		code_address := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, code)))
+		code := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, code_address, "")
+		env_address := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, env)))
+		env := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, env_address, "")
+		params := make([]ir.Type, len(v.args), context.temp_allocator)
+		for arg, i in v.args {
+			params[i] = body.func.values[arg].type
+		}
+		signature := closure_signature(m, params, instruction.type)
+		result := call_function(m, body, signature, code, env, v.args)
+		if instruction.type != ir.VOID {
+			body.values[value] = from_storage(m, result, instruction.type)
+		}
 
 	case ir.Call_Runtime:
 		exports := abi.RUNTIME_EXPORTS
@@ -218,7 +242,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		if v.value == ir.NO_VALUE {
 			llvm.LLVMBuildRetVoid(m.builder)
 		} else {
-			llvm.LLVMBuildRet(m.builder, body.values[v.value])
+			llvm.LLVMBuildRet(m.builder, to_storage(m, body.values[v.value], body.func.result))
 		}
 
 	case ir.Fail:
@@ -232,6 +256,39 @@ build_fail :: proc(m: ^Module, site: ir.Fail_Site_ID) {
 	args := [?]llvm.LLVMValueRef{m.fail_sites[site]}
 	call_runtime(m, .Fail, args[:])
 	llvm.LLVMBuildUnreachable(m.builder)
+}
+
+// call_function passes the environment, then each argument the way closure_signature takes it: a
+// boolean widened, a tagged value split into its two words.
+@(private)
+call_function :: proc(
+	m: ^Module,
+	body: ^Body,
+	signature: llvm.LLVMTypeRef,
+	function, env: llvm.LLVMValueRef,
+	args: []ir.Value_ID,
+) -> llvm.LLVMValueRef {
+	values := make([dynamic]llvm.LLVMValueRef, 0, 1 + 2 * len(args), context.temp_allocator)
+	append(&values, env)
+	for arg in args {
+		type := body.func.values[arg].type
+		operand := body.values[arg]
+		if type.kind == .Tagged {
+			tag := llvm.LLVMBuildExtractValue(m.builder, operand, 0, "")
+			payload := llvm.LLVMBuildExtractValue(m.builder, operand, 1, "")
+			append(&values, tag, payload)
+		} else {
+			append(&values, to_storage(m, operand, type))
+		}
+	}
+	return llvm.LLVMBuildCall2(
+		m.builder,
+		signature,
+		function,
+		raw_data(values),
+		u32(len(values)),
+		"",
+	)
 }
 
 // call_runtime passes the arguments as they stand: the caller has spelled each in the C type its
@@ -477,13 +534,12 @@ build_box :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.L
 		// The verifier keeps both out of box.
 		unreachable()
 	}
-	tagged := llvm.LLVMBuildInsertValue(
-		m.builder,
-		llvm.LLVMGetUndef(m.types.tagged),
-		llvm.LLVMConstInt(m.types.int64, u64(tag), false),
-		0,
-		"",
-	)
+	return tagged_words(m, llvm.LLVMConstInt(m.types.int64, u64(tag), false), payload)
+}
+
+@(private)
+tagged_words :: proc(m: ^Module, tag, payload: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+	tagged := llvm.LLVMBuildInsertValue(m.builder, llvm.LLVMGetUndef(m.types.tagged), tag, 0, "")
 	return llvm.LLVMBuildInsertValue(m.builder, tagged, payload, 1, "")
 }
 
@@ -518,13 +574,4 @@ from_storage :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llv
 		return llvm.LLVMBuildTrunc(m.builder, value, m.types.int1, "")
 	}
 	return value
-}
-
-// unsupported keeps only the first mnemonic: build_func stops there, and emit turns it into an
-// error rather than a half built module.
-@(private)
-unsupported :: proc(m: ^Module, mnemonic: string) {
-	if m.unsupported == "" {
-		m.unsupported = mnemonic
-	}
 }

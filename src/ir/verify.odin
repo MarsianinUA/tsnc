@@ -40,6 +40,12 @@ Violation_Kind :: enum u8 {
 	Unchecked_Index, // an element access whose index is not the answer of a bounds check
 	Unknown_Id, // a layout, global, string, fail site or function that is not in the program
 	Entry_Signature, // an entry point that does not take nothing and return void
+	// An environment that does not match the function: an Env in a function without one, an env
+	// that is no Environment layout, a direct call or a Func_Ref of a function with one, a
+	// Make_Closure env operand that does not match it, a closure of the entry point or of an
+	// undescribed function, an entry point with one. A box and a one-slot environment intern to one
+	// layout, so which of the two a value is escapes this check; lower owns that.
+	Environment,
 }
 
 // Violation has block NO_BLOCK and value NO_VALUE when nothing smaller than the function is at
@@ -93,6 +99,14 @@ verify_func :: proc(c: ^Checker, id: Func_ID) {
 	c.body = c.program.funcs[id]
 	c.block = NO_BLOCK
 	c.value = NO_VALUE
+
+	if c.body.env != NO_LAYOUT {
+		if table, known := layout_of(c, c.body.env); !known {
+			report(c, .Unknown_Id)
+		} else if table.kind != .Environment {
+			report(c, .Environment)
+		}
+	}
 
 	blocks := len(c.body.blocks)
 	values := len(c.body.values)
@@ -565,12 +579,46 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_operand(c, v.value, global.type)
 		expect_result(c, VOID)
 
+	case Env:
+		if c.body.env == NO_LAYOUT {
+			report(c, .Environment)
+			return
+		}
+		expect_result(c, ref(c.body.env))
+
+	case Func_Ref:
+		callee, known := closure_of(c, v.func)
+		if known && callee.env != NO_LAYOUT {
+			report(c, .Environment)
+		}
+		expect_result(c, CLOSURE)
+
+	case Make_Closure:
+		callee, known := closure_of(c, v.func)
+		switch {
+		case !known:
+		case callee.env == NO_LAYOUT:
+			if v.env != NO_VALUE {
+				report(c, .Environment)
+			}
+		case v.env == NO_VALUE:
+			report(c, .Environment)
+		case:
+			if type, env_known := operand(c, v.env); env_known && type != ref(callee.env) {
+				report(c, .Environment)
+			}
+		}
+		expect_result(c, CLOSURE)
+
 	case Call:
 		if int(v.func) >= len(c.program.funcs) {
 			report(c, .Unknown_Id)
 			return
 		}
 		callee := c.program.funcs[v.func]
+		if callee.env != NO_LAYOUT {
+			report(c, .Environment)
+		}
 		if len(v.args) != len(callee.params) {
 			report(c, .Argument_Count)
 		}
@@ -736,6 +784,24 @@ expect_entry_signature :: proc(c: ^Checker, id: Func_ID) {
 	if len(body.params) != 0 || body.result != VOID {
 		report(c, .Entry_Signature)
 	}
+	if body.env != NO_LAYOUT {
+		report(c, .Environment)
+	}
+}
+
+// closure_of answers the function a closure is made of. The entry point is none: the runtime calls
+// it by its symbol, in a convention of its own.
+@(private)
+closure_of :: proc(c: ^Checker, id: Func_ID) -> (callee: Func, known: bool) {
+	if int(id) >= len(c.program.funcs) {
+		report(c, .Unknown_Id)
+		return
+	}
+	callee = c.program.funcs[id]
+	if id == c.program.main || callee.info == nil {
+		report(c, .Environment)
+	}
+	return callee, true
 }
 
 // operand answers the type of a value the instruction being checked reads, and reports a value that

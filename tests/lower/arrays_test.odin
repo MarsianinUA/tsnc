@@ -1,6 +1,5 @@
 package lower_tests
 
-import "core:slice"
 import "core:testing"
 
 import "../../src/abi"
@@ -197,11 +196,16 @@ for_of_walks_an_array_and_a_string_by_code_point :: proc(t: ^testing.T) {
 }
 
 @(test)
-sorting_with_a_comparator_is_reported :: proc(t: ^testing.T) {
-	result := expect_later(
-		t,
-		"const xs = [2, 1];\nconsole.log(xs.sort((a, b) => a - b));\n",
-		{{.Not_Lowered, 2, 13}},
-	)
-	testing.expect(t, slice.equal(result.constructs, []string{"sorting with a comparator"}))
+sorting_with_a_comparator_hands_the_runtime_a_closure :: proc(t: ^testing.T) {
+	result := lower_text(t, "const xs = [2, 1];\nconsole.log(xs.sort((a, b) => a - b));\n")
+	init, _ := func_named(result.output, "init$m1")
+	sorts := instructions_of(init, ir.Call_Runtime)
+	found := false
+	for call in sorts {
+		if call.export == .Array_Sort {
+			_, made := init.values[call.args[1]].variant.(ir.Make_Closure)
+			found ||= made
+		}
+	}
+	testing.expectf(t, found, "%s", result.text)
 }

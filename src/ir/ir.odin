@@ -30,6 +30,12 @@ Node prints an object's properties in the order the literal wrote them, so `{a, 
 one layout, one IR type, and two rows. Only the header of a cell names a table row, through
 Alloc.table; every type names the layout itself, which Program_IR.base gives for any row.
 
+A function value is a Closure, a reference to an abi.Closure_Cell. Func_Ref answers the one static
+cell of a module-level function, Make_Closure a new cell holding the environment its caller built
+with an Alloc of an Environment layout, Env hands that environment to the body, and Call_Closure
+calls through a cell. A closure carries no signature: whoever calls one passes the parameters of
+the function behind it, which lower guarantees.
+
 Failure sites are resolved here rather than in codegen. abi.Fail_Site wants a path, a line and a
 column, and only source can turn a byte offset into a line and a column; codegen depends on ir, abi,
 target and llvm, not on source. So lower resolves the position and Program_IR carries the sites.
@@ -129,8 +135,18 @@ Func :: struct {
 	params: []Type,
 	result: Type,
 	env:    Layout_ID, // NO_LAYOUT when the function captures nothing
+	// What the console prints of the function as a value; set by describe_func, and only for a
+	// function the program makes a closure of.
+	info:   Maybe(Func_Info),
 	blocks: []Block, // blocks[ENTRY] is the entry block
 	values: []Instruction, // indexed by Value_ID, in the order they were emitted
+}
+
+// Func_Info is the IR side of abi.Function_Info, which codegen emits once per described function.
+Func_Info :: struct {
+	name:          String_ID, // the empty string for an anonymous function
+	length:        i32,
+	has_prototype: bool,
 }
 
 // Unit is the part of the program one codegen call compiles into one LLVM module. v1 has one unit

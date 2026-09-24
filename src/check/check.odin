@@ -86,14 +86,16 @@ Check_Result :: struct {
 	partition: []source.File_ID, // in the order they were given
 	types:     []Type, // indexed by Type_ID
 	files:     []Typed_File, // one per partition entry, in the same order
-	// Every flow of an object into another object type the rules accepted, sorted by (source,
-	// target) with no repeats. lower gives both one layout, so the value that flows is the same
-	// object with no copy, as in Node.
+	// Every flow of an object into another object type, or of a function into another function
+	// type, the rules accepted, sorted by (source, target) with no repeats. lower gives two objects
+	// one layout and two functions one signature, so the value that flows is the same object or the
+	// same function with no copy, as in Node.
 	widenings: []Widening,
 }
 
-// Widening is an object type accepted where another object type was expected: `const b: B = a`, an
-// argument, a return, a field of either, a member of a union.
+// Widening is an object type accepted where another object type was expected, or a function type
+// where another function type was: `const b: B = a`, an argument, a return, a field of either, a
+// member of a union, a parameter or the result of a function that flows.
 Widening :: struct {
 	source: Type_ID,
 	target: Type_ID,
@@ -376,14 +378,15 @@ span_of :: proc(c: ^Checker, id: ast.Node_ID) -> source.Span {
 // back here, so no second comparison can be running while this one is.
 //
 // A yes records the widenings it accepted, whoever asked. Nothing filters by the question: a pair
-// recorded where no value flows only joins two layouts that need not have been joined.
+// recorded where no value flows only joins two layouts that need not have been joined. `functions`
+// false leaves out the pair of two function types at the top of the flow (list_widenings).
 @(private)
-fits :: proc(c: ^Checker, source, target: Type_ID) -> bool {
+fits :: proc(c: ^Checker, source, target: Type_ID, functions := true) -> bool {
 	clear(&c.trail)
 	if !assignable(c.table.types[:], source, target, &c.trail) {
 		return false
 	}
-	list_widenings(c.table.types[:], source, target, &c.widenings, &c.trail)
+	list_widenings(c.table.types[:], source, target, &c.widenings, &c.trail, functions)
 	return true
 }
 

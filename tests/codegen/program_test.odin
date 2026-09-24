@@ -150,8 +150,8 @@ main_runs_every_module_init :: proc(t: ^testing.T) {
 	// LLVM quotes a symbol that holds a dollar sign; lower spells a module init init$m<file>.
 	wants := []string {
 		"define void @tsnc_main()",
-		"call void @\"init$m1\"()",
-		"define internal void @\"init$m1\"()",
+		"call void @\"init$m1\"(ptr null)",
+		"define internal void @\"init$m1\"(ptr %env)",
 		"@m1.x = internal global double",
 	}
 	expect_text(t, text, wants)

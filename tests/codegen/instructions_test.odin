@@ -1,14 +1,12 @@
 package codegen_tests
 
 import "core:fmt"
-import "core:log"
 import "core:strings"
 import "core:testing"
 
 import "../../src/abi"
 import "../../src/codegen"
 import "../../src/ir"
-import "../../src/target"
 
 /*
 Instruction level tests, on IR built by hand. They emit at level none on purpose: the LLVM builder
@@ -345,10 +343,10 @@ a_runtime_call_passes_its_rest_in_one_stack_array :: proc(t: ^testing.T) {
 	}
 	wants := []string {
 		"alloca [3 x %tsnc.tagged]",
-		"getelementptr inbounds %tsnc.tagged, ptr %2, i64 2",
-		"store %tsnc.tagged %0, ptr %",
-		"call void @tsnc_console_log(i64 0, ptr %2, i64 3)",
-		"call void @tsnc_console_log(i64 0, ptr %2, i64 1)",
+		"getelementptr inbounds %tsnc.tagged, ptr %4, i64 2",
+		"store %tsnc.tagged %6, ptr %",
+		"call void @tsnc_console_log(i64 0, ptr %4, i64 3)",
+		"call void @tsnc_console_log(i64 0, ptr %4, i64 1)",
 		"call void @tsnc_console_log(i64 0, ptr null, i64 0)",
 	}
 	expect_text(t, text, wants)
@@ -376,10 +374,10 @@ a_runtime_call_splits_a_tagged_value :: proc(t: ^testing.T) {
 	}
 	wants := []string {
 		"declare i64 @tsnc_value_equal(i64, i64, i64, i64)",
-		"extractvalue %tsnc.tagged %0, 0",
-		"extractvalue %tsnc.tagged %0, 1",
-		"extractvalue %tsnc.tagged %1, 0",
-		"extractvalue %tsnc.tagged %1, 1",
+		"extractvalue %tsnc.tagged %5, 0",
+		"extractvalue %tsnc.tagged %5, 1",
+		"extractvalue %tsnc.tagged %7, 0",
+		"extractvalue %tsnc.tagged %7, 1",
 		"call i64 @tsnc_value_equal(i64 ",
 	}
 	expect_text(t, text, wants)
@@ -546,7 +544,7 @@ the_heap_instructions_pass_the_llvm_verifier :: proc(t: ^testing.T) {
 		wants := []string {
 			"declare ptr @tsnc_alloc(i64)",
 			"declare ptr @tsnc_array_new(i64, double)",
-			"call ptr @tsnc_alloc(i64 3)", // the reordered row, after two builtin tables
+			"call ptr @tsnc_alloc(i64 4)", // the reordered row, after three builtin tables
 			"call void @tsnc_fail(ptr @fail_site",
 			"fptosi double",
 			"store %tsnc.tagged",
@@ -611,36 +609,121 @@ a_phi_after_a_bounds_check_names_the_tail_block :: proc(t: ^testing.T) {
 	)
 }
 
-// An instruction whose runtime arrives with T5.8 is an error, not a crash. lower refuses every
-// construct that would build one, so no program reaches this.
+// Every function but the entry point takes the closure convention of abi.Closure_Cell: the
+// environment first, null in a direct call, a boolean as i64 both ways and a tagged value as its two
+// words.
 @(test)
-an_instruction_without_a_runtime_is_an_error :: proc(t: ^testing.T) {
+a_function_takes_the_closure_convention :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	main := declare_main(&p)
 
-	params := [?]ir.Type{ir.CLOSURE}
-	id := ir.declare_func(&p, "m1.call", params[:], ir.VOID, at(1))
+	params := [?]ir.Type{ir.BOOL, ir.TAGGED, ir.F64}
+	id := ir.declare_func(&p, "m1.pick", params[:], ir.BOOL, at(1))
 	f := ir.begin_func(&p, id)
-	ir.emit(&f, ir.VOID, ir.Call_Closure{callee = 0}, at(2))
-	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(3))
+	args := [?]ir.Value_ID{0, 1, 2}
+	picked := ir.emit(&f, ir.BOOL, ir.Call{func = id, args = args[:]}, at(2))
+	ir.emit(&f, ir.VOID, ir.Return{value = picked}, at(3))
 	ir.end_func(&f)
 
 	output := finish_program(t, &p, main)
-	err: codegen.Error
-	{
-		// emit names the instruction at error level, and the test runner fails a test on any error
-		// log.
-		context.logger = log.nil_logger()
-		err = codegen.emit(
-			&output,
-			output.units[0],
-			target.HOST,
-			.none,
-			.LLVM_IR,
-			"dist/codegen-closure.ll",
-		)
+	text := llvm_text(t, &output, "convention")
+	if text == "" {
+		return
 	}
-	testing.expect_value(t, err, codegen.Error.Unsupported_Instruction)
+	wants := []string {
+		"define void @tsnc_main()",
+		"define internal i64 @m1.pick(ptr %env, i64 %0, i64 %1, i64 %2, double %3)",
+		"trunc i64 %0 to i1",
+		"insertvalue %tsnc.tagged undef, i64 %1, 0",
+		"call i64 @m1.pick(ptr null, i64 ",
+		"zext i1 ",
+	}
+	expect_text(t, text, wants)
+}
+
+// A call through a closure loads the code and the environment out of the cell and calls the code in
+// the convention its arguments and its result spell.
+@(test)
+a_closure_call_reads_code_and_environment :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+
+	params := [?]ir.Type{ir.CLOSURE, ir.F64}
+	id := ir.declare_func(&p, "m1.apply", params[:], ir.F64, at(1))
+	f := ir.begin_func(&p, id)
+	args := [?]ir.Value_ID{1}
+	answer := ir.emit(&f, ir.F64, ir.Call_Closure{callee = 0, args = args[:]}, at(2))
+	ir.emit(&f, ir.VOID, ir.Return{value = answer}, at(3))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "closure-call")
+	if text == "" {
+		return
+	}
+	wants := []string {
+		"getelementptr inbounds i8, ptr %0, i64 8",
+		"getelementptr inbounds i8, ptr %0, i64 16",
+		"(ptr %", // the environment the cell held, then the argument
+		", double %1)",
+	}
+	expect_text(t, text, wants)
+}
+
+// A closure with an environment is a new cell of the builtin closure table every time; a function
+// with none has one static cell, which every read answers. Both point at one Function_Info.
+@(test)
+a_closure_is_a_new_cell_or_a_static_one :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+
+	slots := [?]abi.Slot_Kind{.Number}
+	env := ir.environment_layout(&p, slots[:])
+	params := [?]ir.Type{ir.F64}
+	inner := ir.declare_func(&p, "m1.inner$9", params[:], ir.F64, at(1), env)
+	ir.describe_func(&p, inner, "inner", 1, true)
+	{
+		f := ir.begin_func(&p, inner)
+		cell := ir.emit(&f, ir.ref(env), ir.Env{}, at(2))
+		held := ir.emit(&f, ir.F64, ir.Field_Load{cell = cell, field = 0}, at(2))
+		ir.emit(&f, ir.VOID, ir.Return{value = held}, at(2))
+		ir.end_func(&f)
+	}
+	plain := ir.declare_func(&p, "m1.plain", nil, ir.VOID, at(3))
+	ir.describe_func(&p, plain, "", 0, false)
+	{
+		f := ir.begin_func(&p, plain)
+		ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(3))
+		ir.end_func(&f)
+	}
+	outer := ir.declare_func(&p, "m1.outer", params[:], ir.VOID, at(4))
+	{
+		f := ir.begin_func(&p, outer)
+		cell := ir.emit(&f, ir.ref(env), ir.Alloc{layout = env}, at(5))
+		ir.emit(&f, ir.VOID, ir.Field_Store{cell = cell, field = 0, value = 0}, at(5))
+		ir.emit(&f, ir.CLOSURE, ir.Make_Closure{func = inner, env = cell}, at(5))
+		ir.emit(&f, ir.CLOSURE, ir.Make_Closure{func = plain, env = ir.NO_VALUE}, at(6))
+		ir.emit(&f, ir.CLOSURE, ir.Func_Ref{func = plain}, at(7))
+		ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(8))
+		ir.end_func(&f)
+	}
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "closure-cells")
+	if text == "" {
+		return
+	}
+	wants := []string {
+		"@m1.plain.closure = private constant { i32, i32, ptr, ptr, ptr } { i32 2, i32 0, ptr @m1.plain, ptr null, ptr @m1.plain.info }",
+		"@m1.plain.info = private unnamed_addr constant { ptr, i64, i8 } { ptr @str",
+		", i64 0, i8 0 }",
+		", i64 1, i8 1 }",
+		"call ptr @tsnc_alloc(i64 2)",
+		"store ptr @\"m1.inner$9\", ptr %",
+		"store ptr @\"m1.inner$9.info\", ptr %",
+		"ret void",
+	}
+	expect_text(t, text, wants)
 }
 
 @(private = "file")

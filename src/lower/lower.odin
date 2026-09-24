@@ -3,16 +3,17 @@ The typed program becomes IR here. lower is the last phase that knows what TypeS
 the frozen Program and the typing facts of check, and answers a Program_IR in which every rule is an
 instruction. codegen below it knows only the instruction set.
 
-Scope of this build (T5.7): numbers, booleans, null, undefined, strings and their operations,
-objects, arrays and their methods, `for...of`, functions that capture nothing, calls, the whole of
-control flow, module initialization and the entry point. An arrow passed straight to map, filter,
-forEach or reduce is inlined where it is called. Function values, closures and union narrowing are
-part of the v1 language and are reported as Not_Lowered until T5.8 and T5.9 build them, so a program
-outside the build gets a compile error with a place in it and never a wrong program.
+Scope of this build (T5.8): numbers, booleans, null, undefined, strings and their operations,
+objects, arrays and their methods, `for...of`, functions, arrows and closures as values, calls
+direct and through a value, the whole of control flow, module initialization and the entry point.
+An arrow passed straight to map, filter, forEach or reduce is inlined where it is called. Union
+narrowing is part of the v1 language and is reported as Not_Lowered until T5.9 builds it, so a
+program outside the build gets a compile error with a place in it and never a wrong program.
 
 Shape of the output:
 - One IR function per module, init$m<N>, holding that module's top-level code.
-- One IR function per TypeScript function declaration, m<N>.<name>.
+- One IR function per TypeScript function declaration, m<N>.<name>, and per arrow that is not
+  inlined, m<N>.<name>$<node>, named after the binding it initializes or `arrow`.
 - One IR global per module-level binding, m<N>.<name>.
 - tsnc_main calls the module init functions in turn and returns. First it fills the global
   process.argv, which exists only in a program that reads it.
@@ -67,22 +68,31 @@ Facts :: struct {
 }
 
 Lowering :: struct {
-	prog:        ^program.Program,
-	facts:       []Facts, // indexed by source.File_ID
-	reachable:   []bool, // indexed by source.File_ID: reached from ENTRY over value imports
-	builder:     ir.Program_Builder,
-	funcs:       map[Decl_Key]ir.Func_ID, // by ast.Function_Decl
-	globals:     map[Decl_Key]ir.Global_ID, // by ast.Declarator
+	prog:            ^program.Program,
+	facts:           []Facts, // indexed by source.File_ID
+	reachable:       []bool, // indexed by source.File_ID: reached from ENTRY over value imports
+	builder:         ir.Program_Builder,
+	funcs:           map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
+	globals:         map[Decl_Key]ir.Global_ID, // by ast.Declarator
+	closures:        []File_Closures, // indexed by source.File_ID; a file that runs only
 	// argv holds process.argv, made the first time the program reads it and filled once by main.
-	argv:        Maybe(ir.Global_ID),
+	argv:            Maybe(ir.Global_ID),
 	// The widening classes (types.odin), built before any body: the node of each shallow key that
 	// takes part in a widening, the union-find link of each node, and each node's slots, which a
 	// class root holds joined over the whole class.
-	classes:     map[string]int,
-	class_links: [dynamic]int,
-	class_slots: [dynamic][]ir.Slot,
-	diagnostics: [dynamic]diag.Diagnostic,
-	allocator:   runtime.Allocator,
+	classes:         map[string]int,
+	class_links:     [dynamic]int,
+	class_slots:     [dynamic][]ir.Slot,
+	// The signature classes (types.odin), built the same way over the signature of each function
+	// type that takes part in a flow.
+	signatures:      map[string]int,
+	signature_links: [dynamic]int,
+	signature_joins: [dynamic]Signature,
+	// The comparators that adapt a closure to what the array sort calls (arrays.odin), by the class
+	// signature, the element kind and the number of arguments the closure takes.
+	sort_adapters:   map[string]ir.Func_ID,
+	diagnostics:     [dynamic]diag.Diagnostic,
+	allocator:       runtime.Allocator,
 }
 
 // lower borrows the program and the check results, which must outlive the answer, and reports every
@@ -101,25 +111,33 @@ lower :: proc(
 	// Only the builder and the diagnostics outlive the call; the tables that answer "where does
 	// this name live" are scratch, and ir.finish copies the initialization order it is given.
 	low := Lowering {
-		prog        = prog,
-		facts       = make([]Facts, len(prog.files), context.temp_allocator),
-		reachable   = make([]bool, len(prog.files), context.temp_allocator),
-		builder     = ir.make_builder(allocator),
-		funcs       = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
-		globals     = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
-		classes     = make(map[string]int, context.temp_allocator),
-		class_links = make([dynamic]int, context.temp_allocator),
-		class_slots = make([dynamic][]ir.Slot, context.temp_allocator),
-		diagnostics = make([dynamic]diag.Diagnostic, allocator),
-		allocator   = allocator,
+		prog            = prog,
+		facts           = make([]Facts, len(prog.files), context.temp_allocator),
+		reachable       = make([]bool, len(prog.files), context.temp_allocator),
+		builder         = ir.make_builder(allocator),
+		funcs           = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
+		globals         = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
+		closures        = make([]File_Closures, len(prog.files), context.temp_allocator),
+		classes         = make(map[string]int, context.temp_allocator),
+		class_links     = make([dynamic]int, context.temp_allocator),
+		class_slots     = make([dynamic][]ir.Slot, context.temp_allocator),
+		signatures      = make(map[string]int, context.temp_allocator),
+		signature_links = make([dynamic]int, context.temp_allocator),
+		signature_joins = make([dynamic]Signature, context.temp_allocator),
+		sort_adapters   = make(map[string]ir.Func_ID, context.temp_allocator),
+		diagnostics     = make([dynamic]diag.Diagnostic, allocator),
+		allocator       = allocator,
 	}
 	index_facts(&low, results)
-	// Every layout an object type ends up in is known before the first one is interned.
+	// Every layout an object type ends up in is known before the first one is interned, and every
+	// signature a function type ends up with before the first function is declared.
 	build_classes(&low, results)
+	build_signature_classes(&low, results)
 	mark_reachable(&low)
 	order := module_order(&low)
 	for file in order {
 		ensure(low.facts[file].typed != nil, "a module that runs was never typed by any checker")
+		low.closures[file] = analyze_closures(&low, file)
 	}
 
 	// Declare before defining: a call may name a function whose body is built later, and a module
@@ -226,23 +244,11 @@ module_span :: proc(low: ^Lowering, file: source.File_ID) -> source.Span {
 	return low.prog.trees[file].nodes[ast.ROOT].span
 }
 
-// function_decls includes the declarations nested inside another function. Declaring them all
-// before any body is built is what lets two of them call each other.
-@(private)
-function_decls :: proc(tree: ^ast.File_AST) -> []ast.Node_ID {
-	out := make([dynamic]ast.Node_ID, 0, 16, context.temp_allocator)
-	stack := make([dynamic]ast.Node_ID, 0, 64, context.temp_allocator)
-	append(&stack, ast.ROOT)
-	for id in ast.walk(tree.nodes, &stack) {
-		if _, is_function := tree.nodes[id].variant.(ast.Function_Decl); is_function {
-			append(&out, id)
-		}
-	}
-	return out[:]
-}
-
-// declare_functions reports and leaves out a declaration whose body captures a variable, or whose
-// signature this slice cannot represent; a call to it then finds nothing and stays quiet.
+// declare_functions declares every closure of the file (closures.odin), nested ones included,
+// before any body is built, which is what lets two of them call each other. Each takes the
+// signature of its class and the environment its captures need. A closure whose own signature
+// this build cannot represent is reported and left out; a call to it then finds nothing and stays
+// quiet.
 @(private)
 declare_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
@@ -250,40 +256,92 @@ declare_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	typed := low.facts[file].typed
 	types := low.facts[file].result.types
 
-	for id in function_decls(tree) {
-		decl := tree.nodes[id].variant.(ast.Function_Decl)
-		if decl.body == ast.NO_NODE {
+	for id in low.closures[file].functions {
+		params: []ast.Node_ID
+		name_span := tree.nodes[id].span
+		#partial switch v in tree.nodes[id].variant {
+		case ast.Function_Decl:
+			params, name_span = v.params, v.name.span
+		case ast.Arrow:
+			params = v.params
+		}
+		function, is_function := types[typed.node_types[id]].(check.Function)
+		if !is_function {
+			continue
+		}
+		if function.variadic {
+			report(low, .Not_Lowered, name_span, "rest parameters")
+			continue
+		}
+		if _, ok := param_types(low, file, params); !ok {
+			continue
+		}
+		if _, ok := ir_type(low, types, function.result); !ok {
+			report(low, .Not_Lowered, name_span, construct_text(types, function.result))
+			continue
+		}
+		env, env_ok := env_layout(low, file, id)
+		if !env_ok {
 			continue
 		}
 
-		scope := bound.node_scopes[decl.body]
-		if len(bound.scopes[scope].captures) > 0 {
-			report(low, .Not_Lowered, decl.name.span, "closures")
-			continue
-		}
-		signature, is_signature := types[typed.node_types[id]].(check.Function)
-		if !is_signature {
-			continue
-		}
-		if signature.variadic {
-			report(low, .Not_Lowered, decl.name.span, "rest parameters")
-			continue
-		}
-
-		params, ok := param_types(low, file, decl.params)
-		if !ok {
-			continue
-		}
-		result, result_ok := ir_type(low, types, signature.result)
-		if !result_ok {
-			report(low, .Not_Lowered, decl.name.span, construct_text(types, signature.result))
-			continue
-		}
-
-		name := function_name(low, file, bound, id, decl)
+		signature, _ := signature_of(low, types, typed.node_types[id])
+		name := function_name(low, file, bound, id)
 		span := tree.nodes[id].span
-		low.funcs[{file, id}] = ir.declare_func(&low.builder, name, params, result, span)
+		low.funcs[{file, id}] = ir.declare_func(
+			&low.builder,
+			name,
+			signature.params,
+			signature.result,
+			span,
+			env,
+		)
 	}
+}
+
+// env_layout has a slot per symbol of the closure's environment: the box of a boxed one, the value
+// itself otherwise. A symbol with no representation answers false and says nothing: it was, or will
+// be, reported where it is declared.
+@(private)
+env_layout :: proc(
+	low: ^Lowering,
+	file: source.File_ID,
+	function: ast.Node_ID,
+) -> (
+	layout: ir.Layout_ID,
+	ok: bool,
+) {
+	symbols := low.closures[file].env[function]
+	if len(symbols) == 0 {
+		return ir.NO_LAYOUT, true
+	}
+	slots := make([]abi.Slot_Kind, len(symbols), context.temp_allocator)
+	for symbol, i in symbols {
+		type := symbol_type(low, file, symbol) or_return
+		slots[i] = .Ref if low.closures[file].boxed[symbol] else slot_of(type.kind)
+	}
+	return ir.environment_layout(&low.builder, slots), true
+}
+
+// symbol_type is the IR type of what a variable holds, or a closure for a nested declaration.
+@(private)
+symbol_type :: proc(
+	low: ^Lowering,
+	file: source.File_ID,
+	symbol: bind.Symbol_ID,
+) -> (
+	type: ir.Type,
+	ok: bool,
+) {
+	entry := low.prog.bound[file].symbols[symbol]
+	if entry.kind == .Function {
+		return ir.CLOSURE, true
+	}
+	return ir_type(
+		low,
+		low.facts[file].result.types,
+		low.facts[file].typed.node_types[entry.declaration],
+	)
 }
 
 // param_types is the IR type of each parameter as the body sees it: check records `T | undefined`
@@ -316,20 +374,25 @@ param_types :: proc(
 
 // function_name is the symbol codegen emits. A module scope holds one symbol per name, so the
 // module number and the name are enough there; a function declared inside another one takes its
-// node number as well, since two of them may share a name.
+// node number as well, since two of them may share a name, and so does an arrow, which is named
+// after what Node names its value, or `arrow`.
 @(private)
 function_name :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
 	bound: ^bind.Bound_File,
 	id: ast.Node_ID,
-	decl: ast.Function_Decl,
 ) -> string {
+	name := low.closures[file].names[id]
+	if _, is_arrow := low.prog.trees[file].nodes[id].variant.(ast.Arrow); is_arrow {
+		name = name if name != "" else "arrow"
+		return fmt.aprintf("m%d.%s$%d", file, name, id, allocator = low.allocator)
+	}
 	symbol := bound.node_symbols[id]
 	if symbol != bind.NO_SYMBOL && bound.symbols[symbol].scope == bind.MODULE_SCOPE {
-		return fmt.aprintf("m%d.%s", file, decl.name.text, allocator = low.allocator)
+		return fmt.aprintf("m%d.%s", file, name, allocator = low.allocator)
 	}
-	return fmt.aprintf("m%d.%s$%d", file, decl.name.text, id, allocator = low.allocator)
+	return fmt.aprintf("m%d.%s$%d", file, name, id, allocator = low.allocator)
 }
 
 // declare_globals numbers the globals of a program the same way on every run, because the module

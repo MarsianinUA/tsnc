@@ -128,6 +128,7 @@ foreign lib {
 
 	LLVMAddAttributeAtIndex :: proc(F: LLVMValueRef, Idx: LLVMAttributeIndex, A: LLVMAttributeRef) ---
 	LLVMGetParam :: proc(Fn: LLVMValueRef, Index: u32) -> LLVMValueRef ---
+	LLVMSetValueName2 :: proc(Val: LLVMValueRef, Name: cstring, NameLen: uint) ---
 	LLVMAppendBasicBlockInContext :: proc(C: LLVMContextRef, Fn: LLVMValueRef, Name: cstring) -> LLVMBasicBlockRef ---
 
 	LLVMCreateBuilderInContext :: proc(C: LLVMContextRef) -> LLVMBuilderRef ---

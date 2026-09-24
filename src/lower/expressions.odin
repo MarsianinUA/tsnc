@@ -104,7 +104,7 @@ lower_node :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 		return lower_object_literal(s, id, v)
 	case ast.Arrow:
 		// An arrow handed straight to an array method is inlined there and never gets here.
-		return later(s, span, "arrow functions")
+		return make_closure(s, id, span)
 	case ast.Index:
 		place, ok := lower_place(s, id)
 		if !ok {
@@ -131,8 +131,9 @@ node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
 }
 
 // coerce has one conversion, boxing a statically typed value into a tagged one; reading one back
-// needs the tag check of T5.9. Two objects check lets meet share one layout, so an object never
-// needs converting into another.
+// needs the tag check of T5.9, or unwrap where the value is known to be of the type. Two objects
+// check lets meet share one layout, and two functions one signature, so neither ever needs
+// converting into the other.
 @(private)
 coerce :: proc(
 	s: ^Func_State,
@@ -164,6 +165,46 @@ coerce :: proc(
 		return later(s, span, "narrowing a union")
 	}
 	return later(s, span, "this conversion")
+}
+
+// unwrap reads a value of a signature class as the type a function or a call declares, which is
+// narrower where the class joined it with another: a tagged value is unboxed, after a check that
+// fails the program where a flow through `any`, or through a function field written by a narrower
+// object type, brought something else.
+@(private)
+unwrap :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	want: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value == ir.NO_VALUE || want == ir.VOID || value_type(s, value) == want {
+		return value
+	}
+	if value_type(s, value) == ir.TAGGED {
+		return read_widened(s, value, want, .Value_Of_Other_Kind, span)
+	}
+	return later(s, span, "this conversion")
+}
+
+// flow_intact is the net under a flow the checker did not record (types.odin): a function that
+// moves into a function type of another signature class would be called with arguments it does not
+// take, which LLVM may fold into unreachable once it sees both sides. A difference is a checker bug,
+// reported rather than compiled.
+@(private)
+flow_intact :: proc(s: ^Func_State, given, wanted: check.Type_ID, span: source.Span) -> bool {
+	_, given_is_function := s.types[given].(check.Function)
+	_, wanted_is_function := s.types[wanted].(check.Function)
+	if !given_is_function || !wanted_is_function || given == wanted {
+		return true
+	}
+	from, from_ok := signature_of(s.low, s.types, given)
+	to, to_ok := signature_of(s.low, s.types, wanted)
+	if !from_ok || !to_ok || signature_equal(from, to) {
+		return true
+	}
+	later(s, span, "a function whose signature this flow changes")
+	return false
 }
 
 @(private)
@@ -241,18 +282,24 @@ lower_symbol :: proc(s: ^Func_State, ref: check.Symbol_Ref, span: source.Span) -
 		return lower_lib_value(s, ref.symbol, span)
 	}
 
-	declaration := s.low.prog.bound[ref.file].symbols[ref.symbol].declaration
-	if global, is_global := s.low.globals[{ref.file, declaration}]; is_global {
+	entry := s.low.prog.bound[ref.file].symbols[ref.symbol]
+	if global, is_global := s.low.globals[{ref.file, entry.declaration}]; is_global {
 		type := s.low.builder.globals[global].type
 		return ir.emit(&s.fb, type, ir.Global_Load{global = global}, span)
 	}
-	if s.low.prog.bound[ref.file].symbols[ref.symbol].kind == .Function {
-		return later(s, span, "function values")
+	if entry.kind == .Function && entry.scope == bind.MODULE_SCOPE {
+		// Its one closure, which may be of another module: the name was imported.
+		func, declared := s.low.funcs[{ref.file, entry.declaration}]
+		if !declared {
+			return ir.NO_VALUE // refused where it is declared
+		}
+		describe_closure(s.low, ref.file, entry.declaration, func)
+		return ir.emit(&s.fb, ir.CLOSURE, ir.Func_Ref{func = func}, span)
 	}
 	if ref.file != s.file {
 		return ir.NO_VALUE
 	}
-	return s.locals[ref.symbol]
+	return read_local(s, ref.symbol, span)
 }
 
 // lower_lib_value handles the two number constants, the only lib names that are a value of their
@@ -498,6 +545,8 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 		return "string"
 	case .Ref:
 		return "object"
+	case .Closure:
+		return "function" // a union of function types
 	}
 	return ""
 }
@@ -812,7 +861,8 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 	place, ok := lower_place(s, node.target)
 	if node.op == .Assign {
 		value := lower_expression(s, node.value)
-		if !ok {
+		given, wanted := s.typed.node_types[node.value], s.typed.node_types[node.target]
+		if !ok || !flow_intact(s, given, wanted, span) {
 			return ir.NO_VALUE
 		}
 		return store_place(s, &place, value, span)
@@ -908,7 +958,7 @@ symbol_place :: proc(s: ^Func_State, ref: check.Symbol_Ref) -> (place: Place, ok
 	if global, is_global := s.low.globals[{ref.file, declaration}]; is_global {
 		return Global_Place{global = global}, true
 	}
-	if ref.file != s.file || s.locals[ref.symbol] == ir.NO_VALUE {
+	if ref.file != s.file || s.refused[ref.symbol] {
 		return nil, false
 	}
 	return Local_Place{symbol = ref.symbol}, true
@@ -920,7 +970,7 @@ symbol_place :: proc(s: ^Func_State, ref: check.Symbol_Ref) -> (place: Place, ok
 load_place :: proc(s: ^Func_State, place: ^Place, span: source.Span) -> ir.Value_ID {
 	switch &p in place {
 	case Local_Place:
-		return s.locals[p.symbol]
+		return read_local(s, p.symbol, span)
 	case Global_Place:
 		type := s.low.builder.globals[p.global].type
 		return ir.emit(&s.fb, type, ir.Global_Load{global = p.global}, span)
@@ -946,11 +996,11 @@ store_place :: proc(
 	}
 	switch &p in place {
 	case Local_Place:
-		stored := coerce(s, value, value_type(s, s.locals[p.symbol]), span)
+		stored := coerce(s, value, local_type(s, p.symbol), span)
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
-		s.locals[p.symbol] = stored
+		write_local(s, p.symbol, stored, span)
 	case Global_Place:
 		stored := coerce(s, value, s.low.builder.globals[p.global].type, span)
 		if stored == ir.NO_VALUE {

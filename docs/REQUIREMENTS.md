@@ -95,6 +95,8 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 - Captured variables that change after capture live in the heap; immutable ones are copied.
 - `let` in a `for` header creates a new binding on each iteration: closures in a loop capture different `i`.
 - All calls resolve statically; an indirect call goes only through a function value.
+- Every function takes its environment as the first argument, null when it captures nothing, so a direct call, a call through a function value and a call from the runtime (a sort comparator) pass arguments the same way. A boolean travels as a 64-bit word and a tagged value as two words, as they do into the runtime.
+- A function passes where a function type that holds an argument or the result differently is expected, as in TypeScript: `(x: number | string) => void` goes where `(x: number) => void` is expected, and `() => number` where `() => void` is. The value is the same function, not a wrapper, so `===` holds. The compiler finds every such flow in the whole program and gives each class of function types that flow into each other one signature; an argument or a result whose type differs across the class travels tagged, and the function reads it back through its own declared type with a check.
 
 ### 3.6 Arrays
 - `T[]` is a growable contiguous buffer with a length and a capacity, with unboxed elements (`number[]` is an array of f64).

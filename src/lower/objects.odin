@@ -42,6 +42,12 @@ lower_object_literal :: proc(
 	for property_id in node.properties {
 		property := s.tree.nodes[property_id].variant.(ast.Property)
 		value := lower_expression(s, property.value)
+		if field, has := find_field(object, property.name.text); has {
+			at := s.tree.nodes[property_id].span
+			if !flow_intact(s, s.typed.node_types[property.value], field.type, at) {
+				value = ir.NO_VALUE
+			}
+		}
 		place, found := field_place(s, cell, object, property.name.text)
 		stored :=
 			found && store_place(s, &place, value, s.tree.nodes[property_id].span) != ir.NO_VALUE
@@ -86,12 +92,18 @@ print_order :: proc(s: ^Func_State, node: ast.Object_Literal, object: check.Obje
 
 @(private)
 has_field :: proc(object: check.Object, name: string) -> bool {
-	for field in object.fields {
-		if field.name == name {
-			return true
+	_, found := find_field(object, name)
+	return found
+}
+
+@(private)
+find_field :: proc(object: check.Object, name: string) -> (field: check.Field, found: bool) {
+	for candidate in object.fields {
+		if candidate.name == name {
+			return candidate, true
 		}
 	}
-	return false
+	return {}, false
 }
 
 // array_index answers the value of a key ECMAScript orders before the others: the decimal of an
@@ -153,17 +165,19 @@ load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.
 		return ir.emit(&s.fb, place.type, load, span)
 	}
 	held := ir.emit(&s.fb, ir.TAGGED, load, span)
-	return read_widened(s, held, place.type, span)
+	return read_widened(s, held, place.type, .Field_Holds_Other_Kind, span)
 }
 
-// read_widened unboxes what a widened slot holds as the field's declared type. A write through
-// the wider type may have left another kind there, or for an object field an object of another
-// layout, which the declared type cannot hold: that fails here rather than reading it wrong.
+// read_widened unboxes what a widened slot, or a parameter or a result of a signature class, holds
+// as the type declared for it. A write through the wider type may have left another kind there, or
+// for an object an object of another layout, which the declared type cannot hold: that fails with
+// `error` rather than reading it wrong.
 @(private)
 read_widened :: proc(
 	s: ^Func_State,
 	held: ir.Value_ID,
 	declared: ir.Type,
+	error: abi.Runtime_Error,
 	span: source.Span,
 ) -> ir.Value_ID {
 	tag: abi.Tag
@@ -191,7 +205,7 @@ read_widened :: proc(
 		span,
 	)
 	ir.use_block(&s.fb, failed)
-	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, .Field_Holds_Other_Kind)}, span)
+	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, error)}, span)
 
 	ir.use_block(&s.fb, unboxed)
 	value := ir.emit(&s.fb, declared, ir.Unbox{value = held}, span)
@@ -229,21 +243,7 @@ store_field :: proc(
 	if stored == ir.NO_VALUE {
 		return false
 	}
-	if kind == .Ref || kind == .Tagged {
-		store := ir.Field_Store_Ref {
-			cell  = place.cell,
-			field = place.field,
-			value = stored,
-		}
-		ir.emit(&s.fb, ir.VOID, store, span)
-	} else {
-		store := ir.Field_Store {
-			cell  = place.cell,
-			field = place.field,
-			value = stored,
-		}
-		ir.emit(&s.fb, ir.VOID, store, span)
-	}
+	store_slot(s, place.cell, place.field, stored, span)
 	return true
 }
 

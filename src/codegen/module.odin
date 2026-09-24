@@ -1,6 +1,6 @@
 package codegen
 
-import "core:log"
+import "core:fmt"
 import "core:strings"
 
 import "../abi"
@@ -65,7 +65,10 @@ Module :: struct {
 	string_cells: []llvm.LLVMValueRef, // by ir.String_ID
 	fail_sites:   []llvm.LLVMValueRef, // by ir.Fail_Site_ID
 	libm:         map[string]Function, // by C symbol, so each libm function is declared once
-	unsupported:  string, // the mnemonic of the first instruction codegen cannot emit yet
+	// By ir.Func_ID, made on first use: the static closure of a function with no environment, and
+	// the abi.Function_Info every closure of the function points at.
+	closures:     []llvm.LLVMValueRef,
+	infos:        []llvm.LLVMValueRef,
 }
 
 @(private)
@@ -95,14 +98,6 @@ build_module :: proc(
 
 	for id in unit.funcs {
 		build_func(&m, id)
-		if m.unsupported != "" {
-			log.errorf(
-				"codegen: %s in %s: the runtime of this instruction arrives with milestone 5",
-				m.unsupported,
-				program.funcs[id].name,
-			)
-			return .Unsupported_Instruction
-		}
 	}
 	return .None
 }
@@ -239,36 +234,44 @@ declare_funcs :: proc(m: ^Module, unit: ir.Unit) {
 	}
 	for body, i in m.program.funcs {
 		id := ir.Func_ID(i)
-		signature := func_signature(m, body)
 		name := strings.clone_to_cstring(body.name, context.temp_allocator)
+		if id == m.program.main {
+			// The runtime calls the entry point by its symbol, as proc "c" ().
+			signature := llvm.LLVMFunctionType(m.types.void, nil, 0, false)
+			m.funcs[id] = {signature, llvm.LLVMAddFunction(m.module, name, signature)}
+			continue
+		}
+		signature := closure_signature(m, body.params, body.result)
 		function := llvm.LLVMAddFunction(m.module, name, signature)
-		if in_unit[id] && id != m.program.main {
+		if in_unit[id] {
 			llvm.LLVMSetLinkage(function, .LLVMInternalLinkage)
 		}
+		ENV :: "env"
+		llvm.LLVMSetValueName2(llvm.LLVMGetParam(function, 0), ENV, len(ENV))
 		m.funcs[id] = {signature, function}
 	}
+	m.closures = make([]llvm.LLVMValueRef, len(m.program.funcs), context.temp_allocator)
+	m.infos = make([]llvm.LLVMValueRef, len(m.program.funcs), context.temp_allocator)
 }
 
-// func_signature puts the environment ahead of the TypeScript parameters only when the function
-// captures, a boolean in i1 and a tagged value in one struct. That is not the closure convention of
-// abi.Closure_Cell yet, where the environment always comes first, a boolean is b64 and a tagged
-// value two words: T5.8 brings the two together before a function reaches the runtime.
+// closure_signature is the calling convention of abi.Closure_Cell, which every function but the
+// entry point takes: a direct call and a call through a closure pass the same arguments, and a
+// comparator the runtime calls back needs no adapter. The environment comes first, null when the
+// function captures nothing; LLVM's dead argument pass drops it from an internal function at -O.
+// A boolean travels as i64 and a tagged parameter as its two words, as into a runtime export; a
+// tagged result comes back as the struct, which only generated code calls for.
 @(private)
-func_signature :: proc(m: ^Module, body: ir.Func) -> llvm.LLVMTypeRef {
-	first := 1 if body.env != ir.NO_LAYOUT else 0
-	params := make([]llvm.LLVMTypeRef, first + len(body.params), context.temp_allocator)
-	if first == 1 {
-		params[0] = m.types.ptr
+closure_signature :: proc(m: ^Module, params: []ir.Type, result: ir.Type) -> llvm.LLVMTypeRef {
+	types := make([dynamic]llvm.LLVMTypeRef, 0, 1 + 2 * len(params), context.temp_allocator)
+	append(&types, m.types.ptr)
+	for type in params {
+		if type.kind == .Tagged {
+			append(&types, m.types.int64, m.types.int64)
+		} else {
+			append(&types, storage_type(m, type))
+		}
 	}
-	for type, i in body.params {
-		params[first + i] = value_type(m, type)
-	}
-	return llvm.LLVMFunctionType(
-		value_type(m, body.result),
-		raw_data(params),
-		u32(len(params)),
-		false,
-	)
+	return llvm.LLVMFunctionType(storage_type(m, result), raw_data(types), u32(len(types)), false)
 }
 
 // add_globals gives every module binding a zero filled cell in the data segment. The zero is load
@@ -365,6 +368,72 @@ add_string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
 	llvm.LLVMSetUnnamedAddress(cell, .LLVMGlobalUnnamedAddr)
 	llvm.LLVMSetAlignment(cell, align_of(abi.String_Cell))
 	return cell
+}
+
+// static_closure is the one cell of a function with no environment, { i32, i32, ptr, ptr, ptr }:
+// the header naming the builtin closure table, then code, a null environment and the info. It is
+// constant, since the collector never marks a cell outside its heap, and never unnamed_addr: every
+// read of the function's name must answer one identity.
+@(private)
+static_closure :: proc(m: ^Module, id: ir.Func_ID) -> llvm.LLVMValueRef {
+	if m.closures[id] != nil {
+		return m.closures[id]
+	}
+	field_types := [?]llvm.LLVMTypeRef {
+		m.types.int32,
+		m.types.int32,
+		m.types.ptr,
+		m.types.ptr,
+		m.types.ptr,
+	}
+	fields := [?]llvm.LLVMValueRef {
+		llvm.LLVMConstInt(m.types.int32, u64(abi.Builtin_Table.Closure), false),
+		llvm.LLVMConstInt(m.types.int32, 0, false),
+		m.funcs[id].function,
+		llvm.LLVMConstNull(m.types.ptr),
+		function_info(m, id),
+	}
+	cell_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
+	name := fmt.ctprintf("%s.closure", m.program.funcs[id].name)
+	cell := llvm.LLVMAddGlobal(m.module, cell_type, name)
+	llvm.LLVMSetInitializer(
+		cell,
+		llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false),
+	)
+	llvm.LLVMSetGlobalConstant(cell, true)
+	llvm.LLVMSetLinkage(cell, .LLVMPrivateLinkage)
+	llvm.LLVMSetAlignment(cell, align_of(abi.Closure_Cell))
+	m.closures[id] = cell
+	return cell
+}
+
+// function_info is the abi.Function_Info of a described function, { ptr, i64, i8 }, which LLVM
+// pads to the 24 bytes abi pins. The name is a string cell of the pool.
+@(private)
+function_info :: proc(m: ^Module, id: ir.Func_ID) -> llvm.LLVMValueRef {
+	if m.infos[id] != nil {
+		return m.infos[id]
+	}
+	info := m.program.funcs[id].info.? // the verifier promises one for every closure
+	field_types := [?]llvm.LLVMTypeRef{m.types.ptr, m.types.int64, m.types.int8}
+	fields := [?]llvm.LLVMValueRef {
+		m.string_cells[info.name],
+		llvm.LLVMConstInt(m.types.int64, u64(info.length), false),
+		llvm.LLVMConstInt(m.types.int8, u64(info.has_prototype), false),
+	}
+	info_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
+	name := fmt.ctprintf("%s.info", m.program.funcs[id].name)
+	global := llvm.LLVMAddGlobal(m.module, info_type, name)
+	llvm.LLVMSetInitializer(
+		global,
+		llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false),
+	)
+	llvm.LLVMSetGlobalConstant(global, true)
+	llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
+	llvm.LLVMSetUnnamedAddress(global, .LLVMGlobalUnnamedAddr)
+	llvm.LLVMSetAlignment(global, align_of(abi.Function_Info))
+	m.infos[id] = global
+	return global
 }
 
 // add_fail_sites writes the constants tsnc_fail reads to print where the program failed. The paths

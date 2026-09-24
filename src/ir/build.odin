@@ -197,6 +197,22 @@ declare_func :: proc(
 	return id
 }
 
+// describe_func records what the console prints of the function as a value. lower calls it only
+// for a function it makes a closure of, so the name enters the string pool no sooner.
+describe_func :: proc(
+	p: ^Program_Builder,
+	id: Func_ID,
+	name: string,
+	length: int,
+	has_prototype: bool,
+) {
+	p.funcs[id].info = Func_Info {
+		name          = intern_string(p, name),
+		length        = i32(length),
+		has_prototype = has_prototype,
+	}
+}
+
 // Func_Builder builds into the row declare_func reserved, and end_func writes it there.
 Func_Builder :: struct {
 	program: ^Program_Builder,

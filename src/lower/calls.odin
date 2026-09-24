@@ -10,9 +10,15 @@ import "../source"
 
 /*
 Calls, and with them the whole of the standard library. A call is one of three things: a function of
-the program, which resolves statically and becomes a direct call; a name of the lib, which the
-strategy table of lib.odin turns into an intrinsic, an operator, a runtime call or a shape built
-here; or a function value, which needs the closures of T5.8.
+the program that takes no environment, named by its name, which resolves statically and becomes a
+direct call; a name of the lib, which the strategy table of lib.odin turns into an intrinsic, an
+operator, a runtime call or a shape built here; or anything else that holds a function value, which
+is a call through the closure (closures.odin).
+
+Both kinds of call to the program pass the arguments of the callee's signature class (types.odin):
+each boxed where the class is wider than the call's own type, one the call leaves out as the zero of
+its class type, undefined for a tagged one. The answer comes back in the class type and is unboxed
+into the type the call has.
 
 A method is called on its receiver, which is lowered once, before the arguments, as JavaScript
 evaluates it. `m.f()` through an `import * as m` is no method call: check recorded the export on the
@@ -30,11 +36,14 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 	#partial switch v in s.tree.nodes[node.callee].variant {
 	case ast.Member:
 		if ref.symbol == bind.NO_SYMBOL {
+			if _, is_lib := lib_root(s, v.object); !is_lib && is_object_type(s, v.object) {
+				return lower_closure_call(s, id, node, span) // a field that holds a function
+			}
 			return lower_method_call(s, id, node, v, span)
 		}
 	case ast.Ident:
 	case:
-		return later(s, span, "calling a function value")
+		return lower_closure_call(s, id, node, span)
 	}
 
 	if ref.symbol == bind.NO_SYMBOL {
@@ -50,14 +59,15 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 	}
 
 	declared := s.low.prog.bound[ref.file].symbols[ref.symbol]
-	if func, is_function := s.low.funcs[{ref.file, declared.declaration}]; is_function {
-		return lower_direct_call(s, node, func, span)
+	func, is_function := s.low.funcs[{ref.file, declared.declaration}]
+	if is_function && s.low.builder.funcs[func].env == ir.NO_LAYOUT {
+		return lower_direct_call(s, id, node, func, span)
 	}
-	if declared.kind != .Function {
-		return later(s, span, "calling a function value")
+	if declared.kind == .Function && !is_function {
+		// The declaration itself was reported; saying it again at every call helps nobody.
+		return ir.NO_VALUE
 	}
-	// The declaration itself was reported; saying it again at every call helps nobody.
-	return ir.NO_VALUE
+	return lower_closure_call(s, id, node, span)
 }
 
 @(private)
@@ -78,19 +88,83 @@ lower_method_call :: proc(
 @(private)
 lower_direct_call :: proc(
 	s: ^Func_State,
+	id: ast.Node_ID,
 	node: ast.Call,
 	func: ir.Func_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
-	args := make([]ir.Value_ID, len(node.args), context.temp_allocator)
-	for arg, i in node.args {
-		args[i] = lower_expression(s, arg)
+	args, ok := lower_arguments(s, node, s.typed.node_types[node.callee])
+	if !ok {
+		return ir.NO_VALUE
 	}
-	return call_function(s, func, args, span)
+	return call_result(s, call_function(s, func, args, span), node_type(s, id), span)
 }
 
-// call_function gives a parameter the call leaves out its zero, which for an optional one is
-// undefined: the parameters of the IR function are the types the body sees.
+// lower_closure_call lowers the callee before the arguments, as JavaScript evaluates them, and
+// calls through the closure with the arguments of its signature class.
+@(private)
+lower_closure_call :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Call,
+	span: source.Span,
+) -> ir.Value_ID {
+	type := s.typed.node_types[node.callee]
+	if type == check.ANY {
+		// Nothing says what a value of type any takes and gives back.
+		return later(s, span, "calling a value of type any")
+	}
+	callee := lower_expression(s, node.callee)
+	if callee == ir.NO_VALUE {
+		return ir.NO_VALUE
+	}
+	signature, ok := signature_of(s.low, s.types, type)
+	if !ok {
+		return later(s, span, construct_text(s.types, type))
+	}
+	given, given_ok := lower_arguments(s, node, type)
+	if !given_ok {
+		return ir.NO_VALUE
+	}
+	args, args_ok := class_arguments(s, signature, given, len(given), span)
+	if !args_ok {
+		return ir.NO_VALUE
+	}
+	call := ir.Call_Closure {
+		callee = callee,
+		args   = args,
+	}
+	return call_result(s, ir.emit(&s.fb, signature.result, call, span), node_type(s, id), span)
+}
+
+// lower_arguments evaluates every argument in order; a function passed to a parameter goes through
+// the net of flow_intact.
+@(private)
+lower_arguments :: proc(
+	s: ^Func_State,
+	node: ast.Call,
+	callee: check.Type_ID,
+) -> (
+	args: []ir.Value_ID,
+	ok: bool,
+) {
+	function, is_function := s.types[callee].(check.Function)
+	args = make([]ir.Value_ID, len(node.args), context.temp_allocator)
+	ok = true
+	for arg, i in node.args {
+		args[i] = lower_expression(s, arg)
+		if is_function && i < len(function.params) {
+			span := s.tree.nodes[arg].span
+			if !flow_intact(s, s.typed.node_types[arg], function.params[i].type, span) {
+				args[i] = ir.NO_VALUE
+			}
+		}
+		ok &&= args[i] != ir.NO_VALUE
+	}
+	return
+}
+
+// call_function calls a function with no environment, directly.
 @(private)
 call_function :: proc(
 	s: ^Func_State,
@@ -99,18 +173,60 @@ call_function :: proc(
 	span: source.Span,
 ) -> ir.Value_ID {
 	declared := s.low.builder.funcs[func]
-	args := make([]ir.Value_ID, len(declared.params), context.temp_allocator)
-	for param, i in declared.params {
-		if i < len(given) {
+	signature := Signature {
+		params = declared.params,
+		result = declared.result,
+	}
+	args, ok := class_arguments(s, signature, given, len(given), span)
+	if !ok {
+		return ir.NO_VALUE
+	}
+	return ir.emit(&s.fb, declared.result, ir.Call{func = func, args = args}, span)
+}
+
+// class_arguments passes the first `count` of the given values, each boxed into its class type
+// where the class is wider, and fills every other position of the class with the zero of its type,
+// which is undefined for a tagged one: a value a function does not take must not land where
+// another member of its class takes something else.
+@(private)
+class_arguments :: proc(
+	s: ^Func_State,
+	signature: Signature,
+	given: []ir.Value_ID,
+	count: int,
+	span: source.Span,
+) -> (
+	args: []ir.Value_ID,
+	ok: bool,
+) {
+	args = make([]ir.Value_ID, len(signature.params), context.temp_allocator)
+	for param, i in signature.params {
+		if i < count {
 			args[i] = coerce(s, given[i], param, span)
 		} else {
 			args[i] = zero_value(s, param, span)
 		}
 		if args[i] == ir.NO_VALUE {
-			return ir.NO_VALUE
+			return nil, false
 		}
 	}
-	return ir.emit(&s.fb, declared.result, ir.Call{func = func, args = args}, span)
+	return args, true
+}
+
+// call_result unboxes the answer of a class into the type the call has. A call typed void answers
+// what came back as it is, since Node does: `console.log(f())` prints what f returned even where
+// its type says it returns nothing.
+@(private)
+call_result :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	want: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	if want == ir.VOID {
+		return value
+	}
+	return unwrap(s, value, want, span)
 }
 
 // lower_strategy takes the receiver of a method, and NO_VALUE for a name of the lib.

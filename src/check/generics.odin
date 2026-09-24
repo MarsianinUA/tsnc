@@ -1,6 +1,8 @@
 package check
 
 import "../ast"
+import "../bind"
+import "../program"
 
 /*
 Generic signatures of the built-in types, which requirements 2.2 gives v1 and keeps generics of
@@ -163,7 +165,8 @@ check_signature_call :: proc(
 
 	for argument, i in node.args {
 		parameter := substitute(c, parameter_at(c, function, i), subst)
-		if !fits(c, arguments[i], parameter) {
+		callback := is_lib_callback(c, node.callee, function, i)
+		if !fits(c, arguments[i], parameter, functions = !callback) {
 			report_assign_failure(c, span_of(c, argument), arguments[i], parameter)
 		}
 	}
@@ -171,6 +174,35 @@ check_signature_call :: proc(
 	instantiated := substitute(c, signature, subst)
 	set_signature(c, id, instantiated)
 	return c.table.types[instantiated].(Function).result
+}
+
+// is_lib_callback says whether argument i lands on a parameter of the lib declared as a function
+// type, such as the callback of map or the comparator of sort. lower never calls a function through
+// such a parameter type: it inlines the callback, calls it by its own type, or adapts it to what
+// the runtime calls. So the flow records no pair of the two function types, which would otherwise
+// join every `(x, i) => ...` callback of map into one signature with every comparator.
+@(private)
+is_lib_callback :: proc(c: ^Checker, callee: ast.Node_ID, function: Function, i: int) -> bool {
+	if i >= len(function.params) || function.variadic && i == len(function.params) - 1 {
+		return false
+	}
+	if _, is_function := c.table.types[function.params[i].type].(Function); !is_function {
+		return false
+	}
+	if c.at.node_types == nil {
+		return false
+	}
+	#partial switch v in c.at.tree.nodes[callee].variant {
+	case ast.Ident:
+		ref := c.at.node_symbols[callee]
+		return ref.symbol != bind.NO_SYMBOL && ref.file == program.LIB
+	case ast.Member:
+		apparent := apparent_type(c, c.at.node_types[v.object])
+		object, is_object := c.table.types[apparent].(Object)
+		// An object written in place has NO_DECL, whose file reads as the lib's.
+		return is_object && object.decl != NO_DECL && object.decl.file == program.LIB
+	}
+	return false
 }
 
 @(private)

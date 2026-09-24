@@ -93,4 +93,5 @@ NAMES := [abi.Runtime_Error]string {
 	.Not_Convertible_To_Json      = "tsnc cannot convert an object with its own toJSON to JSON",
 	.Reduce_Of_Empty_Array        = "Reduce of empty array with no initial value",
 	.Field_Holds_Other_Kind       = "a field holds a value its declared type does not allow",
+	.Value_Of_Other_Kind          = "a function was given or returned a value its declared type does not allow",
 }

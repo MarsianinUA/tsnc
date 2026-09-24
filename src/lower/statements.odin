@@ -24,7 +24,7 @@ terminator and a `return` in the middle of one is ordinary TypeScript.
 @(private)
 build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) {
 	span := module_span(low, file)
-	s := begin_function(low, file, id, bind.MODULE_SCOPE, nil, ir.VOID, span)
+	s := begin_function(low, file, id, ast.ROOT, bind.MODULE_SCOPE, nil, span)
 
 	bound := &low.prog.bound[file]
 	for symbol in bound.scopes[bind.MODULE_SCOPE].symbols {
@@ -44,24 +44,60 @@ build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) 
 	ir.end_func(&s.fb)
 }
 
+// build_functions builds the declarations first and the arrows after, each in walk order.
 @(private)
 build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
 	bound := &low.prog.bound[file]
 
-	for id in function_decls(tree) {
+	for id in low.closures[file].functions {
 		func, is_declared := low.funcs[{file, id}]
-		if !is_declared {
+		decl, is_decl := tree.nodes[id].variant.(ast.Function_Decl)
+		if !is_declared || !is_decl {
 			continue
 		}
-		decl := tree.nodes[id].variant.(ast.Function_Decl)
 		span := tree.nodes[id].span
-		result := low.builder.funcs[func].result
-		scope := bound.node_scopes[decl.body]
-		s := begin_function(low, file, func, scope, decl.params, result, span)
+		s := begin_function(low, file, func, id, bound.node_scopes[decl.body], decl.params, span)
 		lower_statement(&s, decl.body)
 		close_body(&s, span)
 		ir.end_func(&s.fb)
+	}
+	for id in low.closures[file].functions {
+		func, is_declared := low.funcs[{file, id}]
+		arrow, is_arrow := tree.nodes[id].variant.(ast.Arrow)
+		if !is_declared || !is_arrow {
+			continue
+		}
+		span := tree.nodes[id].span
+		s := begin_function(low, file, func, id, bound.node_scopes[id], arrow.params, span)
+		build_arrow_body(&s, arrow.body, span)
+		close_body(&s, span)
+		ir.end_func(&s.fb)
+	}
+}
+
+// build_arrow_body gives an expression body the shapes inline_arrow gives one: an expression that
+// does not come back, one whose value the arrow's own type throws away, and one it returns.
+@(private)
+build_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
+	if _, is_block := s.tree.nodes[body].variant.(ast.Block); is_block {
+		lower_statement(s, body)
+		return
+	}
+	switch {
+	case s.typed.node_types[body] == check.NEVER:
+		lower_effect(s, body)
+		if !terminated(s) {
+			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
+		}
+	case s.declared == ir.VOID:
+		lower_effect(s, body)
+	case:
+		value := lower_expression(s, body)
+		if !flow_intact(s, s.typed.node_types[body], s.returns, span) {
+			value = ir.NO_VALUE
+		}
+		leave_function(s, coerce(s, value, s.declared, span), span)
 	}
 }
 
@@ -72,15 +108,36 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 	if terminated(s) {
 		return
 	}
-	switch s.result.kind {
+	switch s.declared.kind {
 	case .Void:
-		ir.emit(&s.fb, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
+		leave_function(s, ir.NO_VALUE, span)
 	case .Tagged:
-		value := ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
-		ir.emit(&s.fb, ir.VOID, ir.Return{value = value}, span)
+		leave_function(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
 	case .F64, .Bool, .Str, .Closure, .Ref:
 		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 	}
+}
+
+// leave_function returns what the function's own type gives as the result of its class: boxed into
+// a wider class, or the class zero where the function itself gives back nothing. Poison ends the
+// block unreachable; it was reported.
+@(private)
+leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
+	if s.result == ir.VOID {
+		ir.emit(&s.fb, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
+		return
+	}
+	returned: ir.Value_ID
+	if s.declared == ir.VOID {
+		returned = zero_value(s, s.result, span)
+	} else {
+		returned = coerce(s, value, s.result, span)
+	}
+	if returned == ir.NO_VALUE {
+		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
+		return
+	}
+	ir.emit(&s.fb, ir.VOID, ir.Return{value = returned}, span)
 }
 
 // lower_statement first replaces a block the last terminator closed, so whatever follows a
@@ -97,6 +154,7 @@ lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 	span := s.tree.nodes[id].span
 	#partial switch v in s.tree.nodes[id].variant {
 	case ast.Block:
+		enter_scope(s, s.bound.node_scopes[id], span)
 		for statement in v.statements {
 			lower_statement(s, statement)
 		}
@@ -119,7 +177,7 @@ lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 	case ast.For:
 		lower_for(s, id, v, span)
 	case ast.Switch:
-		lower_switch(s, v, span)
+		lower_switch(s, id, v, span)
 	case ast.Break:
 		lower_jump(s, break_frame(s), false, span)
 	case ast.Continue:
@@ -145,7 +203,7 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 
 	// A binding this slice has no room for was reported where it was declared. Its initializer is
 	// dead, and walking it would name the same construct a second time.
-	if !is_global && (symbol == bind.NO_SYMBOL || s.locals[symbol] == ir.NO_VALUE) {
+	if !is_global && (symbol == bind.NO_SYMBOL || s.refused[symbol]) {
 		return
 	}
 	if node.init == ast.NO_NODE {
@@ -153,7 +211,8 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 	}
 
 	value := lower_expression(s, node.init)
-	if value == ir.NO_VALUE {
+	if value == ir.NO_VALUE ||
+	   !flow_intact(s, s.typed.node_types[node.init], s.typed.node_types[id], span) {
 		return
 	}
 	if is_global {
@@ -163,10 +222,7 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 		}
 		return
 	}
-	stored := coerce(s, value, value_type(s, s.locals[symbol]), span)
-	if stored != ir.NO_VALUE {
-		s.locals[symbol] = stored
-	}
+	write_local(s, symbol, coerce(s, value, local_type(s, symbol), span), span)
 }
 
 // lower_return inside an inlined arrow ends the arrow and not the function around it: a bare one as
@@ -191,16 +247,13 @@ lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
 	}
 
 	value := lower_expression(s, node.value)
-	if s.result == ir.VOID {
-		ir.emit(&s.fb, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
-		return
+	if s.declared != ir.VOID {
+		if !flow_intact(s, s.typed.node_types[node.value], s.returns, span) {
+			value = ir.NO_VALUE
+		}
+		value = coerce(s, value, s.declared, span)
 	}
-	returned := coerce(s, value, s.result, span)
-	if returned == ir.NO_VALUE {
-		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
-		return
-	}
-	ir.emit(&s.fb, ir.VOID, ir.Return{value = returned}, span)
+	leave_function(s, value, span)
 }
 
 // lower_jump ignores a missing frame: bind has already reported a `break` or `continue` that leaves
@@ -321,6 +374,8 @@ open_latch :: proc(
 	return open_join(s, latch, edges[:], span)
 }
 
+// close_latch renews the boxed `let` bindings of a `for` header ahead of the update, once every
+// `continue` has joined, so the next pass has bindings of its own.
 @(private)
 close_latch :: proc(
 	s: ^Func_State,
@@ -328,12 +383,14 @@ close_latch :: proc(
 	frame: Loop_Frame,
 	phis: []ir.Value_ID,
 	assigned: []bind.Symbol_ID,
+	renewed: []bind.Symbol_ID,
 	update: ast.Node_ID,
 	span: source.Span,
 ) {
 	if !open_latch(s, blocks.latch, frame, span) {
 		return
 	}
+	renew_bindings(s, renewed, span)
 	if update != ast.NO_NODE {
 		lower_effect(s, update)
 	}
@@ -347,8 +404,17 @@ lower_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.While, span: sour
 	lower_for(s, id, ast.For{condition = node.condition, body = node.body}, span)
 }
 
+// lower_for gives a `let` of the header that a closure shares a new binding for every pass, as
+// ECMAScript's CreatePerIterationEnvironment does: once after the init, so that a closure the init
+// made keeps the first binding, and again at the latch. lower_while shares this with an id that
+// opens no scope.
 @(private)
 lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.Span) {
+	renewed: []bind.Symbol_ID
+	_, is_for := s.tree.nodes[id].variant.(ast.For)
+	if is_for {
+		enter_scope(s, s.bound.node_scopes[id], span)
+	}
 	if node.init != ast.NO_NODE {
 		if _, is_declaration := s.tree.nodes[node.init].variant.(ast.Var_Decl); is_declaration {
 			lower_statement(s, node.init)
@@ -356,8 +422,13 @@ lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.S
 			lower_effect(s, node.init)
 		}
 	}
+	if is_for {
+		renewed = boxed_lets(s, s.bound.node_scopes[id])
+		renew_bindings(s, renewed, span)
+	}
 
-	assigned := assigned_symbols(s, id)
+	// The box of a renewed binding changes from one pass to the next.
+	assigned := assigned_symbols(s, id, renewed)
 	blocks := open_loop(s)
 	phis := enter_loop(s, blocks, assigned, span)
 
@@ -384,11 +455,32 @@ lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.S
 	lower_statement(s, node.body)
 	frame := pop(&s.loops)
 
-	close_latch(s, blocks, frame, phis, assigned, node.update, span)
+	close_latch(s, blocks, frame, phis, assigned, renewed, node.update, span)
 	if node.condition != ast.NO_NODE {
 		leave_loop(s, blocks.exit, leaving, frame, span)
 	} else {
 		open_join(s, blocks.exit, frame.breaks[:], span)
+	}
+}
+
+// boxed_lets lists the `let` bindings of a scope that live in a box, in symbol order.
+@(private)
+boxed_lets :: proc(s: ^Func_State, scope: bind.Scope_ID) -> []bind.Symbol_ID {
+	found := make([dynamic]bind.Symbol_ID, 0, 2, context.temp_allocator)
+	for symbol in s.bound.scopes[scope].symbols {
+		entry := s.bound.symbols[symbol]
+		if entry.kind == .Let && s.low.closures[s.file].boxed[symbol] && !s.refused[symbol] {
+			append(&found, symbol)
+		}
+	}
+	return found[:]
+}
+
+// renew_bindings moves each variable into a box of its own, holding the value it has now.
+@(private)
+renew_bindings :: proc(s: ^Func_State, symbols: []bind.Symbol_ID, span: source.Span) {
+	for symbol in symbols {
+		bind_local(s, symbol, read_local(s, symbol, span), span)
 	}
 }
 
@@ -446,8 +538,10 @@ leave_loop :: proc(
 // lower_switch builds the comparisons first and the case bodies after, in source order. A body is a
 // join of the test that picked it and of the case above it, when that one fell through.
 @(private)
-lower_switch :: proc(s: ^Func_State, node: ast.Switch, span: source.Span) {
+lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: source.Span) {
 	subject := lower_expression(s, node.value)
+	// Before the first test: a case test may call a function declared in one of the cases.
+	enter_scope(s, s.bound.node_scopes[id], span)
 	bodies := make([]ir.Block_ID, len(node.cases), context.temp_allocator)
 	incoming := make([][dynamic]Edge, len(node.cases), context.temp_allocator)
 	for i in 0 ..< len(node.cases) {
@@ -458,8 +552,8 @@ lower_switch :: proc(s: ^Func_State, node: ast.Switch, span: source.Span) {
 
 	fallback := exit
 	otherwise := -1 // the `default` case, wherever in the list it stands
-	for id, i in node.cases {
-		value := s.tree.nodes[id].variant.(ast.Case).value
+	for case_id, i in node.cases {
+		value := s.tree.nodes[case_id].variant.(ast.Case).value
 		if value == ast.NO_NODE {
 			fallback = bodies[i]
 			otherwise = i
@@ -487,11 +581,11 @@ lower_switch :: proc(s: ^Func_State, node: ast.Switch, span: source.Span) {
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = fallback}, span)
 
 	push_frame(s, ir.NO_BLOCK, exit)
-	for id, i in node.cases {
+	for case_id, i in node.cases {
 		if !open_join(s, bodies[i], incoming[i][:], span) {
 			continue
 		}
-		for statement in s.tree.nodes[id].variant.(ast.Case).statements {
+		for statement in s.tree.nodes[case_id].variant.(ast.Case).statements {
 			lower_statement(s, statement)
 		}
 		if terminated(s) {

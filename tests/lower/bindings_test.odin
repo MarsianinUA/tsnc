@@ -191,8 +191,9 @@ a_nested_function_without_captures_is_an_ordinary_function :: proc(t: ^testing.T
 }
 
 @(test)
-a_function_that_captures_is_reported :: proc(t: ^testing.T) {
-	expect_later(
+a_function_that_captures_reads_its_environment :: proc(t: ^testing.T) {
+	// x never changes, so the environment holds a copy of it.
+	result := lower_text(
 		t,
 		`
 		function outer(x: number): number {
@@ -203,6 +204,16 @@ a_function_that_captures_is_reported :: proc(t: ^testing.T) {
 		}
 		outer(1);
 		`,
-		{{.Not_Lowered, 3, 13}},
 	)
+	outer, _ := func_named(result.output, "m1.outer")
+	for body in result.output.funcs {
+		if body.name == "m1.outer" || body.env == ir.NO_LAYOUT {
+			continue
+		}
+		fields := result.output.layouts[body.env].fields
+		testing.expect(t, len(fields) == 1 && fields[0].kind == .Number)
+		testing.expectf(t, len(instructions_of(body, ir.Env)) == 1, "%s", result.text)
+	}
+	testing.expectf(t, len(instructions_of(outer, ir.Make_Closure)) == 1, "%s", result.text)
+	testing.expectf(t, len(instructions_of(outer, ir.Call_Closure)) == 1, "%s", result.text)
 }

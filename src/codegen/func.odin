@@ -25,8 +25,6 @@ Body :: struct {
 	rest_slot:   llvm.LLVMValueRef,
 }
 
-// build_func stops at the first instruction codegen cannot emit and leaves the reason in the
-// module.
 @(private)
 build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	func := m.program.funcs[func_id]
@@ -77,9 +75,6 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 				continue
 			}
 			build_instruction(m, &body, value)
-			if m.unsupported != "" {
-				return
-			}
 		}
 		body.tails[block] = llvm.LLVMGetInsertBlock(m.builder)
 	}
