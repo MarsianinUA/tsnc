@@ -132,6 +132,8 @@ On macOS an ASan build does not link through `cc`. Xcode's clang brings Apple's 
 ODIN_CLANG_PATH="$(brew --prefix llvm@20)/bin/clang" ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
 ```
 
+CI runs neither ASan step on the Intel Mac. Homebrew publishes no Intel bottles since September 2026, so `llvm@20` on `macos-26-intel` is built from source, and an ASan program linked with it dies with SIGILL before printing anything. The likely cause is that Homebrew builds from source with `-march=native`, so the ASan runtime uses instructions of the machine the image was made on. CPython runs ASan on Linux only, and `go build -asan` exists only on Linux. tsnc keeps ASan on Windows, Linux and arm64 macOS, where the same poisoning code runs.
+
 ## Benchmarks
 
 `bench/runner` builds `bench/hello.ts` with `dist/tsnc.exe -o:speed` and prints the size of the executable and the startup time, the fastest and the median of 20 runs, next to `node bench/hello.ts`. It needs the compiler and the runtime object, and Node on `PATH`.
@@ -174,7 +176,7 @@ After a version change, update the hash in `tests/runtime/console/width_test.odi
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus three times: as it is, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The commands are the ones above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus three times: as it is, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The two ASan runs skip `macos-26-intel`, for the reason under [AddressSanitizer](#addresssanitizer). The commands are the ones above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.

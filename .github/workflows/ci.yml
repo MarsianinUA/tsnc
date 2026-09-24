@@ -149,7 +149,13 @@ jobs:
       # On macOS Odin links with Xcode's clang, whose ASan runtime the LLVM 20 instrumentation cannot
       # link against, so ODIN_CLANG_PATH points it at the clang of Homebrew's llvm@20, the one tsnc
       # itself links an ASan build with there (src/link/link.odin).
+      #
+      # Both ASan steps skip the Intel Mac. Homebrew publishes no Intel bottles since September 2026,
+      # so llvm@20 on that image is built from source, and an ASan program linked with it dies with
+      # SIGILL before printing a line. CPython and Go keep ASan to the platforms whose toolchain
+      # carries it too; the poisoning is the same code on every OS, and three images still run it.
       - name: GC tests under ASan
+        if: matrix.target != 'darwin_amd64'
         env:
           ASAN_OPTIONS: detect_stack_use_after_return=0
         run: |
@@ -160,6 +166,7 @@ jobs:
 
       # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
       - name: Diff under ASan
+        if: matrix.target != 'darwin_amd64'
         env:
           TSNC_GC_STRESS: "1"
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address

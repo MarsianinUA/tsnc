@@ -61,7 +61,7 @@ Anything else is a compile error, and `tsnc check` reports all of them in one pa
 
 ## Status
 
-Milestones 1 to 5 of the six that make up v1 are done. `tsnc check` covers the whole v1 subset and reports syntax, type, name and module errors in one pass. `tsnc build` and `tsnc run` compile strings, objects, arrays, closures, unions and `any`, with the garbage collector underneath. The differential corpus, a program for each construct of the subset, prints what Node prints on Windows, Linux and macOS, also with the collector checking the heap on every allocation and with the runtime built with AddressSanitizer.
+Milestones 1 to 5 of the six that make up v1 are done. `tsnc check` covers the whole v1 subset and reports syntax, type, name and module errors in one pass. `tsnc build` and `tsnc run` compile strings, objects, arrays, closures, unions and `any`, with the garbage collector underneath. The differential corpus, a program for each construct of the subset, prints what Node prints on Windows, Linux and macOS, also with the collector checking the heap on every allocation and, everywhere but on Intel Macs, with the runtime built with AddressSanitizer.
 
 Milestone 6 is next: parsing and type checking on every core, then benchmarks against Node and Go. The [task board](docs/tasks-tsnc.md) tracks the rest.
 
