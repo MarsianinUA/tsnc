@@ -10,8 +10,7 @@ vswhere (library_dirs_windows.odin).
 Linux and macOS: the system C compiler, cc, finds the C runtime startup files, the dynamic loader
 and the libraries itself. On macOS /usr/bin/cc is the Xcode shim that picks the SDK. Odin passes
 --sysroot from `xcrun --show-sdk-path` on top of that; link adds it once CI shows a machine that
-needs it. An ASan build on macOS links through Homebrew's clang instead (ASAN_CC), which no shim
-tells where the SDK is, so there link passes --sysroot the way Odin does.
+needs it.
 
 The runtime object lies next to the running executable, where docs/development.md builds it
 (dist/), unless the caller passes its path.
@@ -51,16 +50,6 @@ Sanitizer :: enum u8 {
 	none,
 	address, // runtime built with -sanitize:address, plus the ASan library at link time
 }
-
-// ASAN_CC links an ASan build on Linux and macOS. On macOS cc is Xcode's clang, whose ASan runtime
-// names its version check after Apple's clang, while the runtime object, instrumented by LLVM 20,
-// calls LLVM's name and fails to link. So the build goes through the clang of Homebrew's llvm@20,
-// the LLVM src/llvm links, whose ASan runtime matches the instrumentation. Rust ships an ASan
-// runtime of its own on macOS for the same reason.
-@(private)
-ASAN_CC :: HOMEBREW_LLVM + "/bin/clang" when ODIN_OS == .Darwin else "cc"
-@(private)
-HOMEBREW_LLVM :: "/opt/homebrew/opt/llvm@20" when ODIN_ARCH == .arm64 else "/usr/local/opt/llvm@20"
 
 // link takes an empty runtime_object to mean the runtime object of the target next to the running
 // executable, the ASan one under .address.
@@ -121,16 +110,11 @@ link :: proc(
 			append(&command, join(ODIN_ROOT, "bin", "llvm", "windows", "clang_rt.asan-x86_64.lib"))
 		}
 	case .Cc:
-		append(&command, ASAN_CC if sanitizer == .address else "cc")
+		append(&command, "cc")
 		append(&command, ..objects)
 		append(&command, runtime_path, "-o", output)
 		if sanitizer == .address {
 			append(&command, "-fsanitize=address")
-			when ODIN_OS == .Darwin {
-				if sdk := macos_sdk(); sdk != "" {
-					append(&command, "--sysroot", sdk)
-				}
-			}
 		}
 	}
 	append(&command, ..spec.link_flags)
@@ -144,17 +128,6 @@ link :: proc(
 		return {.Linker_Failed, strings.clone(string(stderr), allocator)}
 	}
 	return {}
-}
-
-// macos_sdk answers "" when xcrun cannot tell, and the link then fails in the linker's own words.
-@(private)
-macos_sdk :: proc() -> string {
-	command := []string{"xcrun", "--show-sdk-path"}
-	state, stdout, _, err := os.process_exec({command = command}, context.temp_allocator)
-	if err != nil || state.exit_code != 0 {
-		return ""
-	}
-	return strings.trim_space(string(stdout))
 }
 
 // join allocates from the temp allocator.

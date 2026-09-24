@@ -126,13 +126,8 @@ TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -
 
 The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both.
 
-On macOS an ASan build does not link through `cc`. Xcode's clang brings Apple's ASan runtime, which names its version check after Apple's clang, while the runtime object is instrumented by LLVM 20 and calls LLVM's name: the link fails with an undefined `___asan_version_mismatch_check_v8`. So `tsnc build -sanitize:address` links through the clang of Homebrew's `llvm@20`, the one the compiler already needs, and passes it the SDK from `xcrun --show-sdk-path`. Odin has the same problem with its own `-sanitize:address`, and `ODIN_CLANG_PATH` points it at that clang for the gc unit tests:
+`-sanitize:address` works on Windows and Linux. On macOS `tsnc build -sanitize:address` does not link: `cc` is Xcode's clang, whose ASan runtime names its version check after Apple's clang, while the runtime object is instrumented by LLVM 20 and asks for `___asan_version_mismatch_check_v8`. Linking through the clang of Homebrew's `llvm@20` instead was tried in CI: the program died with SIGILL on the Intel image and hung on arm64 macOS 26, as [llvm-project issue 200447](https://github.com/llvm/llvm-project/issues/200447) reports for a one-line C program. So CI builds and runs ASan on Windows and Linux only, the way CPython runs ASan on Linux only and `go build -asan` exists only on Linux. The poisoning is the same code on every OS.
 
-```sh
-ODIN_CLANG_PATH="$(brew --prefix llvm@20)/bin/clang" ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
-```
-
-CI runs neither ASan step on the Intel Mac. Homebrew publishes no Intel bottles since September 2026, so `llvm@20` on `macos-26-intel` is built from source, and an ASan program linked with it dies with SIGILL before printing anything. The likely cause is that Homebrew builds from source with `-march=native`, so the ASan runtime uses instructions of the machine the image was made on. CPython runs ASan on Linux only, and `go build -asan` exists only on Linux. tsnc keeps ASan on Windows, Linux and arm64 macOS, where the same poisoning code runs.
 
 ## Benchmarks
 
@@ -176,7 +171,7 @@ After a version change, update the hash in `tests/runtime/console/width_test.odi
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus three times: as it is, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The two ASan runs skip `macos-26-intel`, for the reason under [AddressSanitizer](#addresssanitizer). The commands are the ones above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus three times: as it is, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The ASan runtime object and the two ASan runs skip both macOS images, for the reason under [AddressSanitizer](#addresssanitizer). The commands are the ones above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.

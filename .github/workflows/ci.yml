@@ -71,8 +71,10 @@ jobs:
       - name: Runtime object
         run: odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-${{ matrix.target }}.obj -vet -strict-style
 
-      # What `tsnc build -sanitize:address` links in place of the object above.
+      # What `tsnc build -sanitize:address` links in place of the object above. Not on macOS, where
+      # the ASan runs are skipped (see "GC tests under ASan").
       - name: Runtime object with ASan
+        if: runner.os != 'macOS'
         run: odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-${{ matrix.target }}-asan.obj -vet -strict-style
 
       # The case and width table generators run only by hand (docs/development.md), so CI checks that
@@ -146,27 +148,21 @@ jobs:
       # binary has no rt, whose __asan_default_options turns off the fake stack that hides
       # address-taken locals from the stack scan, so the variable does it here.
       #
-      # On macOS Odin links with Xcode's clang, whose ASan runtime the LLVM 20 instrumentation cannot
-      # link against, so ODIN_CLANG_PATH points it at the clang of Homebrew's llvm@20, the one tsnc
-      # itself links an ASan build with there (src/link/link.odin).
-      #
-      # Both ASan steps skip the Intel Mac. Homebrew publishes no Intel bottles since September 2026,
-      # so llvm@20 on that image is built from source, and an ASan program linked with it dies with
-      # SIGILL before printing a line. CPython and Go keep ASan to the platforms whose toolchain
-      # carries it too; the poisoning is the same code on every OS, and three images still run it.
+      # Both ASan steps run on Windows and Linux only, as CPython runs ASan on Linux only and
+      # `go build -asan` exists only there. On macOS Xcode's clang cannot link the LLVM 20
+      # instrumentation against Apple's ASan runtime (undefined ___asan_version_mismatch_check_v8).
+      # Linked through Homebrew's llvm@20 instead, the program died with SIGILL on the Intel image
+      # and hung on arm64 macOS 26, as llvm-project issue 200447 reports for a one-line C program.
+      # The poisoning is the same code on every OS.
       - name: GC tests under ASan
-        if: matrix.target != 'darwin_amd64'
+        if: runner.os != 'macOS'
         env:
           ASAN_OPTIONS: detect_stack_use_after_return=0
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            export ODIN_CLANG_PATH="$(brew --prefix llvm@20)/bin/clang"
-          fi
-          odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
 
       # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
       - name: Diff under ASan
-        if: matrix.target != 'darwin_amd64'
+        if: runner.os != 'macOS'
         env:
           TSNC_GC_STRESS: "1"
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address
