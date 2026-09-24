@@ -441,6 +441,32 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 		}
 	}
 
+	for widening, i in c.result.widenings {
+		_, source_is_object := c.result.types[widening.source].(check.Object)
+		_, target_is_object := c.result.types[widening.target].(check.Object)
+		testing.expectf(
+			t,
+			source_is_object && target_is_object && widening.source != widening.target,
+			"a widening of %s into %s, which are not two object types",
+			type_text(c, widening.source),
+			type_text(c, widening.target),
+			loc = loc,
+		)
+		if i == 0 {
+			continue
+		}
+		previous := c.result.widenings[i - 1]
+		ascending :=
+			previous.source < widening.source ||
+			previous.source == widening.source && previous.target < widening.target
+		testing.expectf(
+			t,
+			ascending,
+			"the widenings are not sorted, or one is there twice",
+			loc = loc,
+		)
+	}
+
 	for type in c.result.types {
 		if object, is_object := type.(check.Object); is_object {
 			check_object(t, c, object, loc)

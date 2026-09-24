@@ -92,6 +92,12 @@ error: internal error: heap check failed: dangling reference: 0x1f2c0010040
 
 The runtime reads the variable once, at startup. Every check walks the whole heap, so a program that allocates a lot runs far slower in this mode.
 
+To run the differential corpus in this mode, set the variable for the runner; the programs it builds inherit it, and Node and tsc ignore it. CI runs the corpus both ways.
+
+```sh
+TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+```
+
 ## Unicode case tables
 
 `toUpperCase` and `toLowerCase` read the tables in `src/runtime/str/case_tables.odin`. A generator writes that file from three files of the Unicode Character Database: `UnicodeData.txt`, `SpecialCasing.txt` and `DerivedCoreProperties.txt`. The version is Unicode 17.0.0, the one Node 24 reports in `process.versions.unicode`, and the first line of the generated file names it.

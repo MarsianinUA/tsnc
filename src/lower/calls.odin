@@ -12,7 +12,11 @@ import "../source"
 Calls, and with them the whole of the standard library. A call is one of three things: a function of
 the program, which resolves statically and becomes a direct call; a name of the lib, which the
 strategy table of lib.odin turns into an intrinsic, an operator, a runtime call or a shape built
-here; or a function value, which needs the closures of milestone 5.
+here; or a function value, which needs the closures of T5.8.
+
+A method is called on its receiver, which is lowered once, before the arguments, as JavaScript
+evaluates it. `m.f()` through an `import * as m` is no method call: check recorded the export on the
+member, and the call is a direct one.
 
 console.log is one runtime call per statement, with every argument boxed into a tagged value: a
 format string in the first argument decides how the others print, so only the runtime can lay out
@@ -22,14 +26,17 @@ the line. Every argument is evaluated before the call, as Node does it.
 @(private)
 lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
-	if member, is_member := s.tree.nodes[node.callee].variant.(ast.Member); is_member {
-		return lower_method_call(s, node, member, span)
-	}
-	if _, is_ident := s.tree.nodes[node.callee].variant.(ast.Ident); !is_ident {
+	ref := s.typed.node_symbols[node.callee]
+	#partial switch v in s.tree.nodes[node.callee].variant {
+	case ast.Member:
+		if ref.symbol == bind.NO_SYMBOL {
+			return lower_method_call(s, id, node, v, span)
+		}
+	case ast.Ident:
+	case:
 		return later(s, span, "calling a function value")
 	}
 
-	ref := s.typed.node_symbols[node.callee]
 	if ref.symbol == bind.NO_SYMBOL {
 		return ir.NO_VALUE
 	}
@@ -39,7 +46,7 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 		if !found {
 			return ir.NO_VALUE
 		}
-		return lower_strategy(s, node, strategy, name, span)
+		return lower_strategy(s, id, node, strategy, name, ir.NO_VALUE, span)
 	}
 
 	declared := s.low.prog.bound[ref.file].symbols[ref.symbol]
@@ -53,24 +60,21 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 	return ir.NO_VALUE
 }
 
-// lower_method_call finds either a name of the lib or a member of an object, which milestone 5
-// owns.
 @(private)
 lower_method_call :: proc(
 	s: ^Func_State,
+	id: ast.Node_ID,
 	node: ast.Call,
 	member: ast.Member,
 	span: source.Span,
 ) -> ir.Value_ID {
-	strategy, found := member_strategy(s, member)
+	strategy, receiver, found := member_strategy(s, member)
 	if !found {
 		return ir.NO_VALUE
 	}
-	return lower_strategy(s, node, strategy, member.name.text, span)
+	return lower_strategy(s, id, node, strategy, member.name.text, receiver, span)
 }
 
-// lower_direct_call gives an argument the call leaves out the zero of its parameter, which for an
-// optional one is undefined: the parameters of the IR function are the types the body sees.
 @(private)
 lower_direct_call :: proc(
 	s: ^Func_State,
@@ -78,13 +82,29 @@ lower_direct_call :: proc(
 	func: ir.Func_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
+	args := make([]ir.Value_ID, len(node.args), context.temp_allocator)
+	for arg, i in node.args {
+		args[i] = lower_expression(s, arg)
+	}
+	return call_function(s, func, args, span)
+}
+
+// call_function gives a parameter the call leaves out its zero, which for an optional one is
+// undefined: the parameters of the IR function are the types the body sees.
+@(private)
+call_function :: proc(
+	s: ^Func_State,
+	func: ir.Func_ID,
+	given: []ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
 	declared := s.low.builder.funcs[func]
 	args := make([]ir.Value_ID, len(declared.params), context.temp_allocator)
-	for i in 0 ..< len(declared.params) {
-		if i < len(node.args) {
-			args[i] = coerce(s, lower_expression(s, node.args[i]), declared.params[i], span)
+	for param, i in declared.params {
+		if i < len(given) {
+			args[i] = coerce(s, given[i], param, span)
 		} else {
-			args[i] = zero_value(s, declared.params[i], span)
+			args[i] = zero_value(s, param, span)
 		}
 		if args[i] == ir.NO_VALUE {
 			return ir.NO_VALUE
@@ -93,12 +113,15 @@ lower_direct_call :: proc(
 	return ir.emit(&s.fb, declared.result, ir.Call{func = func, args = args}, span)
 }
 
+// lower_strategy takes the receiver of a method, and NO_VALUE for a name of the lib.
 @(private)
 lower_strategy :: proc(
 	s: ^Func_State,
+	id: ast.Node_ID,
 	node: ast.Call,
 	strategy: Strategy,
 	name: string,
+	receiver: ir.Value_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
 	switch v in strategy {
@@ -120,12 +143,9 @@ lower_strategy :: proc(
 		}
 		return ir.emit(&s.fb, ir.F64, ir.Binary{op = v.op, left = args[0], right = args[1]}, span)
 	case Runtime:
-		exports := abi.RUNTIME_EXPORTS
-		args, ok := number_args(s, node, len(exports[v.export].params))
-		if !ok {
-			return ir.NO_VALUE
-		}
-		return ir.emit(&s.fb, ir.F64, ir.Call_Runtime{export = v.export, args = args}, span)
+		return lower_runtime(s, id, node, v.export, span)
+	case Method:
+		return lower_method(s, id, node, v, receiver, span)
 	case Fold:
 		return lower_fold(s, node, v, span)
 	case Builtin:
@@ -134,8 +154,8 @@ lower_strategy :: proc(
 			return lower_console(s, node, false, span)
 		case .Console_Error:
 			return lower_console(s, node, true, span)
-		case .Process_Argv:
-			// An array is not callable, and check said so already.
+		case .Process_Argv, .Length:
+			// A value, not callable, and check said so already.
 			return ir.NO_VALUE
 		case .Process_Exit:
 			return lower_process_exit(s, node, span)
@@ -143,9 +163,116 @@ lower_strategy :: proc(
 			return lower_is_integer(s, node, span)
 		case .Math_Sign:
 			return lower_sign(s, node, span)
+		case .String_Of:
+			return lower_string_of(s, node, span)
+		case .String_Includes:
+			return lower_string_includes(s, node, receiver, span)
+		case .Array_Push:
+			return lower_push(s, node, receiver, span)
+		case .Array_Join:
+			return lower_join(s, node, receiver, span)
+		case .Array_Sort:
+			return lower_sort(s, id, node, receiver, span)
+		case .Array_Map:
+			return lower_map(s, id, node, receiver, span)
+		case .Array_Filter:
+			return lower_filter(s, id, node, receiver, span)
+		case .Array_For_Each:
+			return lower_for_each(s, node, receiver, span)
+		case .Array_Reduce:
+			return lower_reduce(s, id, node, receiver, span)
 		}
 	}
 	return later(s, span, name)
+}
+
+// runtime_argument lowers an argument and hands it over in the C type its row declares: a tagged
+// value boxed, a reference as it is.
+@(private)
+runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) -> ir.Value_ID {
+	span := s.tree.nodes[arg].span
+	value := lower_expression(s, arg)
+	if value == ir.NO_VALUE {
+		return ir.NO_VALUE
+	}
+	#partial switch param {
+	case .Number:
+		return coerce(s, value, ir.F64, span)
+	case .Boolean:
+		return coerce(s, value, ir.BOOL, span)
+	case .Tagged:
+		return coerce(s, value, ir.TAGGED, span)
+	case .Ptr:
+		#partial switch value_type(s, value).kind {
+		case .Str, .Ref, .Closure:
+			return value
+		}
+	}
+	return operand_not_lowered(s, value, span)
+}
+
+// lower_runtime stays quiet about a call with the wrong count: check already reported it.
+@(private)
+lower_runtime :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Call,
+	export: abi.Runtime_Proc,
+	span: source.Span,
+) -> ir.Value_ID {
+	exports := abi.RUNTIME_EXPORTS
+	params := exports[export].params
+	if len(node.args) != len(params) {
+		return ir.NO_VALUE
+	}
+	args := make([]ir.Value_ID, len(params), context.temp_allocator)
+	complete := true
+	for arg, i in node.args {
+		args[i] = runtime_argument(s, arg, params[i])
+		complete &&= args[i] != ir.NO_VALUE
+	}
+	if !complete {
+		return ir.NO_VALUE
+	}
+	return ir.emit(&s.fb, node_type(s, id), ir.Call_Runtime{export = export, args = args}, span)
+}
+
+// lower_method passes the receiver first. An argument the call leaves out, always a number, takes
+// the row's stand-in for undefined.
+@(private)
+lower_method :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Call,
+	method: Method,
+	receiver: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	exports := abi.RUNTIME_EXPORTS
+	params := exports[method.export].params
+	args := make([]ir.Value_ID, len(params), context.temp_allocator)
+	args[0] = receiver
+	complete := true
+	for param, i in params[1:] {
+		switch {
+		case i < len(node.args):
+			args[i + 1] = runtime_argument(s, node.args[i], param)
+		case param == .Number:
+			args[i + 1] = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = method.missing[i]}, span)
+		case:
+			args[i + 1] = ir.NO_VALUE // a required argument, whose absence check reported
+		}
+		complete &&= args[i + 1] != ir.NO_VALUE
+	}
+	if !complete {
+		return ir.NO_VALUE
+	}
+	return ir.emit(
+		&s.fb,
+		node_type(s, id),
+		ir.Call_Runtime{export = method.export, args = args},
+		span,
+	)
 }
 
 // number_args stays quiet about a call with the wrong count: check already reported it.

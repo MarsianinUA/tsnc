@@ -65,7 +65,7 @@ map_case :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, to: Case) -> ^abi.Strin
 write_case :: proc(dst, source: []u16, to: Case) -> (length: int, changed: bool) {
 	for next := 0; next < len(source); {
 		at := next
-		r, width := code_point_at(source, at)
+		r, width := rune_at(source, at)
 		next += width
 		if to == .Lower && r == SIGMA && is_final_sigma(source, at, width) {
 			length += put(dst, length, FINAL_SIGMA)
@@ -116,7 +116,7 @@ put :: proc "contextless" (dst: []u16, at: int, r: rune) -> int {
 is_final_sigma :: proc(source: []u16, at, width: int) -> bool {
 	cased_before := false
 	for before := at; before > 0; {
-		r, back := code_point_before(source, before)
+		r, back := rune_before(source, before)
 		before -= back
 		if !in_ranges(CASE_IGNORABLE[:], r) {
 			cased_before = in_ranges(CASED[:], r)
@@ -127,7 +127,7 @@ is_final_sigma :: proc(source: []u16, at, width: int) -> bool {
 		return false
 	}
 	for after := at + width; after < len(source); {
-		r, forward := code_point_at(source, after)
+		r, forward := rune_at(source, after)
 		after += forward
 		if !in_ranges(CASE_IGNORABLE[:], r) {
 			return !in_ranges(CASED[:], r)
@@ -193,10 +193,10 @@ order_special :: proc(special: Special_Case, r: rune) -> slice.Ordering {
 	return order_range({special.code, special.code}, r)
 }
 
-// code_point_at reads the code point that starts at `at`: a surrogate pair is one, a lone
+// rune_at reads the code point that starts at `at`: a surrogate pair is one, a lone
 // surrogate is its own.
 @(private)
-code_point_at :: proc "contextless" (source: []u16, at: int) -> (r: rune, width: int) {
+rune_at :: proc "contextless" (source: []u16, at: int) -> (r: rune, width: int) {
 	if at + 1 < len(source) {
 		pair := utf16.decode_surrogate_pair(rune(source[at]), rune(source[at + 1]))
 		if pair != utf16.REPLACEMENT_CHAR {
@@ -206,9 +206,9 @@ code_point_at :: proc "contextless" (source: []u16, at: int) -> (r: rune, width:
 	return rune(source[at]), 1
 }
 
-// code_point_before follows code_point_at's rule for a lone surrogate.
+// rune_before follows rune_at's rule for a lone surrogate.
 @(private)
-code_point_before :: proc "contextless" (source: []u16, at: int) -> (r: rune, width: int) {
+rune_before :: proc "contextless" (source: []u16, at: int) -> (r: rune, width: int) {
 	if at >= 2 {
 		pair := utf16.decode_surrogate_pair(rune(source[at - 2]), rune(source[at - 1]))
 		if pair != utf16.REPLACEMENT_CHAR {

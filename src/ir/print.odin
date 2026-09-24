@@ -35,7 +35,9 @@ write_program :: proc(w: io.Writer, files: []source.File, p: Program_IR) -> io.E
 		if Layout_ID(id) == NO_LAYOUT {
 			continue
 		}
-		write_layout(w, Layout_ID(id), table) or_return
+		// A layout that never went through the builder has no base, and is a layout of its own.
+		base := p.base[id] if id < len(p.base) else Layout_ID(id)
+		write_layout(w, Layout_ID(id), table, base) or_return
 	}
 	for global, id in p.globals {
 		io.write_string(w, "global ") or_return
@@ -163,8 +165,15 @@ write_violation :: proc(
 	return nil
 }
 
+// write_layout ends a table row with `order of <base>`, the layout whose fields it lists in another
+// order.
 @(private)
-write_layout :: proc(w: io.Writer, id: Layout_ID, table: abi.Type_Table) -> io.Error {
+write_layout :: proc(
+	w: io.Writer,
+	id: Layout_ID,
+	table: abi.Type_Table,
+	base: Layout_ID,
+) -> io.Error {
 	io.write_string(w, "layout ") or_return
 	io.write_int(w, int(id)) or_return
 	io.write_byte(w, ' ') or_return
@@ -175,6 +184,10 @@ write_layout :: proc(w: io.Writer, id: Layout_ID, table: abi.Type_Table) -> io.E
 	}
 	io.write_string(w, " size ") or_return
 	io.write_int(w, table.size) or_return
+	if base != id {
+		io.write_string(w, " order of ") or_return
+		io.write_int(w, int(base)) or_return
+	}
 	io.write_byte(w, '\n') or_return
 	for field, index in table.fields {
 		io.write_string(w, "  field ") or_return
@@ -280,6 +293,16 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 	case Alloc:
 		io.write_string(w, "alloc ") or_return
 		io.write_int(w, int(v.layout)) or_return
+		if v.table != NO_LAYOUT {
+			io.write_string(w, " table ") or_return
+			io.write_int(w, int(v.table)) or_return
+		}
+
+	case New_Array:
+		io.write_string(w, "new_array ") or_return
+		io.write_int(w, int(v.layout)) or_return
+		io.write_string(w, ", ") or_return
+		write_value(w, v.length) or_return
 
 	case Field_Load:
 		io.write_string(w, "field_load ") or_return
@@ -295,6 +318,10 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, "field_store_ref ") or_return
 		write_field(w, v.cell, v.field) or_return
 		io.write_string(w, " = ") or_return
+		write_value(w, v.value) or_return
+
+	case Length:
+		io.write_string(w, "length ") or_return
 		write_value(w, v.value) or_return
 
 	case Bounds_Check:
@@ -320,6 +347,12 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		write_element(w, v.array, v.index) or_return
 		io.write_string(w, " = ") or_return
 		write_value(w, v.value) or_return
+
+	case Layout_Test:
+		io.write_string(w, "layout_test ") or_return
+		write_value(w, v.cell) or_return
+		io.write_byte(w, ' ') or_return
+		io.write_int(w, int(v.layout)) or_return
 
 	case Tag_Test:
 		io.write_string(w, "tag_test ") or_return
@@ -678,6 +711,8 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Invalid_String_Length        = "invalid_string_length",
 	.Not_Convertible_To_Number    = "not_convertible_to_number",
 	.Not_Convertible_To_Json      = "not_convertible_to_json",
+	.Reduce_Of_Empty_Array        = "reduce_of_empty_array",
+	.Field_Holds_Other_Kind       = "field_holds_other_kind",
 }
 
 @(private, rodata)

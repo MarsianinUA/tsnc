@@ -42,6 +42,7 @@ context.temp_allocator.
 package check
 
 import "base:runtime"
+import "core:slice"
 
 import "../ast"
 import "../bind"
@@ -85,6 +86,17 @@ Check_Result :: struct {
 	partition: []source.File_ID, // in the order they were given
 	types:     []Type, // indexed by Type_ID
 	files:     []Typed_File, // one per partition entry, in the same order
+	// Every flow of an object into another object type the rules accepted, sorted by (source,
+	// target) with no repeats. lower gives both one layout, so the value that flows is the same
+	// object with no copy, as in Node.
+	widenings: []Widening,
+}
+
+// Widening is an object type accepted where another object type was expected: `const b: B = a`, an
+// argument, a return, a field of either, a member of a union.
+Widening :: struct {
+	source: Type_ID,
+	target: Type_ID,
 }
 
 // check reports every mistake it sees rather than stopping at the first, and always returns a whole
@@ -109,6 +121,7 @@ check :: proc(
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
 		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
+		widenings    = make([dynamic]Widening, context.temp_allocator),
 		narrowing    = make_narrowing(context.temp_allocator),
 		diagnostics  = make([dynamic]diag.Diagnostic, allocator),
 	}
@@ -164,6 +177,9 @@ Checker :: struct {
 	// The lib declarations check has to know by name rather than by use. Filled on first use.
 	lib:          Lib_Types,
 	trail:        Trail,
+	// The widenings fits found so far, in the order it found them; freeze sorts them. The list is
+	// also the visited set of the walk that fills it.
+	widenings:    [dynamic]Widening,
 	narrowing:    Narrowing,
 	diagnostics:  [dynamic]diag.Diagnostic,
 	at:           Place,
@@ -248,7 +264,11 @@ facts_of :: proc(c: ^Checker, file: source.File_ID) -> Facts {
 freeze :: proc(c: ^Checker, partition: []source.File_ID, files: []Typed_File) -> Check_Result {
 	owned := make([]source.File_ID, len(partition), c.allocator)
 	copy(owned, partition)
-	return {partition = owned, types = c.table.types[:], files = files}
+	widenings := slice.clone(c.widenings[:], c.allocator)
+	slice.sort_by(widenings, proc(a, b: Widening) -> bool {
+		return a.source < b.source || a.source == b.source && a.target < b.target
+	})
+	return {partition = owned, types = c.table.types[:], files = files, widenings = widenings}
 }
 
 // free_scratch matters only to an allocator that frees, such as the tracking allocator of the
@@ -273,6 +293,7 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.bindings)
 	delete(c.aliases)
 	delete(c.trail)
+	delete(c.widenings)
 	delete(c.narrowing.answers)
 	delete(c.narrowing.loops)
 	delete(c.narrowing.partial)
@@ -353,10 +374,17 @@ span_of :: proc(c: ^Checker, id: ast.Node_ID) -> source.Span {
 
 // fits shares one trail across the whole check: assignable reads the frozen rows and never calls
 // back here, so no second comparison can be running while this one is.
+//
+// A yes records the widenings it accepted, whoever asked. Nothing filters by the question: a pair
+// recorded where no value flows only joins two layouts that need not have been joined.
 @(private)
 fits :: proc(c: ^Checker, source, target: Type_ID) -> bool {
 	clear(&c.trail)
-	return assignable(c.table.types[:], source, target, &c.trail)
+	if !assignable(c.table.types[:], source, target, &c.trail) {
+		return false
+	}
+	list_widenings(c.table.types[:], source, target, &c.widenings, &c.trail)
+	return true
 }
 
 // comparable reports whether two types have a value in common, which is what `===` and a `switch`

@@ -13,16 +13,16 @@ Where a name goes follows requirements 4.5. Math is not a runtime call: core LLV
 f64 intrinsics, and a wrapper around a wrapper would stop constant folding and inlining, so the code
 generator emits the intrinsic or a call to libm. Only what C does differently goes to the runtime:
 round takes a half toward positive infinity, and max and min have their own rules for NaN and the
-two zeros. What holds a reference to a TS value, or needs the GC heap, is a runtime call as well.
+two zeros. What holds a reference to a TS value, or needs the GC heap, is a runtime call as well,
+apart from the length of a string or an array, which is one load, and map, filter, forEach and
+reduce, which are loops lower builds around the callback it inlines.
 
-Later is the honest answer for the rest. Strings, arrays and the names that build one are part of
-the v1 language, and this build reports them rather than guessing; milestone 5 replaces those rows.
-Four Math names sit there for a different reason, named in each row: the instruction set has no way
-to say them yet.
+Later is the answer for four Math names, each with its reason in the row: the instruction set has
+no way to say them yet.
 */
 
 // Owner says which half of a name the row is keyed by: `Math.floor` names a value the lib declares,
-// `x.toFixed` names a method of the interface that types a primitive.
+// `x.toFixed` names a method of the interface that types a primitive or an array.
 Owner :: enum u8 {
 	Value,
 	Instance,
@@ -48,9 +48,18 @@ Operator :: struct {
 	op: ir.Binary_Op,
 }
 
-// Runtime is a call with the arity abi.RUNTIME_EXPORTS gives the export.
+// Runtime is a call with the arity abi.RUNTIME_EXPORTS gives the export, each argument in the C type
+// its row declares.
 Runtime :: struct {
 	export: abi.Runtime_Proc,
+}
+
+// Method is a runtime call whose first argument is the receiver: the string, number or array in
+// front of the dot. missing holds, for the arguments after it, the number the specification treats
+// exactly as undefined, which one the call leaves out takes (abi.MISSING_END and its kin).
+Method :: struct {
+	export:  abi.Runtime_Proc,
+	missing: [2]f64,
 }
 
 // Fold is a name that takes any number of numbers and folds them two at a time, left to right.
@@ -68,6 +77,16 @@ Builtin :: enum u8 {
 	Process_Exit,
 	Number_Is_Integer,
 	Math_Sign,
+	Length,
+	String_Of,
+	String_Includes,
+	Array_Push,
+	Array_Join,
+	Array_Sort,
+	Array_Map,
+	Array_Filter,
+	Array_For_Each,
+	Array_Reduce,
 }
 
 Strategy :: union #no_nil {
@@ -76,6 +95,7 @@ Strategy :: union #no_nil {
 	Intrinsic,
 	Operator,
 	Runtime,
+	Method,
 	Fold,
 	Builtin,
 }
@@ -149,33 +169,33 @@ LIB_STRATEGIES := []Lib_Entry {
 	{.Value, "Math", "tanh", Intrinsic{.Tanh}},
 	{.Value, "Math", "trunc", Intrinsic{.Trunc}},
 	{.Value, "Number", "isInteger", Builtin.Number_Is_Integer},
-	{.Value, "Number", "parseFloat", Later{"reading a number out of a string"}},
-	{.Value, "String", "", Later{"turning a value into a string"}},
-	{.Instance, "Number", "toString", Later{"turning a number into a string"}},
-	{.Instance, "Number", "toFixed", Later{"turning a number into a string"}},
-	{.Instance, "String", "length", Later{"string methods"}},
-	{.Instance, "String", "charCodeAt", Later{"string methods"}},
-	{.Instance, "String", "slice", Later{"string methods"}},
-	{.Instance, "String", "indexOf", Later{"string methods"}},
-	{.Instance, "String", "includes", Later{"string methods"}},
-	{.Instance, "String", "split", Later{"string methods"}},
-	{.Instance, "String", "trim", Later{"string methods"}},
-	{.Instance, "String", "toUpperCase", Later{"string methods"}},
-	{.Instance, "String", "toLowerCase", Later{"string methods"}},
-	{.Instance, "String", "startsWith", Later{"string methods"}},
-	{.Instance, "String", "endsWith", Later{"string methods"}},
-	{.Instance, "Array", "length", Later{"arrays"}},
-	{.Instance, "Array", "push", Later{"arrays"}},
-	{.Instance, "Array", "pop", Later{"arrays"}},
-	{.Instance, "Array", "indexOf", Later{"arrays"}},
-	{.Instance, "Array", "includes", Later{"arrays"}},
-	{.Instance, "Array", "slice", Later{"arrays"}},
-	{.Instance, "Array", "join", Later{"arrays"}},
-	{.Instance, "Array", "sort", Later{"arrays"}},
-	{.Instance, "Array", "map", Later{"arrays"}},
-	{.Instance, "Array", "filter", Later{"arrays"}},
-	{.Instance, "Array", "forEach", Later{"arrays"}},
-	{.Instance, "Array", "reduce", Later{"arrays"}},
+	{.Value, "Number", "parseFloat", Runtime{.Number_Parse_Float}},
+	{.Value, "String", "", Builtin.String_Of},
+	{.Instance, "Number", "toString", Method{.Number_To_String, {}}},
+	{.Instance, "Number", "toFixed", Method{.Number_To_Fixed, {0, 0}}},
+	{.Instance, "String", "length", Builtin.Length},
+	{.Instance, "String", "charCodeAt", Method{.String_Char_Code_At, {0, 0}}},
+	{.Instance, "String", "slice", Method{.String_Slice, {0, abi.MISSING_END}}},
+	{.Instance, "String", "indexOf", Method{.String_Index_Of, {0, 0}}},
+	{.Instance, "String", "includes", Builtin.String_Includes},
+	{.Instance, "String", "split", Method{.String_Split, {0, abi.MISSING_LIMIT}}},
+	{.Instance, "String", "trim", Method{.String_Trim, {}}},
+	{.Instance, "String", "toUpperCase", Method{.String_To_Upper, {}}},
+	{.Instance, "String", "toLowerCase", Method{.String_To_Lower, {}}},
+	{.Instance, "String", "startsWith", Method{.String_Starts_With, {0, 0}}},
+	{.Instance, "String", "endsWith", Method{.String_Ends_With, {0, abi.MISSING_END}}},
+	{.Instance, "Array", "length", Builtin.Length},
+	{.Instance, "Array", "push", Builtin.Array_Push},
+	{.Instance, "Array", "pop", Method{.Array_Pop, {}}},
+	{.Instance, "Array", "indexOf", Method{.Array_Index_Of, {0, 0}}},
+	{.Instance, "Array", "includes", Method{.Array_Includes, {0, 0}}},
+	{.Instance, "Array", "slice", Method{.Array_Slice, {0, abi.MISSING_END}}},
+	{.Instance, "Array", "join", Builtin.Array_Join},
+	{.Instance, "Array", "sort", Builtin.Array_Sort},
+	{.Instance, "Array", "map", Builtin.Array_Map},
+	{.Instance, "Array", "filter", Builtin.Array_Filter},
+	{.Instance, "Array", "forEach", Builtin.Array_For_Each},
+	{.Instance, "Array", "reduce", Builtin.Array_Reduce},
 }
 
 // The two values a program can name without writing digits. ECMAScript leaves the payload of NaN
@@ -193,14 +213,18 @@ lib_strategy :: proc(owner: Owner, root, member: string) -> (Strategy, bool) {
 	return Later{""}, false
 }
 
-// instance_owner is the interface whose methods a value of this IR type has. Only a primitive has
-// one, which is what makes the table's Instance half small.
-instance_owner :: proc(type: ir.Type) -> (string, bool) {
+// instance_owner is the interface whose methods a value of this IR type has. Only a primitive and
+// an array have one, which is what makes the table's Instance half small.
+instance_owner :: proc(low: ^Lowering, type: ir.Type) -> (string, bool) {
 	#partial switch type.kind {
 	case .F64:
 		return "Number", true
 	case .Str:
 		return "String", true
+	case .Ref:
+		if low.builder.layouts[type.layout].kind == .Array {
+			return "Array", true
+		}
 	}
 	return "", false
 }

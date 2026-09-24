@@ -13,7 +13,7 @@ import "str"
 import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 36)
+#assert(len(abi.Runtime_Proc) == 39)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -115,6 +115,13 @@ string_at :: proc "c" (text: ^abi.String_Cell, index: f64) -> ^abi.String_Cell {
 	context = export_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	return str.unit_at(&heap, text, index)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Code_Point_At].symbol)
+string_code_point_at :: proc "c" (text: ^abi.String_Cell, index: f64) -> ^abi.String_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	return str.code_point_at(&heap, text, index)
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Char_Code_At].symbol)
@@ -305,6 +312,29 @@ array_sort_default :: proc "c" (array: ^abi.Array_Cell) -> ^abi.Array_Cell {
 		fail.at({error = .Not_Convertible_To_String})
 	}
 	return array
+}
+
+// A table arrives as a 64-bit word (abi.C_Type.Table), from the layout codegen emitted.
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Alloc].symbol)
+alloc_cell :: proc "c" (table: u64) -> ^abi.Cell_Header {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	id := abi.Type_Table_ID(table)
+	layout, known := gc.type_table(&heap, id)
+	ensure(known, "generated code allocated a cell of an unregistered type table")
+	return gc.alloc(&heap, id, layout.size)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_New].symbol)
+array_new :: proc "c" (table: u64, length: f64) -> ^abi.Array_Cell {
+	context = export_context()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	// Checked in f64 first: converting NaN or a number past the range of an int is undefined.
+	ensure(0 <= length && length < f64(1 << 53), "an array length that is no count")
+	count := int(length)
+	ensure(f64(count) == length, "an array length that is no count")
+	return arr.new_zeroed(&heap, abi.Type_Table_ID(table), count)
 }
 
 @(private)

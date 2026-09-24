@@ -478,18 +478,150 @@ every_number_function_reaches_llvm :: proc(t: ^testing.T) {
 	}
 }
 
-// An instruction whose runtime arrives with milestone 5 is an error, not a crash. lower refuses
-// every construct that would build one, so no program reaches this.
+// Every heap instruction, each kind of slot, and a bounds check on an array and on a string. The
+// LLVM verifier runs inside emit, at both levels.
+@(test)
+the_heap_instructions_pass_the_llvm_verifier :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+	fields := [?]ir.Slot {
+		{name = "flag", kind = .Boolean},
+		{name = "name", kind = .Ref},
+		{name = "size", kind = .Number},
+		{name = "tag", kind = .Tagged, optional = true},
+	}
+	cell := ir.object_layout(&p, fields[:])
+	printed := ir.object_table(&p, cell, {"size", "name", "flag", "tag"})
+	numbers := ir.array_layout(&p, .Number)
+	values := ir.array_layout(&p, .Tagged)
+	not_integer := ir.fail_site(
+		&p,
+		{file = "main.ts", line = 1, column = 1, error = .Index_Not_Integer},
+	)
+	out_of_range := ir.fail_site(
+		&p,
+		{file = "main.ts", line = 1, column = 1, error = .Index_Out_Of_Range},
+	)
+
+	params := [?]ir.Type{ir.STR, ir.F64, ir.BOOL}
+	id := ir.declare_func(&p, "m1.fill", params[:], ir.ref(cell), at(1))
+	f := ir.begin_func(&p, id)
+	text, index, flag := ir.Value_ID(0), ir.Value_ID(1), ir.Value_ID(2)
+	object := ir.emit(&f, ir.ref(cell), ir.Alloc{layout = cell, table = printed}, at(2))
+	ir.emit(&f, ir.VOID, ir.Field_Store{cell = object, field = 0, value = flag}, at(2))
+	ir.emit(&f, ir.VOID, ir.Field_Store_Ref{cell = object, field = 1, value = text}, at(2))
+	length := ir.emit(&f, ir.F64, ir.Length{value = text}, at(2))
+	ir.emit(&f, ir.VOID, ir.Field_Store{cell = object, field = 2, value = length}, at(2))
+	boxed := ir.emit(&f, ir.TAGGED, ir.Box{value = length}, at(2))
+	ir.emit(&f, ir.VOID, ir.Field_Store_Ref{cell = object, field = 3, value = boxed}, at(2))
+
+	array := ir.emit(&f, ir.ref(numbers), ir.New_Array{layout = numbers, length = length}, at(3))
+	checked := ir.emit(&f, ir.F64, bounds_check(array, index, not_integer, out_of_range), at(3))
+	ir.emit(&f, ir.VOID, ir.Element_Store{array = array, index = checked, value = length}, at(3))
+	read := ir.emit(&f, ir.F64, ir.Element_Load{array = array, index = checked}, at(3))
+	tagged := ir.emit(&f, ir.ref(values), ir.New_Array{layout = values, length = read}, at(3))
+	inside := ir.emit(&f, ir.F64, bounds_check(tagged, index, not_integer, out_of_range), at(3))
+	ir.emit(
+		&f,
+		ir.VOID,
+		ir.Element_Store_Ref{array = tagged, index = inside, value = boxed},
+		at(3),
+	)
+	ir.emit(&f, ir.F64, bounds_check(text, index, not_integer, out_of_range), at(3))
+
+	loaded := ir.emit(&f, ir.STR, ir.Field_Load{cell = object, field = 1}, at(4))
+	ir.emit(&f, ir.BOOL, ir.Field_Load{cell = object, field = 0}, at(4))
+	ir.emit(&f, ir.F64, ir.Length{value = loaded}, at(4))
+	ir.emit(&f, ir.BOOL, ir.Layout_Test{cell = object, layout = cell}, at(4))
+	ir.emit(&f, ir.ref(cell), ir.Const_Null{}, at(4))
+	ir.emit(&f, ir.VOID, ir.Return{value = object}, at(4))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	for level in ([?]codegen.Optimization{.none, .speed}) {
+		text := llvm_text(t, &output, fmt.tprintf("heap-%v", level), level)
+		if text == "" || level != .none {
+			continue
+		}
+		wants := []string {
+			"declare ptr @tsnc_alloc(i64)",
+			"declare ptr @tsnc_array_new(i64, double)",
+			"call ptr @tsnc_alloc(i64 3)", // the reordered row, after two builtin tables
+			"call void @tsnc_fail(ptr @fail_site",
+			"fptosi double",
+			"store %tsnc.tagged",
+		}
+		expect_text(t, text, wants)
+	}
+}
+
+// A bounds check splits the block it stands in, so a phi fed from that block names the block the
+// check left the builder in; naming the first would fail the LLVM verifier.
+@(test)
+a_phi_after_a_bounds_check_names_the_tail_block :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+	numbers := ir.array_layout(&p, .Number)
+	not_integer := ir.fail_site(
+		&p,
+		{file = "main.ts", line = 1, column = 1, error = .Index_Not_Integer},
+	)
+	out_of_range := ir.fail_site(
+		&p,
+		{file = "main.ts", line = 1, column = 1, error = .Index_Out_Of_Range},
+	)
+
+	params := [?]ir.Type{ir.ref(numbers), ir.F64, ir.BOOL}
+	id := ir.declare_func(&p, "m1.first_or_one", params[:], ir.F64, at(1))
+	f := ir.begin_func(&p, id)
+	read_block := ir.add_block(&f)
+	other_block := ir.add_block(&f)
+	join := ir.add_block(&f)
+	ir.emit(
+		&f,
+		ir.VOID,
+		ir.Branch{condition = 2, then_block = read_block, else_block = other_block},
+		at(2),
+	)
+	ir.use_block(&f, read_block)
+	checked := ir.emit(&f, ir.F64, bounds_check(0, 1, not_integer, out_of_range), at(3))
+	element := ir.emit(&f, ir.F64, ir.Element_Load{array = 0, index = checked}, at(3))
+	ir.emit(&f, ir.VOID, ir.Jump{target = join}, at(3))
+	ir.use_block(&f, other_block)
+	one := ir.emit(&f, ir.F64, ir.Const_Number{value = 1}, at(4))
+	ir.emit(&f, ir.VOID, ir.Jump{target = join}, at(4))
+	ir.use_block(&f, join)
+	merged := ir.phi(&f, ir.F64, at(5))
+	ir.phi_incoming(&f, merged, read_block, element)
+	ir.phi_incoming(&f, merged, other_block, one)
+	ir.emit(&f, ir.VOID, ir.Return{value = merged}, at(5))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "bounds-phi")
+	if text == "" {
+		return
+	}
+	expect_text(t, text, {"phi double ["})
+	testing.expectf(
+		t,
+		!strings.contains(text, ", %b1 ]"),
+		"the phi names the head block:\n%s",
+		text,
+	)
+}
+
+// An instruction whose runtime arrives with T5.8 is an error, not a crash. lower refuses every
+// construct that would build one, so no program reaches this.
 @(test)
 an_instruction_without_a_runtime_is_an_error :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	main := declare_main(&p)
 
-	fields := [?]ir.Slot{{name = "x", kind = .Number}}
-	layout := ir.object_layout(&p, fields[:])
-	id := ir.declare_func(&p, "m1.make", nil, ir.VOID, at(1))
+	params := [?]ir.Type{ir.CLOSURE}
+	id := ir.declare_func(&p, "m1.call", params[:], ir.VOID, at(1))
 	f := ir.begin_func(&p, id)
-	ir.emit(&f, ir.ref(layout), ir.Alloc{layout = layout}, at(2))
+	ir.emit(&f, ir.VOID, ir.Call_Closure{callee = 0}, at(2))
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(3))
 	ir.end_func(&f)
 
@@ -505,8 +637,16 @@ an_instruction_without_a_runtime_is_an_error :: proc(t: ^testing.T) {
 			target.HOST,
 			.none,
 			.LLVM_IR,
-			"dist/codegen-alloc.ll",
+			"dist/codegen-closure.ll",
 		)
 	}
 	testing.expect_value(t, err, codegen.Error.Unsupported_Instruction)
+}
+
+@(private = "file")
+bounds_check :: proc(
+	array, index: ir.Value_ID,
+	not_integer, out_of_range: ir.Fail_Site_ID,
+) -> ir.Bounds_Check {
+	return {array = array, index = index, not_integer = not_integer, out_of_range = out_of_range}
 }

@@ -1,6 +1,6 @@
 // `switch`: fallthrough, a `default` that is not last, `break` binding to the switch rather than to
 // the loop around it, `continue` reaching through a switch to that loop, and a `return` that leaves
-// both. The cases are numbers, since comparing strings is milestone 5.
+// both. The cases are numbers, booleans and, last, strings, which compare by their units.
 
 function describe(x: number): string {
   switch (x) {
@@ -64,3 +64,17 @@ function firstOver(limit: number): number {
 }
 
 console.log(firstOver(5), firstOver(200));
+
+function kind(word: string): string {
+  switch (word) {
+    case "apple":
+    case "pear":
+      return "fruit";
+    case "":
+      return "nothing";
+    default:
+      return "other";
+  }
+}
+
+console.log(kind("apple"), kind("pear"), kind(""), kind("stone"), kind("Apple"));

@@ -356,8 +356,9 @@ array_program :: proc() -> ir.Program_IR {
 	return ir.finish(&p, main, nil)
 }
 
-// console_program is the program console_answers describes, built by hand: until milestone 5
-// lowers arrays, no TypeScript source can pass one to console.log.
+// console_program is the program console_answers describes, built by hand, so that the test pins
+// the calls into the runtime whatever lower makes of the source; tests/diff/src/arrays.ts prints
+// process.argv from TypeScript.
 @(private = "file")
 console_program :: proc() -> ir.Program_IR {
 	p := ir.make_builder(context.temp_allocator)

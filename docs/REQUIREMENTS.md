@@ -80,6 +80,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 - Each object type gets a fixed memory layout (a struct). The set of fields in canonical order (by name) determines the layout, so `Point` and `Vec2` with the same fields share one layout and are compatible at no cost.
 - An object reference is 8 bytes, a field access is one load at a known offset.
 - **Exact-type rule (v1).** An object is assignable only to a type with the same set of fields. Passing an object with more fields where fewer are expected (`{x, y, z}` into a parameter `{x, y}`) produces a compile error with a hint. Optional fields are part of the set and live in a tagged slot (3.4).
+- Within one set of fields, a narrow object passes where a wider type is expected, as in TypeScript: `{x: number}` goes where `{x: number | string}` is expected. The value is the same object, not a copy, so `===` holds and a write through either type shows through the other. The compiler finds every such flow in the whole program and gives each class of types that flow into each other one layout; a field whose types differ across the class is a tagged slot. A read through the narrower type checks what the slot holds (3.8).
 - v2: full structural typing. For inexact conversions the compiler generates a fat pointer (object + field offset table, similar to itab in Go); when layouts match, access stays direct.
 - An object's shape does not change after creation: fields cannot be added or removed.
 
@@ -98,6 +99,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 ### 3.6 Arrays
 - `T[]` is a growable contiguous buffer with a length and a capacity, with unboxed elements (`number[]` is an array of f64).
 - `push` is amortized O(1). Arrays have no holes.
+- `map`, `filter`, `forEach` and `reduce` follow Node when the callback changes the array: the length is read once, and `forEach`, `filter` and `reduce` stop where the array now ends. `map` over an array its callback shortens is a runtime error (3.8), because Node would leave a hole. `reduce` of an empty array without an initial value is a runtime error with Node's message, `Reduce of empty array with no initial value`.
 
 ### 3.7 Equality
 - `===` / `!==`: primitives by value, strings by content, objects by reference.
@@ -109,6 +111,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - reading `arr[i]` out of range or with a non-integer index: runtime error;
 - writing `arr[i]`: when `i === arr.length`, append to the end, beyond that an error;
 - `x!`: a check, error on `null` / `undefined`;
+- reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
 - division by zero and overflow follow f64 semantics (`Infinity`, `NaN`), without errors.
 
@@ -118,7 +121,7 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 - `console.log` and `console.error` print what Node's `util.format` prints. A string first argument is a format string while more arguments follow it, with Node's specifiers `%s %d %i %f %j %o %O %c %%`. Every other argument follows after a space: a string as is, anything else as `util.inspect` prints it with Node's defaults (depth 2, 80 columns, 100 array items, 10000 string units, long arrays grouped into columns, cycles marked `<ref *1>` and `[Circular *1]`). The line and its newline leave in one write.
 - Numbers per 3.1, `undefined` / `null` / `boolean` as words, arrays and objects as `[ 1, 2, 3 ]` and `{ a: 1, b: 'x' }`, functions as `[Function: f]`.
 - One exception to 3.1, and it follows Node: a negative zero printed on its own keeps its sign. Node formats an argument of `console.log` through `util.inspect` rather than through `String`, so `console.log(-0)` writes `-0` while `` console.log(`${-0}`) `` writes `0`.
-- An object prints its fields in the order Node enumerates them: integer-like keys in ascending order, then the rest in creation order. An optional field that was never set is left out. So is one set to `undefined` explicitly, which Node prints as `y: undefined`: v1 cannot tell the two apart.
+- An object prints its fields in the order Node enumerates them: integer-like keys in ascending order, then the rest in creation order. An optional field that was never set is left out. So is one set to `undefined` explicitly, which Node prints as `y: undefined`: v1 cannot tell the two apart. An optional field that the literal left out and the program set later prints after the fields the literal wrote, in canonical order, where Node prints fields in the order they were set.
 - Where Node would run the program's own code to print a value, the program stops with a runtime error (3.8): `%s`, `%i` or `%f` of a function or of an object with its own `toString`, `%d` of an object with its own `valueOf` or `toString`, `%j` of an object with its own `toJSON`.
 - Colors follow Node: `FORCE_COLOR`, `NO_COLOR`, `NODE_DISABLE_COLORS` and `TERM`, then whether the stream is a terminal. On Windows a console gets escape sequence processing turned on, as libuv does. The column width of a character, which groups an array, comes from Unicode 17 East Asian Width; unlike Node, a sequence that NFC would compose, such as Hangul jamo, is counted as it is.
 - `process.argv` is the path of the executable, the first argument as the process was started, then the arguments, which is what a Node single executable application sees. On Windows the arguments come from the wide command line, so any alphabet arrives intact.

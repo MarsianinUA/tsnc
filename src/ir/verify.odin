@@ -370,8 +370,18 @@ verify_instruction :: proc(c: ^Checker) {
 	case Const_Bool:
 		expect_result(c, BOOL)
 
-	case Const_Undefined, Const_Null:
+	case Const_Undefined:
 		expect_result(c, TAGGED)
+
+	case Const_Null:
+		type := instruction.type
+		if type.kind == .Ref {
+			if _, known := layout_of(c, type.layout); !known {
+				report(c, .Unknown_Id)
+			}
+		} else if type != TAGGED && type != CLOSURE {
+			report(c, .Result_Type)
+		}
 
 	case Const_String:
 		if int(v.text) >= len(c.program.strings) {
@@ -417,9 +427,28 @@ verify_instruction :: proc(c: ^Checker) {
 			report(c, .Unknown_Id)
 			return
 		}
-		if table.kind != .Object && table.kind != .Environment {
+		if table.kind != .Object && table.kind != .Environment || !is_base(c, v.layout) {
 			report(c, .Operand_Type)
 		}
+		if v.table != NO_LAYOUT {
+			if _, row_known := layout_of(c, v.table); !row_known {
+				report(c, .Unknown_Id)
+			} else if c.program.base[v.table] != v.layout {
+				report(c, .Operand_Type)
+			}
+		}
+		expect_result(c, ref(v.layout))
+
+	case New_Array:
+		table, known := layout_of(c, v.layout)
+		if !known {
+			report(c, .Unknown_Id)
+			return
+		}
+		if table.kind != .Array {
+			report(c, .Operand_Type)
+		}
+		expect_operand(c, v.length, F64)
 		expect_result(c, ref(v.layout))
 
 	case Field_Load:
@@ -448,8 +477,17 @@ verify_instruction :: proc(c: ^Checker) {
 		}
 		expect_result(c, VOID)
 
+	case Length:
+		// A string or an array: element_of reports anything else, and the kind is nothing here.
+		if type, known := operand(c, v.value); known && type != STR {
+			element_of(c, type)
+		}
+		expect_result(c, F64)
+
 	case Bounds_Check:
-		array_element(c, v.array) // for the check alone: the element kind is nothing to this one
+		if type, known := operand(c, v.array); known && type != STR {
+			element_of(c, type)
+		}
 		expect_operand(c, v.index, F64)
 		expect_site(c, v.not_integer)
 		expect_site(c, v.out_of_range)
@@ -483,6 +521,17 @@ verify_instruction :: proc(c: ^Checker) {
 			expect_slot(c, v.value, element)
 		}
 		expect_result(c, VOID)
+
+	case Layout_Test:
+		if type, known := operand(c, v.cell); known && type.kind != .Ref {
+			report(c, .Operand_Type)
+		}
+		if _, known := layout_of(c, v.layout); !known {
+			report(c, .Unknown_Id)
+		} else if !is_base(c, v.layout) {
+			report(c, .Operand_Type)
+		}
+		expect_result(c, BOOL)
 
 	case Tag_Test:
 		expect_operand(c, v.value, TAGGED)
@@ -810,6 +859,12 @@ array_element :: proc(c: ^Checker, array: Value_ID) -> (element: abi.Slot_Kind, 
 	if !array_known {
 		return
 	}
+	return element_of(c, type)
+}
+
+// element_of reports a type that is not an array.
+@(private)
+element_of :: proc(c: ^Checker, type: Type) -> (element: abi.Slot_Kind, known: bool) {
 	if type.kind != .Ref {
 		report(c, .Operand_Type)
 		return
@@ -843,8 +898,15 @@ layout_of :: proc(c: ^Checker, id: Layout_ID) -> (table: abi.Type_Table, known: 
 	return c.program.layouts[id], true
 }
 
-// slot_fits lets a Ref slot take a reference to any layout: abi.Field carries a slot kind and not a
-// table of its own, so the layout behind a traced slot is not knowable here.
+// is_base says whether a known layout is a layout of its own rather than a table row that reorders
+// one: a type and an instruction name the layout, only a cell header names a row.
+@(private)
+is_base :: proc(c: ^Checker, id: Layout_ID) -> bool {
+	return int(id) < len(c.program.base) && c.program.base[id] == id
+}
+
+// slot_fits lets a Ref slot take any reference: abi.Field carries a slot kind and not a table of its
+// own, so the layout behind a traced slot is not knowable here.
 @(private)
 slot_fits :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	switch kind {
@@ -853,7 +915,7 @@ slot_fits :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	case .Boolean:
 		return type == BOOL
 	case .Ref:
-		return type.kind == .Ref
+		return is_reference(type)
 	case .Tagged:
 		return type == TAGGED
 	}
@@ -889,6 +951,8 @@ c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 		return type == TAGGED
 	case .Rest:
 	// Not one operand: the Call_Runtime case checks each of them as a Tagged.
+	case .Table:
+	// No IR value is a table: codegen passes one itself, from the layout of Alloc or New_Array.
 	}
 	return false
 }

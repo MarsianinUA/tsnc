@@ -34,6 +34,9 @@ C_Type :: enum u8 {
 	// as two parameters: the address of an array of Tagged on the caller's stack, nil when there
 	// are none, and their count as an i64.
 	Rest,
+	// A Type_Table_ID widened to 64 bits, as a boolean is b64. Only codegen passes one, from the
+	// layout of the instruction it emits; no IR value has this type.
+	Table,
 }
 
 // Runtime_Proc lists the procedures the runtime exports to generated code. Runtime tasks add rows
@@ -58,6 +61,9 @@ Runtime_Proc :: enum u8 {
 	String_Equal, // (a, b) -> b64: `===`
 	String_Less, // (a, b) -> b64: `a < b` by units; lower swaps and negates for `>`, `<=`, `>=`
 	String_At, // (text, index) -> ^String_Cell: text[index], with the index checked first
+	// (text, index) -> ^String_Cell: the code point for...of reads at index, a surrogate pair or one
+	// unit, with the index checked first
+	String_Code_Point_At,
 	String_Char_Code_At, // (text, position) -> f64
 	String_Slice, // (text, start, end) -> ^String_Cell
 	String_Index_Of, // (text, search, position) -> f64; includes is Index_Of != -1
@@ -87,6 +93,9 @@ Runtime_Proc :: enum u8 {
 	Array_Join, // (array, separator) -> ^String_Cell; fails on a function, as Value_To_String does
 	Array_Sort, // (array, compare: ^Closure_Cell) -> the array
 	Array_Sort_Default, // (array) -> the array, in the order of its strings; fails as Array_Join does
+	// Cells generated code fills itself: codegen calls these for ir.Alloc and ir.New_Array.
+	Alloc, // (table) -> ^Cell_Header: a zero-filled cell of the table's size
+	Array_New, // (table, length) -> ^Array_Cell: `length` elements, each the zero of its kind
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1
 }
 
@@ -127,6 +136,11 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.String_Equal = {symbol = "tsnc_string_equal", params = {.Ptr, .Ptr}, result = .Boolean},
 	.String_Less = {symbol = "tsnc_string_less", params = {.Ptr, .Ptr}, result = .Boolean},
 	.String_At = {symbol = "tsnc_string_at", params = {.Ptr, .Number}, result = .Ptr},
+	.String_Code_Point_At = {
+		symbol = "tsnc_string_code_point_at",
+		params = {.Ptr, .Number},
+		result = .Ptr,
+	},
 	.String_Char_Code_At = {
 		symbol = "tsnc_string_char_code_at",
 		params = {.Ptr, .Number},
@@ -183,6 +197,8 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Array_Join = {symbol = "tsnc_array_join", params = {.Ptr, .Ptr}, result = .Ptr},
 	.Array_Sort = {symbol = "tsnc_array_sort", params = {.Ptr, .Ptr}, result = .Ptr},
 	.Array_Sort_Default = {symbol = "tsnc_array_sort_default", params = {.Ptr}, result = .Ptr},
+	.Alloc = {symbol = "tsnc_alloc", params = {.Table}, result = .Ptr},
+	.Array_New = {symbol = "tsnc_array_new", params = {.Table, .Number}, result = .Ptr},
 	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 
@@ -203,6 +219,10 @@ Runtime_Error :: enum i32 {
 	Not_Convertible_To_Number,
 	// %j of an object with its own toJSON, which Node would call.
 	Not_Convertible_To_Json,
+	Reduce_Of_Empty_Array, // reduce with no initial value on an empty array: Node's TypeError
+	// A field read through its declared type holds a value of another kind, which a write through a
+	// wider type of the same object put there (requirements 3.8).
+	Field_Holds_Other_Kind,
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

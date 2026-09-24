@@ -213,7 +213,7 @@ Only what the linked sources do not already cover. In words, without code.
 
 - Purpose: typing facts for the files of one partition.
 - Input: `^Program` and a partition.
-- Output: the type table of this call; for each file in the partition, a `Typed_File`: the node type by `Node_ID` (for an identifier this is already the narrowed type at the point of use), the resolved symbol of an identifier (`File_ID` plus an index into `Bound_File`), the chosen call signature, the instantiated generic built-in types.
+- Output: the type table of this call; for each file in the partition, a `Typed_File`: the node type by `Node_ID` (for an identifier this is already the narrowed type at the point of use), the resolved symbol of an identifier (`File_ID` plus an index into `Bound_File`), the chosen call signature, the instantiated generic built-in types. For the whole partition, the widenings: every pair of object types where the rules accepted one where the other was expected, sorted and without repeats, from which `lower` builds one layout per class of types that flow into each other (requirements, 3.3).
 - Ownership and lifetime: the checker arena; lives until the end of `lower`.
 - Visible errors: diagnostics; nodes that failed to type get the error type in the table.
 - Invariants: a `Type_ID` has meaning only together with the table of its `Check_Result`; every file belongs to exactly one partition; with a single partition the result matches any other split.
@@ -225,6 +225,7 @@ Only what the linked sources do not already cover. In words, without code.
 - Callers: `lower` builds it; `opt`, `codegen` and the printer read it.
 - Ownership and lifetime: the `lower` phase arena. `opt` modifies the value in place, the only phase that mutates its input, because "IR to IR" is its contract. Lives until the end of `codegen`.
 - Invariants: SSA; every block ends with a terminator; every instruction has a position; layouts are interned, one structure gives one `Layout_ID`; a reference store into a heap cell goes only through `store_ref`; pointers are not disguised; no pointer arithmetic outside the runtime (requirements, 6).
+- Table rows: a layout may have rows that list its fields in another print order, each with the same slots and offsets. Only the header of a cell names a row; every type names the layout. `Program_IR.base` gives, for each row, the layout it reorders.
 - Abstraction barrier: `codegen` relies on the closed set of instructions and types; all TS knowledge stays in `lower`.
 - Compatibility: v2 adds the `I32` and `I64` types, stack unwinding edges for `try`, and a write barrier as the implementation of `store_ref`. The shape does not change.
 
@@ -337,7 +338,7 @@ May change during detailed planning:
 - (optional) The runtime object sits in `dist/` next to `tsnc.exe`; a flag can override the path.
 - (optional) An environment variable turns on GC stress mode, not a rebuild.
 - (optional) The lib file uses `declare` and generic interfaces; `parse` accepts them, `check` rejects them in user files as constructs outside the subset.
-- (optional) Recursive object types (`interface Node { next: Node | null }`) get a canonical layout key through declaration identity; the detailed plan for milestone 5 settles the exact scheme.
+- (settled in T5.7) Recursive object types (`interface Node { next: Node | null }`) need no declaration identity: the layout key is shallow, so a string, an object and an array are a reference slot whatever they point at, and a union with an object member is a tagged slot. The key of `Node` is complete before `Node` is.
 
 ## Risks and open questions
 

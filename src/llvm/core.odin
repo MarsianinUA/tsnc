@@ -132,6 +132,7 @@ foreign lib {
 
 	LLVMCreateBuilderInContext :: proc(C: LLVMContextRef) -> LLVMBuilderRef ---
 	LLVMPositionBuilderAtEnd :: proc(Builder: LLVMBuilderRef, Block: LLVMBasicBlockRef) ---
+	LLVMGetInsertBlock :: proc(Builder: LLVMBuilderRef) -> LLVMBasicBlockRef ---
 	LLVMDisposeBuilder :: proc(Builder: LLVMBuilderRef) ---
 	// The header leaves the builder and type parameters of these three unnamed.
 	LLVMBuildRetVoid :: proc(B: LLVMBuilderRef) -> LLVMValueRef ---
@@ -171,6 +172,7 @@ foreign lib {
 	LLVMBuildTrunc :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildZExt :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildSIToFP :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildFPToSI :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildUIToFP :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildPtrToInt :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildIntToPtr :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---

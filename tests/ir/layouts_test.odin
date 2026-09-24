@@ -90,6 +90,30 @@ an_optional_slot_is_part_of_the_shape :: proc(t: ^testing.T) {
 	testing.expect(t, p.layouts[id].fields[0].optional, "the table carries the flag")
 }
 
+// `{a, b}` and `{b, a}` are one layout, and the second literal prints its fields in its own order.
+@(test)
+a_table_row_lists_the_slots_of_its_layout_in_another_order :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	fields := [?]ir.Slot{{name = "a", kind = .Number}, {name = "b", kind = .Tagged}}
+	layout := ir.object_layout(&p, fields[:])
+
+	testing.expect_value(t, ir.object_table(&p, layout, {"a", "b"}), ir.NO_LAYOUT)
+	swapped := ir.object_table(&p, layout, {"b", "a"})
+	testing.expect(t, swapped != ir.NO_LAYOUT && swapped != layout, "a reordered row of its own")
+	testing.expect_value(t, ir.object_table(&p, layout, {"b", "a"}), swapped)
+
+	row := p.layouts[swapped]
+	canonical := p.layouts[layout]
+	testing.expect_value(t, row.size, canonical.size)
+	testing.expect_value(t, row.fields[0], canonical.fields[1])
+	testing.expect_value(t, row.fields[1], canonical.fields[0])
+
+	program := ir.finish(&p, ir.declare_func(&p, "main", nil, ir.VOID, {}), nil)
+	testing.expect_value(t, len(program.base), len(program.layouts))
+	testing.expect_value(t, program.base[layout], layout)
+	testing.expect_value(t, program.base[swapped], layout)
+}
+
 @(test)
 table_id_numbers_a_layout_after_the_builtin_tables :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)

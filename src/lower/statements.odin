@@ -127,7 +127,7 @@ lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 	case ast.Return:
 		lower_return(s, v, span)
 	case ast.For_Of:
-		later(s, span, "`for...of`")
+		lower_for_of(s, id, v, span)
 	}
 	// Everything else declares a type, a name or nothing at all, and emits no code: an interface,
 	// a type alias, an import, an export, a function declaration built on its own, an empty
@@ -169,8 +169,22 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 	}
 }
 
+// lower_return inside an inlined arrow ends the arrow and not the function around it: a bare one as
+// well, which close_body would turn into the function's own Return.
 @(private)
 lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
+	if len(s.inlines) > 0 {
+		result := s.inlines[len(s.inlines) - 1].result
+		value := ir.NO_VALUE
+		if node.value != ast.NO_NODE {
+			value = lower_expression(s, node.value)
+			value = coerce(s, value, result, span) if result != ir.VOID else ir.NO_VALUE
+		} else {
+			value = undefined_of(s, result, span)
+		}
+		leave_arrow(s, value, span)
+		return
+	}
 	if node.value == ast.NO_NODE {
 		close_body(s, span)
 		return

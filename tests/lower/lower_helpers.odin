@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 
+import "../../src/abi"
 import "../../src/ast"
 import "../../src/bind"
 import "../../src/check"
@@ -41,11 +42,12 @@ Error :: struct {
 }
 
 Lowered :: struct {
-	program: program.Program,
-	files:   []source.File,
-	output:  ir.Program_IR,
-	errors:  []Error, // what lower reported, in print order
-	text:    string, // the -emit-ir dump
+	program:    program.Program,
+	files:      []source.File,
+	output:     ir.Program_IR,
+	errors:     []Error, // what lower reported, in print order
+	constructs: []string, // what each of them names, the {0} of Not_Lowered
+	text:       string, // the -emit-ir dump
 }
 
 // lower_sources fails the test when parse, bind or check said anything or the IR breaks its
@@ -126,11 +128,16 @@ lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location)
 		loc = loc,
 	)
 
+	constructs := make([]string, len(diagnostics), context.temp_allocator)
+	for d, i in diagnostics {
+		constructs[i] = d.args[0]
+	}
 	return {
 		program = prog,
 		files = files,
 		output = output,
 		errors = errors_of(files, diagnostics),
+		constructs = constructs,
 		text = dump(files, output),
 	}
 }
@@ -169,6 +176,32 @@ func_named :: proc(output: ir.Program_IR, name: string) -> (ir.Func, bool) {
 		}
 	}
 	return {}, false
+}
+
+// instructions_of lists the instructions of one variant a function holds, in the order they were
+// emitted.
+instructions_of :: proc(body: ir.Func, $T: typeid) -> []T {
+	out := make([dynamic]T, context.temp_allocator)
+	for instruction in body.values {
+		if v, is_variant := instruction.variant.(T); is_variant {
+			append(&out, v)
+		}
+	}
+	return out[:]
+}
+
+calls_to :: proc(body: ir.Func, export: abi.Runtime_Proc) -> int {
+	total := 0
+	for call in instructions_of(body, ir.Call_Runtime) {
+		total += 1 if call.export == export else 0
+	}
+	return total
+}
+
+// number_at answers the value of a Const_Number operand.
+number_at :: proc(body: ir.Func, value: ir.Value_ID) -> (number: f64, ok: bool) {
+	constant := body.values[value].variant.(ir.Const_Number) or_return
+	return constant.value, true
 }
 
 init_names :: proc(output: ir.Program_IR) -> []string {

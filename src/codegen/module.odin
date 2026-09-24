@@ -217,7 +217,7 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 		return types.ptr
 	case .Number:
 		return types.double
-	case .Boolean:
+	case .Boolean, .Table:
 		return types.int64
 	case .Tagged, .Rest:
 		// Two parameters, or a slot for a result, which declare_runtime spells itself.

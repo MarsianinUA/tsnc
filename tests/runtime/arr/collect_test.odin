@@ -88,8 +88,18 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 		&abi.Closure_Cell{code = rawptr(allocate_then_descend), env = environment(&allocating)},
 	)
 
+	// Generated code fills a zeroed array in place, one allocating element at a time, so every
+	// collection meanwhile meets the nil elements not stored yet.
+	filled := arr.new_zeroed(heap, REFS, 3)
+	for word, i in ([?]string{"x", "y", "z"}) {
+		([^]^abi.String_Cell)(filled.elements)[i] = str.from_utf8(heap, word)
+	}
+
 	for want, i in ([?]string{"a", "b", "fresh"}) {
 		expect_ascii(t, (^abi.String_Cell)(arr.element_at(heap, words, i).payload.ref), want)
+	}
+	for want, i in ([?]string{"x", "y", "z"}) {
+		expect_ascii(t, (^abi.String_Cell)(arr.element_at(heap, filled, i).payload.ref), want)
 	}
 	expect_numbers(t, heap, digits, {1, 10, 100, 9})
 	expect_numbers(t, heap, part, {9, 1})

@@ -72,7 +72,7 @@ math_constants_are_constants :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, pi, "%s", result.text)
-	testing.expect(t, runtime_calls(init, .Math_Round) == 0)
+	testing.expect(t, calls_to(init, .Math_Round) == 0)
 }
 
 @(test)
@@ -88,10 +88,10 @@ round_max_and_min_go_to_the_runtime :: proc(t: ^testing.T) {
 	)
 	body, found := func_named(result.output, "m1.pick")
 	testing.expect(t, found, "the function was not lowered")
-	testing.expectf(t, runtime_calls(body, .Math_Round) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(body, .Math_Round) == 1, "%s", result.text)
 	// Three arguments fold two at a time, so max is two calls and min is one.
-	testing.expectf(t, runtime_calls(body, .Math_Max) == 2, "%s", result.text)
-	testing.expectf(t, runtime_calls(body, .Math_Min) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(body, .Math_Max) == 2, "%s", result.text)
+	testing.expectf(t, calls_to(body, .Math_Min) == 1, "%s", result.text)
 }
 
 @(test)
@@ -102,7 +102,7 @@ max_of_nothing_is_the_identity_of_the_fold :: proc(t: ^testing.T) {
 	`)
 	init, found := func_named(result.output, "init$m1")
 	testing.expect(t, found, "the module has no init function")
-	testing.expect(t, runtime_calls(init, .Math_Max) == 0)
+	testing.expect(t, calls_to(init, .Math_Max) == 0)
 	lowest := false
 	for instruction in init.values {
 		if number, is_number := instruction.variant.(ir.Const_Number); is_number {
@@ -266,7 +266,7 @@ process_argv_is_a_global_main_fills_first :: proc(t: ^testing.T) {
 	testing.expectf(t, then_inits, "%s", result.text)
 
 	init, _ := func_named(result.output, "init$m1")
-	testing.expectf(t, runtime_calls(init, .Process_Argv) == 0, "%s", result.text)
+	testing.expectf(t, calls_to(init, .Process_Argv) == 0, "%s", result.text)
 }
 
 @(test)
@@ -274,7 +274,7 @@ a_program_that_never_reads_process_argv_has_no_global_for_it :: proc(t: ^testing
 	result := lower_text(t, `console.log(1);`)
 	testing.expectf(t, len(result.output.globals) == 0, "%s", result.text)
 	main := result.output.funcs[result.output.main]
-	testing.expectf(t, runtime_calls(main, .Process_Argv) == 0, "%s", result.text)
+	testing.expectf(t, calls_to(main, .Process_Argv) == 0, "%s", result.text)
 }
 
 @(test)
@@ -285,7 +285,7 @@ process_exit_never_comes_back :: proc(t: ^testing.T) {
 	`)
 	init, found := func_named(result.output, "init$m1")
 	testing.expect(t, found, "the module has no init function")
-	testing.expectf(t, runtime_calls(init, .Process_Exit) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(init, .Process_Exit) == 1, "%s", result.text)
 
 	last := init.blocks[len(init.blocks) - 1].instructions
 	_, ends := init.values[last[len(last) - 1]].variant.(ir.Unreachable)
@@ -296,7 +296,7 @@ process_exit_never_comes_back :: proc(t: ^testing.T) {
 process_exit_without_a_code_exits_with_zero :: proc(t: ^testing.T) {
 	result := lower_text(t, `process.exit();`)
 	init, _ := func_named(result.output, "init$m1")
-	testing.expectf(t, runtime_calls(init, .Process_Exit) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(init, .Process_Exit) == 1, "%s", result.text)
 }
 
 @(test)
@@ -350,26 +350,53 @@ a_template_with_no_substitution_is_a_string_literal :: proc(t: ^testing.T) {
 	)
 }
 
-// What this build refuses. Each construct is named once, where it stands.
+// The constructs milestone 5 opened, in their plainest form; objects_test.odin, arrays_test.odin
+// and strings_test.odin hold the rest.
 
 @(test)
-objects_are_reported_once :: proc(t: ^testing.T) {
-	expect_later(t, "const p = { x: 1 };\nconsole.log(p.x);\n", {{.Not_Lowered, 1, 7}})
+an_object_is_a_cell_and_its_fields :: proc(t: ^testing.T) {
+	result := lower_text(t, "const p = { x: 1 };\nconsole.log(p.x);\n")
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+	testing.expectf(t, len(instructions_of(init, ir.Alloc)) == 1, "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Field_Store)) == 1, "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Field_Load)) == 1, "%s", result.text)
 }
 
 @(test)
-arrays_are_reported :: proc(t: ^testing.T) {
-	expect_later(t, "const xs = [1, 2];\n", {{.Not_Lowered, 1, 7}})
+an_array_is_made_at_its_length_and_filled :: proc(t: ^testing.T) {
+	result := lower_text(t, "const xs = [1, 2];\nconsole.log(xs);\n")
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+	testing.expectf(t, len(instructions_of(init, ir.New_Array)) == 1, "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Element_Store)) == 2, "%s", result.text)
 }
 
 @(test)
-template_substitution_and_joining_are_reported :: proc(t: ^testing.T) {
-	expect_later(
+a_template_and_a_joined_string_go_to_the_runtime :: proc(t: ^testing.T) {
+	result := lower_text(t, "const a = `x${1}`;\nconst b = \"a\" + \"b\";\nconsole.log(a, b);\n")
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+	testing.expectf(t, calls_to(init, .Number_To_String) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(init, .String_Concat) == 2, "%s", result.text)
+}
+
+@(test)
+string_length_and_process_argv_lower :: proc(t: ^testing.T) {
+	result := lower_text(
 		t,
-		"const a = `x${1}`;\nconst b = \"a\" + \"b\";\n",
-		{{.Not_Lowered, 1, 11}, {.Not_Lowered, 2, 11}},
+		"const n = \"abc\".length;\nconst v = process.argv;\nconsole.log(n, v);\n",
 	)
+	init, found := func_named(result.output, "init$m1")
+	testing.expect(t, found, "the module has no init function")
+	testing.expectf(t, len(instructions_of(init, ir.Length)) == 1, "%s", result.text)
+	v := result.output.globals[1]
+	testing.expect_value(t, v.name, "m1.v")
+	testing.expect_value(t, v.type.kind, ir.Type_Kind.Ref)
+	testing.expect_value(t, result.output.layouts[v.type.layout].element, abi.Slot_Kind.Ref)
 }
+
+// What this build refuses. Each construct is named once, where it stands.
 
 @(test)
 an_arrow_function_is_reported :: proc(t: ^testing.T) {
@@ -381,14 +408,6 @@ the_four_math_names_the_ir_cannot_say_are_reported :: proc(t: ^testing.T) {
 	expect_later(t, "console.log(Math.hypot(3, 4));\n", {{.Not_Lowered, 1, 13}})
 }
 
-@(test)
-string_methods_and_process_argv_are_reported :: proc(t: ^testing.T) {
-	expect_later(
-		t,
-		"const n = \"abc\".length;\nconst v = process.argv;\n",
-		{{.Not_Lowered, 1, 11}, {.Not_Lowered, 2, 7}},
-	)
-}
 
 @(test)
 a_union_is_reported_where_it_is_used :: proc(t: ^testing.T) {
@@ -428,20 +447,8 @@ intrinsics_of :: proc(body: ir.Func) -> []ir.Intrinsic_Op {
 }
 
 @(private = "file")
-runtime_calls :: proc(body: ir.Func, export: abi.Runtime_Proc) -> int {
-	total := 0
-	for instruction in body.values {
-		if call, is_call := instruction.variant.(ir.Call_Runtime);
-		   is_call && call.export == export {
-			total += 1
-		}
-	}
-	return total
-}
-
-@(private = "file")
 only_console_call :: proc(body: ir.Func) -> (call: ir.Call_Runtime, found: bool) {
-	if runtime_calls(body, .Console_Log) != 1 {
+	if calls_to(body, .Console_Log) != 1 {
 		return {}, false
 	}
 	for instruction in body.values {

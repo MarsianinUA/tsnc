@@ -47,6 +47,8 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 	expect_live(t, heap, mixed, padded)
 	expect_units(t, str.unit_at(heap, mixed, 1), {0xd83d})
 	expect_live(t, heap, mixed, padded)
+	expect_units(t, str.code_point_at(heap, mixed, 1), {0xd83d, 0xde00})
+	expect_live(t, heap, mixed, padded)
 	expect_units(t, str.slice(heap, mixed, 1, 3), {0xd83d, 0xde00})
 	expect_live(t, heap, mixed, padded)
 	expect_ascii(t, str.trim(heap, padded), "Hello")

@@ -3,7 +3,7 @@
 // prove the path are the ones outside ASCII: Cyrillic in the basic plane, an emoji built from a
 // surrogate pair, and an escape that names a code point rather than typing it.
 //
-// Everything else a string can do (joining, comparing, length, the methods) is milestone 5.
+// Everything else a string can do (joining, comparing, length, the methods) is string-methods.ts.
 
 function echo(text: string): void {
   console.log(text);

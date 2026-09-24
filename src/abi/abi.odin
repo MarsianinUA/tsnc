@@ -177,6 +177,9 @@ Root :: struct {
 #assert(size_of(Tagged) == 16)
 #assert(offset_of(Tagged, payload) == 8)
 #assert(offset_of(String_Cell, units) == size_of(String_Cell))
+// Generated code reads the length of a string and of an array with one load at one offset.
+#assert(offset_of(Array_Cell, length) == 8 && offset_of(String_Cell, length) == 8)
+#assert(offset_of(Array_Cell, elements) == 24)
 
 // Static data the compiler emits: type tables and failure sites (calls.odin). A string and a slice
 // are a pointer and a length.
