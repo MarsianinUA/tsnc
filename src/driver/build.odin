@@ -424,16 +424,20 @@ build_executable :: proc(
 	}
 	// An empty runtime object path means the object of the target next to tsnc itself, which is
 	// where the command in docs/development.md puts it.
-	if err := link.link({object}, options.target, paths.temporary, "", allocator);
-	   err.kind != .None {
-		// The missing runtime object keeps a kind of its own: it is the one link failure a user
-		// fixes with a single command, and main prints that command as a hint.
-		if err.kind == .Runtime_Object_Missing {
-			return {.Runtime_Object_Missing, err.detail}
-		}
-		return {.Link_Failed, link_failure_text(err, allocator)}
+	err := link.link({object}, options.target, paths.temporary, "", options.sanitize, allocator)
+	if err.kind == .None {
+		return {}
 	}
-	return {}
+	// The missing runtime object keeps a kind of its own: it is the one link failure a user fixes
+	// with a single command, and main prints that command as a hint. The ASan one is built by
+	// another command.
+	if err.kind == .Runtime_Object_Missing && options.sanitize == .address {
+		return {.Sanitized_Runtime_Missing, err.detail}
+	}
+	if err.kind == .Runtime_Object_Missing {
+		return {.Runtime_Object_Missing, err.detail}
+	}
+	return {.Link_Failed, link_failure_text(err, allocator)}
 }
 
 // link_failure_text gives each kind a sentence, because a user reading `tsnc build` has no reason

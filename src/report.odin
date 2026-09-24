@@ -67,6 +67,12 @@ error_text :: proc(err: driver.Driver_Error) -> string {
 			err.detail,
 			RUNTIME_BUILD,
 		)
+	case .Sanitized_Runtime_Missing:
+		return fmt.tprintf(
+			"the runtime object %s is missing\n  hint: %s",
+			err.detail,
+			SANITIZED_RUNTIME_BUILD,
+		)
 	case .Link_Failed:
 		return fmt.tprintf("cannot link the program: %s", err.detail)
 	case .Output_Unwritable:
@@ -90,3 +96,6 @@ CROSS_LINK :: "v1 builds a program for this machine only\n  hint: -emit-llvm and
 // failure of a fresh clone that a user fixes by running one line, so the line is in the message.
 @(private = "file")
 RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
+
+@(private = "file")
+SANITIZED_RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style"

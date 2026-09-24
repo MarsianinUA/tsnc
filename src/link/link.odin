@@ -44,14 +44,22 @@ Link_Error :: struct {
 	detail: string, // allocated with link's allocator; empty for None and Unsupported_Target
 }
 
+// Sanitizer values are lowercase because they are the values of `tsnc -sanitize:`, spelled as
+// Odin's.
+Sanitizer :: enum u8 {
+	none,
+	address, // runtime built with -sanitize:address, plus the ASan library at link time
+}
+
 // link takes an empty runtime_object to mean the runtime object of the target next to the running
-// executable.
+// executable, the ASan one under .address.
 @(require_results)
 link :: proc(
 	objects: []string,
 	build_target: target.Target,
 	output: string,
 	runtime_object := "",
+	sanitizer := Sanitizer.none,
 	allocator := context.allocator,
 ) -> Link_Error {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
@@ -65,7 +73,8 @@ link :: proc(
 	if runtime_path == "" {
 		// Without the directory the name stays relative, and the check below reports it.
 		executable_dir, _ := os.get_executable_directory(context.temp_allocator)
-		runtime_path = join(executable_dir, spec.runtime_object)
+		name := spec.asan_runtime_object if sanitizer == .address else spec.runtime_object
+		runtime_path = join(executable_dir, name)
 	}
 	if !os.is_file(runtime_path) {
 		return {.Runtime_Object_Missing, strings.clone(runtime_path, allocator)}
@@ -96,10 +105,17 @@ link :: proc(
 			// SPECS pairs lld-link only with windows_amd64, and link builds for the host only.
 			unreachable()
 		}
+		// What `odin build -sanitize:address -print-linker-flags` adds, from the same Odin.
+		if sanitizer == .address {
+			append(&command, join(ODIN_ROOT, "bin", "llvm", "windows", "clang_rt.asan-x86_64.lib"))
+		}
 	case .Cc:
 		append(&command, "cc")
 		append(&command, ..objects)
 		append(&command, runtime_path, "-o", output)
+		if sanitizer == .address {
+			append(&command, "-fsanitize=address")
+		}
 	}
 	append(&command, ..spec.link_flags)
 

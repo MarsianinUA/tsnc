@@ -42,6 +42,7 @@ import "../bind"
 import "../check"
 import "../codegen"
 import "../diag"
+import "../link"
 import "../program"
 import "../source"
 import "../target"
@@ -82,6 +83,7 @@ Options :: struct {
 	emit_ir:      bool `usage:"write the tsnc IR dump instead of an executable"`,
 	target:       target.Target `usage:"target platform, for example linux_amd64 (default: host)"`,
 	jobs:         int `args:"name=j" usage:"worker threads (default: number of cores)"`,
+	sanitize:     link.Sanitizer `usage:"link the runtime built with -sanitize:address (default: none)"`,
 }
 
 // Artifact is what a build produces. The command line spells it as two flags, because
@@ -107,6 +109,7 @@ Error_Kind :: enum u8 {
 	Broken_IR, // detail: every violation, rendered; a compiler bug
 	Codegen_Failed, // detail: the path, then what codegen answered
 	Runtime_Object_Missing, // detail: the path link looked at
+	Sanitized_Runtime_Missing, // detail: the path link looked at under -sanitize:address
 	Link_Failed, // detail: a sentence about what the linker, or link itself, could not do
 	Output_Unwritable, // detail: the path, then why
 	Program_Unrunnable, // detail: the path, then why

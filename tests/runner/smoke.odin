@@ -44,7 +44,13 @@ smoke :: proc() -> (passed: bool) {
 	}
 	program, _ := os.join_path({dist, "smoke-hello.exe"}, context.temp_allocator)
 	runtime_object := fmt.tprintf("dist/%s", target.SPECS[target.HOST].runtime_object)
-	link_err := link.link({object}, target.HOST, program, runtime_object, context.temp_allocator)
+	link_err := link.link(
+		{object},
+		target.HOST,
+		program,
+		runtime_object,
+		allocator = context.temp_allocator,
+	)
 	if link_err.kind != .None {
 		fmt.eprintfln("smoke: link: %v: %s", link_err.kind, link_err.detail)
 		if link_err.kind == .Runtime_Object_Missing {

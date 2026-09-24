@@ -37,6 +37,7 @@ every_v1_target_has_a_complete_row :: proc(t: ^testing.T) {
 		// docs/development.md builds the runtime object under this name, with the
 		// `-target:` spelling.
 		testing.expect_value(t, spec.runtime_object, fmt.tprintf("tsnc_rt-%v.obj", id))
+		testing.expect_value(t, spec.asan_runtime_object, fmt.tprintf("tsnc_rt-%v-asan.obj", id))
 		// driver names an executable with this suffix when `-out:` did not. Only Windows has one,
 		// and a suffix without its dot would give `tsnc build main.ts` the output `mainexe`.
 		want_suffix := ".exe" if id == .windows_amd64 else ""
