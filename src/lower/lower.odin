@@ -26,10 +26,14 @@ either. lower walks the value edges from the entry file itself and keeps the ord
 Zero before use. Each module init opens by storing the zero of its type into every global of the
 module, and each function opens by giving every local of its body the zero of its type. The data
 segment is zero already; the stores are what make the rule visible and what gives a string binding a
-real empty cell instead of a null pointer the collector would have to know about. A read that
-happens before the declaration ran therefore answers the zero value, where Node throws a
-ReferenceError. check does not catch that case, and requirements 3.8 keeps such a program out of the
-differential tests.
+real empty cell instead of a null pointer the collector would have to know about.
+
+Read before initialization. A `let` or `const` read before its declaration ran fails the program
+with Node's ReferenceError. check reports such a read where it runs as it stands (T3028); one inside
+a function made before the declaration may run on either side of it, and so may one in a later case
+of the switch that declares it, since a jump to that case skips the declaration. There the binding
+marks whether its declaration has run and the read tests the mark (check_ready, bindings.odin). A
+reference binding holds null until then, any other a ready flag beside it, as V8 holds its hole.
 
 Memory: everything in the answer comes from the allocator, which is meant to be an arena. Names are
 built with it, because ir borrows them and they outlive the call; the tables lower needs only while
@@ -69,31 +73,30 @@ Facts :: struct {
 }
 
 Lowering :: struct {
-	prog:            ^program.Program,
-	facts:           []Facts, // indexed by source.File_ID
-	reachable:       []bool, // indexed by source.File_ID: reached from ENTRY over value imports
-	builder:         ir.Program_Builder,
-	funcs:           map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
-	globals:         map[Decl_Key]ir.Global_ID, // by ast.Declarator
-	closures:        []File_Closures, // indexed by source.File_ID; a file that runs only
+	prog:          ^program.Program,
+	facts:         []Facts, // indexed by source.File_ID
+	reachable:     []bool, // indexed by source.File_ID: reached from ENTRY over value imports
+	builder:       ir.Program_Builder,
+	funcs:         map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
+	globals:       map[Decl_Key]ir.Global_ID, // by ast.Declarator
+	// By ast.Declarator: the flag a global other than a reference has beside it when a read may
+	// come before its declaration (check_ready).
+	ready:         map[Decl_Key]ir.Global_ID,
+	// Indexed by source.File_ID, and filled for a file that runs only.
+	closures:      []File_Closures,
+	locals:        []File_Locals,
 	// argv holds process.argv, made the first time the program reads it and filled once by main.
-	argv:            Maybe(ir.Global_ID),
-	// The widening classes (types.odin), built before any body: the node of each shallow key that
-	// takes part in a widening, the union-find link of each node, and each node's slots, which a
-	// class root holds joined over the whole class.
-	classes:         map[string]int,
-	class_links:     [dynamic]int,
-	class_slots:     [dynamic][]ir.Slot,
-	// The signature classes (types.odin), built the same way over the signature of each function
-	// type that takes part in a flow.
-	signatures:      map[string]int,
-	signature_links: [dynamic]int,
-	signature_joins: [dynamic]Signature,
+	argv:          Maybe(ir.Global_ID),
+	// The widening classes over the shallow keys of object types, and the signature classes over
+	// the signatures of function types (types.odin), both built before any body.
+	objects:       Classes([]ir.Slot),
+	signatures:    Classes(Signature),
+	memos:         []Type_Memo, // one per check result
 	// The comparators that adapt a closure to what the array sort calls (arrays.odin), by the class
 	// signature, the element kind and the number of arguments the closure takes.
-	sort_adapters:   map[string]ir.Func_ID,
-	diagnostics:     [dynamic]diag.Diagnostic,
-	allocator:       runtime.Allocator,
+	sort_adapters: map[string]ir.Func_ID,
+	diagnostics:   [dynamic]diag.Diagnostic,
+	allocator:     runtime.Allocator,
 }
 
 // lower borrows the program and the check results, which must outlive the answer, and reports every
@@ -112,34 +115,34 @@ lower :: proc(
 	// Only the builder and the diagnostics outlive the call; the tables that answer "where does
 	// this name live" are scratch, and ir.finish copies the initialization order it is given.
 	low := Lowering {
-		prog            = prog,
-		facts           = make([]Facts, len(prog.files), context.temp_allocator),
-		reachable       = make([]bool, len(prog.files), context.temp_allocator),
-		builder         = ir.make_builder(allocator),
-		funcs           = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
-		globals         = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
-		closures        = make([]File_Closures, len(prog.files), context.temp_allocator),
-		classes         = make(map[string]int, context.temp_allocator),
-		class_links     = make([dynamic]int, context.temp_allocator),
-		class_slots     = make([dynamic][]ir.Slot, context.temp_allocator),
-		signatures      = make(map[string]int, context.temp_allocator),
-		signature_links = make([dynamic]int, context.temp_allocator),
-		signature_joins = make([dynamic]Signature, context.temp_allocator),
-		sort_adapters   = make(map[string]ir.Func_ID, context.temp_allocator),
-		diagnostics     = make([dynamic]diag.Diagnostic, allocator),
-		allocator       = allocator,
+		prog          = prog,
+		facts         = make([]Facts, len(prog.files), context.temp_allocator),
+		reachable     = make([]bool, len(prog.files), context.temp_allocator),
+		builder       = ir.make_builder(allocator),
+		funcs         = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
+		globals       = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
+		ready         = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
+		closures      = make([]File_Closures, len(prog.files), context.temp_allocator),
+		locals        = make([]File_Locals, len(prog.files), context.temp_allocator),
+		objects       = make_classes([]ir.Slot),
+		signatures    = make_classes(Signature),
+		memos         = make_memos(results),
+		sort_adapters = make(map[string]ir.Func_ID, context.temp_allocator),
+		diagnostics   = make([dynamic]diag.Diagnostic, allocator),
+		allocator     = allocator,
 	}
 	index_facts(&low, results)
 	// Every layout an object type ends up in is known before the first one is interned, and every
 	// signature a function type ends up with before the first function is declared.
 	build_classes(&low, results)
-	build_signature_classes(&low, results)
 	mark_reachable(&low)
 	order := module_order(&low)
 	for file in order {
 		ensure(low.facts[file].typed != nil, "a module that runs was never typed by any checker")
 		low.closures[file] = analyze_closures(&low, file)
+		low.locals[file] = group_locals(&low, file)
 	}
+	widen_void_results(&low, order)
 
 	// Declare before defining: a call may name a function whose body is built later, and a module
 	// init calls functions declared below it.
@@ -338,7 +341,7 @@ symbol_type :: proc(
 	if entry.kind == .Function {
 		return ir.CLOSURE, true
 	}
-	return ir_type(
+	return binding_type(
 		low,
 		low.facts[file].result.types,
 		low.facts[file].typed.node_types[entry.declaration],
@@ -411,7 +414,7 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 			continue
 		}
 		declared := typed.node_types[entry.declaration]
-		type, ok := ir_type(low, types, declared)
+		type, ok := binding_type(low, types, declared)
 		if !ok {
 			span := tree.nodes[entry.declaration].span
 			report(low, .Not_Lowered, span, construct_text(types, declared))
@@ -419,6 +422,10 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 		}
 		name := fmt.aprintf("m%d.%s", file, entry.name.text, allocator = low.allocator)
 		low.globals[{file, entry.declaration}] = ir.add_global(&low.builder, name, type)
+		if low.closures[file].checked[symbol] && !holds_null(type) {
+			flag := fmt.aprintf("m%d.%s$ready", file, entry.name.text, allocator = low.allocator)
+			low.ready[{file, entry.declaration}] = ir.add_global(&low.builder, flag, ir.BOOL)
+		}
 	}
 }
 

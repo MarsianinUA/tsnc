@@ -20,13 +20,9 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		llvm.LLVMBuildUnreachable(m.builder)
 
 	case ir.Param:
-		// The environment comes first, and every tagged parameter before this one takes two words.
-		index := u32(1)
-		for type in body.func.params[:v.index] {
-			index += 2 if type.kind == .Tagged else 1
-		}
+		index := param_index(body.func.params, int(v.index))
 		type := body.func.params[v.index]
-		if type.kind == .Tagged {
+		if param_words(type) == 2 {
 			tag := llvm.LLVMGetParam(body.function, index)
 			payload := llvm.LLVMGetParam(body.function, index + 1)
 			body.values[value] = tagged_words(m, tag, payload)
@@ -105,6 +101,10 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Layout_Test:
 		body.values[value] = build_layout_test(m, body.values[v.cell], v.layout)
+
+	case ir.Null_Test:
+		reference, null := body.values[v.value], llvm.LLVMConstNull(m.types.ptr)
+		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, reference, null, "")
 
 	case ir.Tag_Test:
 		body.values[value] = build_tag_test(m, body.values[v.value], v.tags)
@@ -188,17 +188,8 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 				append(&args, address, count)
 				break
 			}
-			operand := body.values[v.args[i]]
-			#partial switch param {
-			case .Boolean:
-				append(&args, llvm.LLVMBuildZExt(m.builder, operand, m.types.int64, ""))
-			case .Tagged:
-				tag := llvm.LLVMBuildExtractValue(m.builder, operand, 0, "")
-				payload := llvm.LLVMBuildExtractValue(m.builder, operand, 1, "")
-				append(&args, tag, payload)
-			case:
-				append(&args, operand)
-			}
+			// The verifier holds each argument to the C type of its parameter (ir.c_type_fits).
+			append_argument(m, &args, body.values[v.args[i]], body.func.values[v.args[i]].type)
 		}
 		result := llvm.LLVMBuildCall2(
 			m.builder,
@@ -256,8 +247,7 @@ build_fail :: proc(m: ^Module, site: ir.Fail_Site_ID) {
 	llvm.LLVMBuildUnreachable(m.builder)
 }
 
-// call_function passes the environment, then each argument the way closure_signature takes it: a
-// boolean widened, a tagged value split into its two words.
+// call_function passes the environment, then each argument the way closure_signature takes it.
 @(private)
 call_function :: proc(
 	m: ^Module,
@@ -269,15 +259,7 @@ call_function :: proc(
 	values := make([dynamic]llvm.LLVMValueRef, 0, 1 + 2 * len(args), context.temp_allocator)
 	append(&values, env)
 	for arg in args {
-		type := body.func.values[arg].type
-		operand := body.values[arg]
-		if type.kind == .Tagged {
-			tag := llvm.LLVMBuildExtractValue(m.builder, operand, 0, "")
-			payload := llvm.LLVMBuildExtractValue(m.builder, operand, 1, "")
-			append(&values, tag, payload)
-		} else {
-			append(&values, to_storage(m, operand, type))
-		}
+		append_argument(m, &values, body.values[arg], body.func.values[arg].type)
 	}
 	return llvm.LLVMBuildCall2(
 		m.builder,
@@ -287,6 +269,25 @@ call_function :: proc(
 		u32(len(values)),
 		"",
 	)
+}
+
+// append_argument passes a value of the IR type the one way every call takes it, into the runtime
+// and into a function of the program alike: a boolean widened to i64 and a tagged value split into
+// its param_words.
+@(private)
+append_argument :: proc(
+	m: ^Module,
+	args: ^[dynamic]llvm.LLVMValueRef,
+	value: llvm.LLVMValueRef,
+	type: ir.Type,
+) {
+	if param_words(type) == 2 {
+		tag := llvm.LLVMBuildExtractValue(m.builder, value, 0, "")
+		payload := llvm.LLVMBuildExtractValue(m.builder, value, 1, "")
+		append(args, tag, payload)
+		return
+	}
+	append(args, to_storage(m, value, type))
 }
 
 // call_runtime passes the arguments as they stand: the caller has spelled each in the C type its

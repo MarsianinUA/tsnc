@@ -176,6 +176,12 @@ arrows_take_parameters_and_a_body :: proc(t: ^testing.T) {
 	expect_expression(t, "c ? (x) : y", "(? c x y)")
 	expect_expression(t, "c ? (x): T => x : y", "(? c (arrow [x] : T x) y)")
 	expect_expression(t, "async(x)", "(call async x)")
+	// The result type in parentheses, followed by the arrow of the arrow function itself.
+	expect_expression(
+		t,
+		"(k: number): ((a: number) => number) => (a: number) => a + k",
+		"(arrow [(k : number)] : (=> [(a : number)] number) (arrow [(a : number)] (+ a k)))",
+	)
 }
 
 @(test)

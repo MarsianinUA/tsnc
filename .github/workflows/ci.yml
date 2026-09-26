@@ -69,13 +69,13 @@ jobs:
           odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style
 
       - name: Runtime object
-        run: odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-${{ matrix.target }}.obj -vet -strict-style
+        run: odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-${{ matrix.target }}.obj -vet -strict-style
 
       # What `tsnc build -sanitize:address` links in place of the object above. Not on macOS, where
       # the ASan runs are skipped (see "GC tests under ASan").
       - name: Runtime object with ASan
         if: runner.os != 'macOS'
-        run: odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-${{ matrix.target }}-asan.obj -vet -strict-style
+        run: odin build src/runtime -build-mode:obj -use-single-module -o:speed -sanitize:address -out:dist/tsnc_rt-${{ matrix.target }}-asan.obj -vet -strict-style
 
       # The case and width table generators run only by hand (docs/development.md), so CI checks that
       # they still compile.
@@ -158,7 +158,7 @@ jobs:
         if: runner.os != 'macOS'
         env:
           ASAN_OPTIONS: detect_stack_use_after_return=0
-        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address -define:TSNC_EXPECT_ASAN=true
 
       # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
       - name: Diff under ASan

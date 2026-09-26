@@ -71,7 +71,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 ### 3.2 Strings
 - Immutable sequences of 16-bit units (UTF-16). `length`, `charCodeAt`, `slice`, and indexing match TS for any characters, including Cyrillic and emoji.
 - Conversion to UTF-8 happens only at the OS boundary: console, files, arguments.
-- Converting a function to a string (`String(f)`, `` `${f}` ``, `"a" + f`) is a compile error where the type says the value is a function, and a runtime error where it comes through a union or `any`: Node prints the function's source text, which a compiled program does not keep. Converting an object with its own `toString` field is a runtime error, since Node would call it, and so is `+` with an object that has its own `valueOf`, which `+` asks first.
+- Converting a function to a string (`String(f)`, `` `${f}` ``, `"a" + f`) is a compile error where the type says the value is a function, and a runtime error where it comes through a union or `any`: Node prints the function's source text, which a compiled program does not keep. Converting an object that has its own `toString` is a runtime error, since Node would call it, and so is `+` with an object whose own `valueOf` is a function, which `+` asks first. An optional `toString` that was never set, and a `valueOf` that is no function, are passed over, as Node passes them over.
 - A string holds at most 536,870,888 units, as in Node 24. Building a longer one, by `+`, `join` or any other method, is a runtime error with Node's message, `Invalid string length`, where Node throws a `RangeError`.
 - Inside the runtime, a string is a header in the GC heap followed by `u16` data; operations work through Odin's built-in `string16` type, which points inside the object. A custom "pointer plus length" pair is not needed, and the console re-encodes its line to UTF-8 on the way out (4.5).
 - v2: hybrid Latin-1 / UTF-16 storage to save memory, as in V8. The semantics do not change.
@@ -107,7 +107,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 
 ### 3.7 Equality
 - `===` / `!==`: primitives by value, strings by content, objects by reference.
-- `==` / `!=`: only if the types of both sides match statically; then it is `===`. Otherwise a compile error with a hint.
+- `==` / `!=`: only if the types of both sides match statically and that type holds one kind of value, so `==` cannot convert: not `any` or `unknown`, not a type holding both `null` and `undefined`, and not one mixing numbers, strings, booleans and references. Then it is `===`. Otherwise a compile error with a hint.
 
 ### 3.8 Checks where tsc is unsafe
 
@@ -115,6 +115,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - reading `arr[i]` out of range or with a non-integer index: runtime error;
 - writing `arr[i]`: when `i === arr.length`, append to the end, beyond that an error;
 - `x!`: a check, error on `null` / `undefined`;
+- reading a `let` or `const` before its declaration has run: a compile error where the read runs where it stands, and a runtime error, as Node's `ReferenceError`, where it stands in a function that may run before the declaration or after it, or in a later `case` of the `switch` that declares it, which a jump to that case skips;
 - reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
 - a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
@@ -149,7 +150,7 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 - The `-emit-llvm` flag outputs textual LLVM IR for debugging.
 
 ### 4.3 Runtime
-- Written in Odin, built ahead of time for each platform into an object file (`odin build runtime -build-mode:obj`) and linked with the program.
+- Written in Odin, built ahead of time for each platform into an object file (`odin build runtime -build-mode:obj -o:speed`) and linked with the program.
 - The runtime owns the entry point: Odin initializes its context and allocators, then calls the generated symbol `tsnc_main`. Manual initialization of the Odin runtime is not needed.
 - Exports functions for generated code as `proc "c"` under the symbol names of `abi`: allocation, GC, strings, arrays, tagged values, console, runtime errors. They are external symbols kept with `@(require)` and strong linkage, not `@(export)`: on Windows that is dllexport, and the executable would carry an export table with the temporary output name in it. Each exported function sets the Odin context first.
 - Contents: the garbage collector (section 6), UTF-16 strings and their methods, arrays, number formatting, console output, error handling. Section 4.5 defines what comes from the Odin standard library and what the project writes itself. `Math` is not part of the runtime: the code generator emits LLVM intrinsics directly (4.5).
@@ -238,7 +239,7 @@ tsnc check src/main.ts                              # check only, no code genera
 tsnc build src/main.ts -emit-llvm -out:dist/app.ll  # textual LLVM IR
 tsnc build src/main.ts -emit-ir -out:dist/app.ir    # custom IR dump for debugging
 tsnc build src/main.ts -target:linux_amd64 -j:8     # target and number of threads
-tsnc build src/main.ts -sanitize:address            # link the runtime built with AddressSanitizer
+tsnc build src/main.ts -sanitize:address            # link the runtime built with AddressSanitizer (Windows and Linux)
 ```
 
 - Artifacts: an executable; on request, an object file, textual LLVM IR, and a custom IR dump. Debug info (PDB / DWARF) in v2.
@@ -252,7 +253,7 @@ tsnc build src/main.ts -sanitize:address            # link the runtime built wit
 - **Negative tests.** A file with an expected compile error: the test checks the error code, line, and column.
 - **Unit tests.** Lexer, parser, checker, number formatting, GC through `odin test`.
 - **GC stress mode.** A runtime flag that runs a collection on every allocation and checks heap integrity after each collection. The differential tests also run in this mode.
-- **AddressSanitizer.** A separate CI test run builds the runtime with `-sanitize:address` and runs the differential tests against it in GC stress mode. The collector poisons the memory of its heap that no cell owns, as Go's sweep does under ASan, so a runtime read past the end of a cell or into the body of a freed one stops the program.
+- **AddressSanitizer.** A separate CI test run, on Windows and Linux, builds the runtime with `-sanitize:address` and runs the differential tests against it in GC stress mode. macOS has no ASan build: its toolchains fail to link or run one (docs/development.md), so `-sanitize:address` is refused there. The collector poisons the memory of its heap that no cell owns, as Go's sweep does under ASan, so a runtime read past the end of a cell or into the body of a freed one stops the program.
 - **Benchmarks.** A set of programs (numeric loops, strings, arrays of objects, closures, allocations) against Node and Go equivalents, plus startup time and exe size for hello world. The repository records results per version, with no hard limits.
 - **Infrastructure smoke test.** "Hello world" through the LLVM-C bindings and the linker, runs in CI on three OSes.
 - **v1 acceptance criterion.** The reference set of programs in the v1 subset passes the differential tests on Windows, Linux, and macOS in CI; the GC survives a stress test with allocations and closures in a loop without leaks or crashes.

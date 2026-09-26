@@ -1,7 +1,7 @@
 /*
 The tsnc runtime, built on its own into an object file and linked with every compiled program:
 
-	odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style
+	odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style
 
 Without -use-single-module an unoptimized build writes one object file per package.
 

@@ -1,15 +1,12 @@
 package lower
 
-import "core:fmt"
-
 import "../ast"
-import "../bind"
 import "../check"
 import "../ir"
 import "../source"
 
 /*
-Arrays: literals, elements, the methods of requirements 2.2, and `for...of`.
+Arrays: literals, elements and the methods of requirements 2.2.
 
 An array is a reference to a cell of fixed size that points at its unboxed elements (requirements
 3.6). A literal is made at its final length and filled in place. Reading an element checks its
@@ -20,8 +17,8 @@ map, filter, forEach and reduce are loops built here, with the callback inlined 
 arrow's parameters are bound to the element, its index and the array, its locals start from their
 zero at every pass, and its `return` jumps to the end of the pass (Inline_Frame). The name of a
 declared function with no environment is called directly instead, and any other function value is
-evaluated once, before the loop, and called through its closure. Either way the callback gets only
-the arguments its own type takes. Node's rules for an array the callback changes hold:
+evaluated once, before the loop, and called through its closure, with what Node passes it as far
+as its signature class reaches (call_callback). Node's rules for an array the callback changes hold:
 the length is read once; forEach, filter and reduce stop where the array now ends, which is the same
 as skipping the indices it no longer has, since only a callback changes the length; map fails there,
 because Node would leave a hole an array of unboxed elements cannot hold. The other methods are rows
@@ -47,12 +44,14 @@ lower_array_literal :: proc(
 	complete := true
 	element_check := s.types[declared].(check.Array).element
 	for element_id, i in node.elements {
-		value := lower_expression(s, element_id)
-		element_span := s.tree.nodes[element_id].span
-		if !flow_intact(s, s.typed.node_types[element_id], element_check, element_span) {
-			value = ir.NO_VALUE
-		}
-		value = coerce(s, value, element, element_span)
+		value := flow_into(
+			s,
+			lower_expression(s, element_id),
+			s.typed.node_types[element_id],
+			element_check,
+			element,
+			s.tree.nodes[element_id].span,
+		)
 		if value == ir.NO_VALUE {
 			complete = false
 			continue
@@ -78,6 +77,15 @@ element_type :: proc(s: ^Func_State, array_type: check.Type_ID) -> (type: ir.Typ
 receiver_element :: proc(s: ^Func_State, node: ast.Call) -> (ir.Type, bool) {
 	member := s.tree.nodes[node.callee].variant.(ast.Member)
 	return element_type(s, s.typed.node_types[member.object])
+}
+
+// passed_types is the check type of each argument map, filter, forEach and reduce pass their
+// callback after the accumulator: the element, its index and the array.
+@(private)
+passed_types :: proc(s: ^Func_State, node: ast.Call) -> [3]check.Type_ID {
+	member := s.tree.nodes[node.callee].variant.(ast.Member)
+	array := s.typed.node_types[member.object]
+	return {s.types[array].(check.Array).element, check.NUMBER, array}
 }
 
 @(private)
@@ -165,9 +173,10 @@ load_element :: proc(s: ^Func_State, place: ^Element_Place, span: source.Span) -
 	return ir.emit(&s.fb, place.type, load, span)
 }
 
-// store_element appends at an unchecked index equal to the length, as `a[a.length] = x` does in
-// Node; any other index is checked. The test comes after the value, which JavaScript evaluates
-// before it writes.
+// store_element appends at an index equal to the length, as `a[a.length] = x` does in Node; any
+// other index is checked. The test comes after the value, which JavaScript evaluates before it
+// writes, and so against the length at the write even where a read checked the index first: the
+// right side of `a[2] += f()` may have shortened the array.
 @(private)
 store_element :: proc(
 	s: ^Func_State,
@@ -183,11 +192,6 @@ store_element :: proc(
 	if stored == ir.NO_VALUE {
 		return false
 	}
-	if place.checked {
-		store_checked(s, place.array, place.index, stored, span)
-		return true
-	}
-
 	length := ir.emit(&s.fb, ir.F64, ir.Length{value = place.array}, span)
 	at_end := ir.Compare {
 		op    = .Equal,
@@ -250,12 +254,9 @@ lower_push :: proc(
 	values := make([]ir.Value_ID, len(node.args), context.temp_allocator)
 	complete := true
 	for arg, i in node.args {
-		at := s.tree.nodes[arg].span
-		values[i] = lower_expression(s, arg)
-		if !flow_intact(s, s.typed.node_types[arg], element_check, at) {
-			values[i] = ir.NO_VALUE
-		}
-		values[i] = coerce(s, values[i], element, at)
+		value := lower_expression(s, arg)
+		given := s.typed.node_types[arg]
+		values[i] = flow_into(s, value, given, element_check, element, s.tree.nodes[arg].span)
 		complete &&= values[i] != ir.NO_VALUE
 	}
 	if !complete {
@@ -271,7 +272,8 @@ lower_push :: proc(
 	return length
 }
 
-// lower_join passes the string constant "," for a separator the call leaves out.
+// lower_join passes the string constant "," for a separator the call leaves out, or one that is
+// undefined when it runs.
 @(private)
 lower_join :: proc(
 	s: ^Func_State,
@@ -281,7 +283,7 @@ lower_join :: proc(
 ) -> ir.Value_ID {
 	separator: ir.Value_ID
 	if len(node.args) > 0 {
-		separator = runtime_argument(s, node.args[0], .Ptr)
+		separator = optional_argument(s, node.args[0], ",", span)
 	} else {
 		separator = string_constant(s, ",", span)
 	}
@@ -318,14 +320,13 @@ lower_sort :: proc(
 	element, element_ok := receiver_element(s, node)
 	comparator := lower_expression(s, node.args[0])
 	type := s.typed.node_types[node.args[0]]
-	function, is_function := s.types[type].(check.Function)
+	_, is_function := s.types[type].(check.Function)
 	signature, signature_ok := signature_of(s.low, s.types, type)
 	if !element_ok || comparator == ir.NO_VALUE || !is_function || !signature_ok {
 		return ir.NO_VALUE
 	}
 	if !called_as_it_stands(signature, element) {
-		takes := min(len(function.params), 2)
-		adapter := sort_adapter(s.low, s.file, id, signature, element, takes, span)
+		adapter := sort_adapter(s.low, s.file, id, signature, element, span)
 		env_type := box_type(s, ir.CLOSURE)
 		env := ir.emit(&s.fb, env_type, ir.Alloc{layout = env_type.layout}, span)
 		store_slot(s, env, 0, comparator, span)
@@ -336,72 +337,6 @@ lower_sort :: proc(
 		args   = {receiver, comparator},
 	}
 	return ir.emit(&s.fb, node_type(s, id), call, span)
-}
-
-// called_as_it_stands says whether a signature takes what the runtime passes a comparator: two
-// elements of the array, as C types, and a number back.
-@(private)
-called_as_it_stands :: proc(signature: Signature, element: ir.Type) -> bool {
-	if len(signature.params) != 2 || signature.result != ir.F64 {
-		return false
-	}
-	return signature.params[0].kind == element.kind && signature.params[1].kind == element.kind
-}
-
-// sort_adapter answers a function of the runtime's comparator shape that calls the closure its
-// environment holds through the closure's class signature: the first `takes` elements boxed into
-// the class, the other positions of the class at their zero, and the answer unboxed into a number.
-// One adapter serves every comparator of one class, element kind and count. It is built on the
-// spot, in the middle of the function that needs it: declare_func appends a row and end_func
-// writes it back by index, so the function being built is not disturbed.
-@(private)
-sort_adapter :: proc(
-	low: ^Lowering,
-	file: source.File_ID,
-	call: ast.Node_ID,
-	signature: Signature,
-	element: ir.Type,
-	takes: int,
-	span: source.Span,
-) -> ir.Func_ID {
-	key := fmt.tprintf("%s/%d/%d", signature_key(signature), element.kind, takes)
-	if func, built := low.sort_adapters[key]; built {
-		return func
-	}
-
-	env := ir.environment_layout(&low.builder, {.Ref})
-	name := fmt.aprintf("m%d.sort$%d", file, call, allocator = low.allocator)
-	params := [2]ir.Type{element, element}
-	func := ir.declare_func(&low.builder, name, params[:], ir.F64, span, env)
-	ir.describe_func(&low.builder, func, "", len(params), false)
-	low.sort_adapters[key] = func
-
-	// No tree and no locals: nothing here reads the program.
-	a := Func_State {
-		low      = low,
-		fb       = ir.begin_func(&low.builder, func),
-		file     = file,
-		result   = ir.F64,
-		declared = ir.F64,
-	}
-	cell := ir.emit(&a.fb, ir.ref(env), ir.Env{}, span)
-	callee := ir.emit(&a.fb, ir.CLOSURE, ir.Field_Load{cell = cell, field = 0}, span)
-	given := [2]ir.Value_ID{ir.Value_ID(0), ir.Value_ID(1)}
-	answer := ir.NO_VALUE
-	if args, ok := class_arguments(&a, signature, given[:], takes, span); ok {
-		closure_call := ir.Call_Closure {
-			callee = callee,
-			args   = args,
-		}
-		answer = unwrap(&a, ir.emit(&a.fb, signature.result, closure_call, span), ir.F64, span)
-	}
-	if answer == ir.NO_VALUE {
-		ir.emit(&a.fb, ir.VOID, ir.Unreachable{}, span) // reported where it was found
-	} else {
-		ir.emit(&a.fb, ir.VOID, ir.Return{value = answer}, span)
-	}
-	ir.end_func(&a.fb)
-	return func
 }
 
 @(private)
@@ -421,9 +356,10 @@ lower_for_each :: proc(
 	loop := open_inline_loop(s, node.args[0], start, ir.NO_VALUE, span)
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
-	call_callback(s, callback, {value, loop.index, receiver}, span)
+	given := passed_types(s, node)
+	call_callback(s, callback, {value, loop.index, receiver}, given[:], span)
 	close_inline_loop(s, &loop, ir.NO_VALUE, span)
-	return ir.NO_VALUE
+	return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
 }
 
 // lower_map makes the result at the length it reads once, and each pass reads its element through
@@ -449,11 +385,10 @@ lower_map :: proc(
 	loop := open_inline_loop(s, node.args[0], start, ir.NO_VALUE, span)
 	leave_unless_before(s, &loop, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
-	mapped := call_callback(s, callback, {value, loop.index, receiver}, span)
-	if callback.result == ir.VOID {
-		mapped = ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
-	}
-	stored := coerce(s, mapped, produced, span)
+	given := passed_types(s, node)
+	mapped := call_callback(s, callback, {value, loop.index, receiver}, given[:], span)
+	wanted := s.types[s.typed.node_types[id]].(check.Array).element
+	stored := flow_into(s, mapped, callback.function.result, wanted, produced, span)
 	complete := stored != ir.NO_VALUE || terminated(s)
 	if stored != ir.NO_VALUE {
 		store_checked(s, out, bounds_check(s, out, loop.index, span), stored, span)
@@ -483,7 +418,9 @@ lower_filter :: proc(
 	loop := open_inline_loop(s, node.args[0], empty, ir.NO_VALUE, span)
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
-	keep := truthy(s, call_callback(s, callback, {value, loop.index, receiver}, span), span)
+	given := passed_types(s, node)
+	answer := call_callback(s, callback, {value, loop.index, receiver}, given[:], span)
+	keep := truthy(s, answer, span)
 	complete := keep != ir.NO_VALUE || terminated(s)
 	if keep != ir.NO_VALUE {
 		kept := ir.add_block(&s.fb)
@@ -518,14 +455,19 @@ lower_reduce :: proc(
 ) -> ir.Value_ID {
 	callback, ok := callback_of(s, node.args[0])
 	element, element_ok := receiver_element(s, node)
-	result := node_type(s, id)
-	if !ok || !element_ok || result == ir.VOID {
+	// An accumulator of type void holds undefined, as a variable of that type does.
+	result, result_ok := binding_type(s.low, s.types, s.typed.node_types[id])
+	if !ok || !element_ok || !result_ok {
 		return ir.NO_VALUE
 	}
+	accumulated := s.typed.node_types[id]
+	passed := passed_types(s, node)
 
 	start, first: ir.Value_ID
 	if len(node.args) > 1 {
-		first = coerce(s, lower_expression(s, node.args[1]), result, span)
+		initial := lower_expression(s, node.args[1])
+		given := s.typed.node_types[node.args[1]]
+		first = flow_into(s, initial, given, accumulated, result, span)
 		if first == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
@@ -560,7 +502,8 @@ lower_reduce :: proc(
 			array = receiver,
 			index = bounds_check(s, receiver, zero, span),
 		}
-		first = coerce(s, ir.emit(&s.fb, element, load, span), result, span)
+		loaded := ir.emit(&s.fb, element, load, span)
+		first = flow_into(s, loaded, passed[0], accumulated, result, span)
 		if first == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
@@ -571,7 +514,9 @@ lower_reduce :: proc(
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
 	args := [?]ir.Value_ID{loop.accumulator, value, loop.index, receiver}
-	next := coerce(s, call_callback(s, callback, args[:], span), result, span)
+	given := [?]check.Type_ID{accumulated, passed[0], passed[1], passed[2]}
+	answer := call_callback(s, callback, args[:], given[:], span)
+	next := flow_into(s, answer, callback.function.result, accumulated, result, span)
 	close_inline_loop(s, &loop, next, span)
 	return loop.accumulator
 }
@@ -586,7 +531,7 @@ lower_reduce :: proc(
 Inline_Loop :: struct {
 	header:      ir.Block_ID,
 	exit:        ir.Block_ID,
-	assigned:    []bind.Symbol_ID,
+	assigned:    []int,
 	phis:        []ir.Value_ID,
 	index:       ir.Value_ID,
 	accumulator: ir.Value_ID, // NO_VALUE but in reduce
@@ -604,7 +549,7 @@ open_inline_loop :: proc(
 	loop := Inline_Loop {
 		header      = ir.add_block(&s.fb),
 		exit        = ir.add_block(&s.fb),
-		assigned    = assigned_symbols(s, callback),
+		assigned    = assigned_locals(s, callback),
 		accumulator = ir.NO_VALUE,
 		leaving     = make([dynamic]Edge, 0, 2, context.temp_allocator),
 	}
@@ -698,243 +643,4 @@ close_inline_loop :: proc(
 		}
 	}
 	open_join(s, loop.exit, loop.leaving[:], span)
-}
-
-// Callbacks.
-
-// Callback is what an array method calls for each element: an arrow written in the call, inlined;
-// the name of a declared function with no environment, called directly; or any other function
-// value, called through its closure.
-@(private)
-Callback :: struct {
-	arrow:     ast.Node_ID, // NO_NODE unless the callback is inlined
-	func:      ir.Func_ID, // called directly when closure is NO_VALUE and arrow NO_NODE
-	closure:   ir.Value_ID,
-	signature: Signature, // the class signature of a callback that is called
-	takes:     int, // how many arguments the callback's own type takes
-	result:    ir.Type, // its own result; VOID when the callback returns nothing
-}
-
-// callback_of evaluates a function value once, here, before the loop that calls it.
-@(private)
-callback_of :: proc(s: ^Func_State, id: ast.Node_ID) -> (callback: Callback, ok: bool) {
-	span := s.tree.nodes[id].span
-	type := s.typed.node_types[id]
-	function, is_function := s.types[type].(check.Function)
-	if !is_function {
-		return {}, false
-	}
-	result, representable := ir_type(s.low, s.types, function.result)
-	if !representable {
-		later(s, span, construct_text(s.types, function.result))
-		return {}, false
-	}
-	callback = {
-		arrow   = ast.NO_NODE,
-		closure = ir.NO_VALUE,
-		takes   = len(function.params),
-		result  = result,
-	}
-	if s.low.closures[s.file].inlined[id] {
-		callback.arrow = id
-		return callback, true
-	}
-	callback.signature = signature_of(s.low, s.types, type) or_return
-
-	#partial switch _ in s.tree.nodes[id].variant {
-	case ast.Ident, ast.Member:
-		ref := s.typed.node_symbols[id]
-		if ref.symbol != bind.NO_SYMBOL {
-			declared := s.low.prog.bound[ref.file].symbols[ref.symbol]
-			func, found := s.low.funcs[{ref.file, declared.declaration}]
-			if found && s.low.builder.funcs[func].env == ir.NO_LAYOUT {
-				callback.func = func
-				return callback, true
-			}
-			if declared.kind == .Function && !found {
-				// The declaration was refused where it stands; a use of it says nothing more.
-				return {}, false
-			}
-		}
-	}
-	callback.closure = lower_expression(s, id)
-	return callback, callback.closure != ir.NO_VALUE
-}
-
-// call_callback passes the callback as many of the arguments as its own type takes: the index must
-// not land in a position where another member of its signature class takes a string.
-@(private)
-call_callback :: proc(
-	s: ^Func_State,
-	callback: Callback,
-	args: []ir.Value_ID,
-	span: source.Span,
-) -> ir.Value_ID {
-	if callback.arrow != ast.NO_NODE {
-		return inline_arrow(s, callback, args, span)
-	}
-	count := min(len(args), callback.takes)
-	given, ok := class_arguments(s, callback.signature, args, count, span)
-	if !ok {
-		return ir.NO_VALUE
-	}
-	call: ir.Variant = ir.Call {
-		func = callback.func,
-		args = given,
-	}
-	if callback.closure != ir.NO_VALUE {
-		call = ir.Call_Closure {
-			callee = callback.closure,
-			args   = given,
-		}
-	}
-	value := ir.emit(&s.fb, callback.signature.result, call, span)
-	return call_result(s, value, callback.result, span)
-}
-
-// inline_arrow lowers the arrow's body in place. Its locals take their zero at every pass, as a
-// new call's would. `break` and `continue` cannot leave an arrow, so the loops around the call are
-// no targets inside it, and its `return` goes to the join of this frame.
-@(private)
-inline_arrow :: proc(
-	s: ^Func_State,
-	callback: Callback,
-	args: []ir.Value_ID,
-	span: source.Span,
-) -> ir.Value_ID {
-	arrow := s.tree.nodes[callback.arrow].variant.(ast.Arrow)
-	zero_locals(s, s.bound.node_scopes[callback.arrow], span)
-	for param, i in arrow.params {
-		symbol := s.bound.node_symbols[param]
-		if i >= len(args) || symbol == bind.NO_SYMBOL || s.refused[symbol] {
-			continue
-		}
-		bind_local(s, symbol, coerce(s, args[i], local_type(s, symbol), span), span)
-	}
-
-	outer_loops := s.loops
-	s.loops = make([dynamic]Loop_Frame, context.temp_allocator)
-	frame := Inline_Frame {
-		join   = ir.add_block(&s.fb),
-		result = callback.result,
-		edges  = make([dynamic]Edge, 0, 2, context.temp_allocator),
-		values = make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator),
-	}
-	append(&s.inlines, frame)
-
-	body := arrow.body
-	_, is_block := s.tree.nodes[body].variant.(ast.Block)
-	switch {
-	case is_block:
-		lower_statement(s, body)
-		if !terminated(s) {
-			// Running off the end returns undefined.
-			leave_arrow(s, undefined_of(s, callback.result, span), span)
-		}
-	case s.typed.node_types[body] == check.NEVER:
-		lower_effect(s, body)
-		if !terminated(s) {
-			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
-		}
-	case callback.result == ir.VOID:
-		lower_effect(s, body)
-		leave_arrow(s, ir.NO_VALUE, span)
-	case:
-		leave_arrow(s, coerce(s, lower_expression(s, body), callback.result, span), span)
-	}
-
-	frame = pop(&s.inlines)
-	s.loops = outer_loops
-	return join_values(s, frame.join, frame.edges[:], frame.values[:], frame.result, span)
-}
-
-// leave_arrow is a `return` of the innermost inlined arrow.
-@(private)
-leave_arrow :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
-	frame := &s.inlines[len(s.inlines) - 1]
-	append(&frame.edges, here(s))
-	append(&frame.values, value)
-	ir.emit(&s.fb, ir.VOID, ir.Jump{target = frame.join}, span)
-}
-
-// undefined_of is what a bare `return` gives a caller that reads a value of this type.
-@(private)
-undefined_of :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value_ID {
-	if type == ir.TAGGED {
-		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
-	}
-	return ir.NO_VALUE
-}
-
-// for...of
-
-// lower_for_of reads the length again before every step, as the iterator does, so a body that
-// pushes is walked to the new end. A string is walked by code point: a step takes a surrogate pair
-// whole and moves the index by the length of what it took.
-@(private)
-lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: source.Span) {
-	iterable := lower_expression(s, node.iterable)
-	declaration := s.tree.nodes[node.declaration].variant.(ast.Var_Decl)
-	symbol := s.bound.node_symbols[declaration.declarators[0]]
-	element, is_array := element_type(s, s.typed.node_types[node.iterable])
-	is_string := iterable != ir.NO_VALUE && value_type(s, iterable) == ir.STR
-	is_array &&= iterable != ir.NO_VALUE && value_type(s, iterable).kind == .Ref
-	if iterable != ir.NO_VALUE && !is_string && !is_array {
-		// check loops over an array or a string, and nothing else.
-		later(s, span, "looping over this value")
-	}
-	if !is_string && !is_array || symbol == bind.NO_SYMBOL || s.refused[symbol] {
-		// Whatever is wrong was reported; the body is still walked for what it holds.
-		lower_statement(s, node.body)
-		return
-	}
-
-	assigned := assigned_symbols(s, id)
-	blocks := open_loop(s)
-	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
-	entry := s.fb.current
-	phis := enter_loop(s, blocks, assigned, span)
-	index := ir.phi(&s.fb, ir.F64, span)
-	ir.phi_incoming(&s.fb, index, entry, start)
-	length := ir.emit(&s.fb, ir.F64, ir.Length{value = iterable}, span)
-	more := ir.emit(&s.fb, ir.BOOL, ir.Compare{op = .Less, left = index, right = length}, span)
-	leaving := here(s)
-	branch := ir.Branch {
-		condition  = more,
-		then_block = blocks.body,
-		else_block = blocks.exit,
-	}
-	ir.emit(&s.fb, ir.VOID, branch, span)
-
-	ir.use_block(&s.fb, blocks.body)
-	checked := bounds_check(s, iterable, index, span)
-	step, piece: ir.Value_ID
-	if is_string {
-		call := ir.Call_Runtime {
-			export = .String_Code_Point_At,
-			args   = {iterable, checked},
-		}
-		piece = ir.emit(&s.fb, ir.STR, call, span)
-		step = ir.emit(&s.fb, ir.F64, ir.Length{value = piece}, span)
-	} else {
-		load := ir.Element_Load {
-			array = iterable,
-			index = checked,
-		}
-		piece = ir.emit(&s.fb, element, load, span)
-		step = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
-	}
-	next := ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = index, right = step}, span)
-	bind_local(s, symbol, coerce(s, piece, local_type(s, symbol), span), span)
-
-	push_frame(s, blocks.latch, blocks.exit)
-	lower_statement(s, node.body)
-	frame := pop(&s.loops)
-	if open_latch(s, blocks.latch, frame, span) {
-		back := here(s)
-		ir.emit(&s.fb, ir.VOID, ir.Jump{target = blocks.header}, span)
-		patch_header(s, phis, assigned, back)
-		ir.phi_incoming(&s.fb, index, back.block, next)
-	}
-	leave_loop(s, blocks.exit, leaving, frame, span)
 }

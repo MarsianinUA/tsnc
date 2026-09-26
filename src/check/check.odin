@@ -119,7 +119,7 @@ check :: proc(
 		in_partition = make([]bool, len(prog.files), context.temp_allocator),
 		facts        = make([]Facts, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
-		resolving    = make(map[Symbol_Ref]int, context.temp_allocator),
+		resolving    = make(map[Symbol_Ref]bool, context.temp_allocator),
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
 		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
@@ -162,13 +162,9 @@ Checker :: struct {
 	// belongs to this call alone, as the type table does: a Type_ID of one checker means nothing
 	// in another.
 	symbol_types: map[Symbol_Ref]Type_ID,
-	// The symbols whose type is being worked out right now, each with the body depth the search
-	// started at. A declaration that needs its own type finds itself here, which is the only way
-	// that search could fail to end; a greater depth means the read stands inside a function body,
-	// which runs after the declaration has its type.
-	resolving:    map[Symbol_Ref]int,
-	// How many function bodies the checker is inside. check_body raises it.
-	depth:        int,
+	// The symbols whose type is being worked out right now. A declaration that needs its own type
+	// finds itself here, which is the only way that search could fail to end.
+	resolving:    map[Symbol_Ref]bool,
 	// The type arguments in force while the members of a generic lib declaration are read: `T` of
 	// `Array<T>` stands for `number` while `Array<number>` is built. Saved and restored around one
 	// instantiation, so a nested one cannot see the outer bindings.

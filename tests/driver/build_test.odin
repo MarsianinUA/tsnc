@@ -89,22 +89,43 @@ an_executable_is_built_and_runs :: proc(t: ^testing.T) {
 // compiler was given, and the exit code is 1.
 @(test)
 a_failed_non_null_assertion_ends_the_program :: proc(t: ^testing.T) {
-	expect_failure(t, "main.ts", "driver-non-null.exe", "4\n", "non-null assertion failed", 5, 41)
+	failure := "non-null assertion failed"
+	expect_failure(t, "non-null", "main.ts", "driver-non-null.exe", "4\n", failure, 5, 41)
 }
 
 @(test)
 a_failed_type_assertion_ends_the_program :: proc(t: ^testing.T) {
-	expect_failure(t, "as.ts", "driver-as.exe", "1\n", "type assertion failed", 5, 9)
+	expect_failure(t, "non-null", "as.ts", "driver-as.exe", "1\n", "type assertion failed", 5, 9)
+}
+
+@(test)
+an_any_given_to_a_union_it_fits_no_member_of_ends_the_program :: proc(t: ^testing.T) {
+	failure := "a value holds a kind its type does not allow"
+	expect_failure(t, "any-union", "main.ts", "driver-any-union.exe", "", failure, 6, 7)
+}
+
+// A read of a `let` or `const` that runs before its declaration has fails where Node throws its
+// ReferenceError, whatever the binding holds: an object, a number, a function, a local that a
+// closure shares, or one that a jump to a later case of its switch skipped.
+@(test)
+a_read_before_initialization_ends_the_program :: proc(t: ^testing.T) {
+	early := "cannot access a variable before its initialization"
+	project := "early-read"
+	expect_failure(t, project, "object.ts", "driver-early-object.exe", "before\n", early, 5, 9)
+	expect_failure(t, project, "number.ts", "driver-early-number.exe", "", early, 4, 9)
+	expect_failure(t, project, "function.ts", "driver-early-function.exe", "", early, 4, 9)
+	expect_failure(t, project, "captured.ts", "driver-early-captured.exe", "", early, 5, 29)
+	expect_failure(t, project, "switch.ts", "driver-early-switch.exe", "2\n", early, 9, 4)
 }
 
 @(private = "file")
 expect_failure :: proc(
 	t: ^testing.T,
-	entry, output, stdout, failure: string,
+	project, entry, output, stdout, failure: string,
 	line, column: int,
 	loc := #caller_location,
 ) {
-	built := build_project(build_options("non-null", entry, output))
+	built := build_project(build_options(project, entry, output))
 	defer driver.destroy(&built.report.check)
 	if !expect_built(t, built, loc) {
 		return

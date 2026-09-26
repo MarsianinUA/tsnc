@@ -24,8 +24,12 @@ The environment of a closure holds its captures, less the declarations it calls 
 order. Each is a copy of the value, or a box, a heap cell of one slot the closure shares with the
 function around it, where a copy could go stale: the variable is assigned somewhere, or a closure may
 run before the declaration has given the variable its value, which is what a hoisted declaration
-does with a `const` below it. Nothing else is boxed: a variable only an inlined arrow captures stays
-a plain local.
+does with a `const` below it. A variable a later case of its switch uses is boxed too, with no
+closure at all: the box holds the flag of whether the declaration ran (case_skipped). Nothing else
+is boxed: a variable only an inlined arrow captures stays a plain local.
+
+A function typed void that returns what a call answered gives its signature class a result that
+can hold that value (widen_void_results).
 */
 
 File_Closures :: struct {
@@ -38,6 +42,9 @@ File_Closures :: struct {
 	names:      []string, // by ast.Node_ID of a closure: the name its value prints with
 	value_used: []bool, // by bind.Symbol_ID of a nested declaration: read as a value
 	boxed:      []bool, // by bind.Symbol_ID: the variable lives in a box
+	// By bind.Symbol_ID: a `let` or `const` some use may reach before its declaration ran
+	// (early_use), so its binding marks whether it has (check_ready).
+	checked:    []bool,
 }
 
 // analyze_closures reads the file's check facts, so it runs on a file that runs.
@@ -53,6 +60,7 @@ analyze_closures :: proc(low: ^Lowering, file: source.File_ID) -> File_Closures 
 		names      = make([]string, nodes, context.temp_allocator),
 		value_used = make([]bool, len(bound.symbols), context.temp_allocator),
 		boxed      = make([]bool, len(bound.symbols), context.temp_allocator),
+		checked    = make([]bool, len(bound.symbols), context.temp_allocator),
 	}
 	find_uses(low, file, &out)
 
@@ -102,6 +110,16 @@ analyze_closures :: proc(low: ^Lowering, file: source.File_ID) -> File_Closures 
 		out.env[id] = env[:]
 		for symbol in env {
 			out.boxed[symbol] ||= needs_box(tree, bound, id, symbol)
+		}
+	}
+	for i in 0 ..< len(tree.nodes) {
+		if early_use(tree, bound, ast.Node_ID(i)) {
+			out.checked[bound.node_symbols[i]] = true
+		}
+		if case_skipped(tree, bound, ast.Node_ID(i)) {
+			// Whether the declaration ran depends on the case control entered at, which a flag in
+			// the box records.
+			out.boxed[bound.node_symbols[i]] = true
 		}
 	}
 	return out
@@ -163,7 +181,7 @@ find_uses :: proc(low: ^Lowering, file: source.File_ID, out: ^File_Closures) {
 }
 
 // is_inlined_call is the condition lower_strategy reaches map, filter, forEach and reduce by: a
-// method of the lib named on an array.
+// method of the lib named on an array, whose row is one of the four loops lower builds.
 @(private)
 is_inlined_call :: proc(low: ^Lowering, file: source.File_ID, call: ast.Call) -> bool {
 	tree := &low.prog.trees[file]
@@ -176,8 +194,13 @@ is_inlined_call :: proc(low: ^Lowering, file: source.File_ID, call: ast.Call) ->
 	   !is_array {
 		return false
 	}
-	switch member.name.text {
-	case "map", "filter", "forEach", "reduce":
+	strategy, _ := lib_strategy(.Instance, "Array", member.name.text)
+	builtin, is_builtin := strategy.(Builtin)
+	if !is_builtin {
+		return false
+	}
+	#partial switch builtin {
+	case .Array_Map, .Array_Filter, .Array_For_Each, .Array_Reduce:
 		return true
 	}
 	return false
@@ -247,6 +270,152 @@ needs_box :: proc(
 	return false
 }
 
+// early_use says whether a use of a `let` or `const` may run before its declaration has: it stands
+// in a function (bind's node_deferred) made before the declaration ends, which a call may run at
+// any time after, or in a later case of the switch that declares it (case_skipped). One that runs
+// where it stands check reports instead (Used_Before_Declaration).
+@(private)
+early_use :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_ID) -> bool {
+	if case_skipped(tree, bound, id) {
+		return true
+	}
+	outer := bound.node_deferred[id]
+	symbol := bound.node_symbols[id]
+	if outer == bind.MODULE_SCOPE || symbol == bind.NO_SYMBOL {
+		return false
+	}
+	entry := bound.symbols[symbol]
+	if entry.kind != .Let && entry.kind != .Const {
+		return false
+	}
+	made := creation_point(tree, bound, bound.scopes[outer].node)
+	return tree.nodes[entry.declaration].span.end > made
+}
+
+// case_skipped says whether a use of a `let` or `const` declared in one case of a switch stands in
+// a later case, its test included. The cases share one scope, and a jump to a later case skips the
+// declaration, which Node answers with a ReferenceError at the use:
+//
+//	switch (n) { case 0: let y = 1; case 1: console.log(y); } // throws for n === 1
+@(private)
+case_skipped :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_ID) -> bool {
+	symbol := bound.node_symbols[id]
+	if symbol == bind.NO_SYMBOL {
+		return false
+	}
+	entry := bound.symbols[symbol]
+	if entry.kind != .Let && entry.kind != .Const {
+		return false
+	}
+	switch_node, in_switch := tree.nodes[bound.scopes[entry.scope].node].variant.(ast.Switch)
+	if !in_switch {
+		return false
+	}
+	declared := tree.nodes[entry.declaration].span
+	for case_id in switch_node.cases {
+		clause := tree.nodes[case_id].span
+		if clause.start <= declared.start && declared.end <= clause.end {
+			return tree.nodes[id].span.start >= clause.end
+		}
+	}
+	return false
+}
+
+// widen_void_results gives a signature class whose result is VOID a TAGGED one where a member hands
+// on a value (hands_on_value), since Node returns it whatever the type says:
+//
+//	const call = (f: () => void) => f(); // call(five) is 5 in Node
+//
+// That class may answer the calls another void function hands on, so it runs to a fixpoint. It
+// runs before signature_of answers anything, whose memo would keep the old result.
+@(private)
+widen_void_results :: proc(low: ^Lowering, order: []source.File_ID) {
+	for changed := true; changed; {
+		changed = false
+		for file in order {
+			types := low.facts[file].result.types
+			for id in low.closures[file].functions {
+				type := low.facts[file].typed.node_types[id]
+				function, is_function := types[type].(check.Function)
+				if !is_function || function.result != check.VOID {
+					continue
+				}
+				own, ok := own_signature(low, types, function)
+				if !ok {
+					continue
+				}
+				node := class_node(&low.signatures, signature_key(own), own)
+				root := class_root(&low.signatures, node)
+				if low.signatures.values[root].result == ir.VOID && hands_on_value(low, file, id) {
+					low.signatures.values[root].result = ir.TAGGED
+					changed = true
+				}
+			}
+		}
+	}
+}
+
+// hands_on_value says whether a function typed void may give back a value all the same: an `any`,
+// or what a call answered through a class whose result is not VOID. A ternary of two such calls
+// joins no value (lower_effect) and does not count.
+@(private)
+hands_on_value :: proc(low: ^Lowering, file: source.File_ID, function: ast.Node_ID) -> bool {
+	tree := &low.prog.trees[file]
+	typed := low.facts[file].typed
+	types := low.facts[file].result.types
+	for value in handed_back(tree, function) {
+		if typed.node_types[value] == check.ANY {
+			return true
+		}
+		call, is_call := tree.nodes[value].variant.(ast.Call)
+		if !is_call {
+			continue
+		}
+		callee, ok := class_signature(low, types, typed.node_types[call.callee])
+		if ok && callee.result != ir.VOID {
+			return true
+		}
+	}
+	return false
+}
+
+// handed_back lists what a function gives back: its expression body, or the value of every
+// `return` in its body outside the functions nested there.
+@(private)
+handed_back :: proc(tree: ^ast.File_AST, function: ast.Node_ID) -> []ast.Node_ID {
+	body := ast.NO_NODE
+	#partial switch v in tree.nodes[function].variant {
+	case ast.Function_Decl:
+		body = v.body
+	case ast.Arrow:
+		body = v.body
+	}
+	if body == ast.NO_NODE {
+		return nil
+	}
+	values := make([dynamic]ast.Node_ID, 0, 2, context.temp_allocator)
+	if _, is_block := tree.nodes[body].variant.(ast.Block); !is_block {
+		append(&values, body)
+		return values[:]
+	}
+	stack := make([dynamic]ast.Node_ID, 0, 16, context.temp_allocator)
+	append(&stack, body)
+	for len(stack) > 0 {
+		id := pop(&stack)
+		#partial switch v in tree.nodes[id].variant {
+		case ast.Function_Decl, ast.Arrow:
+			continue
+		case ast.Return:
+			if v.value != ast.NO_NODE {
+				append(&values, v.value)
+			}
+			continue
+		}
+		ast.append_children(&stack, tree.nodes[id])
+	}
+	return values[:]
+}
+
 // creation_point is where a closure is made: an arrow where it stands, a declaration where the
 // block that holds it opens, since it is hoisted.
 @(private)
@@ -276,13 +445,13 @@ make_closure :: proc(s: ^Func_State, node: ast.Node_ID, span: source.Span) -> ir
 	}
 	symbols := s.low.closures[s.file].env[node]
 	for symbol in symbols {
-		if s.locals[symbol] == ir.NO_VALUE {
+		if local_value(s, symbol) == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
 	}
 	env := ir.emit(&s.fb, ir.ref(layout), ir.Alloc{layout = layout}, span)
 	for symbol, i in symbols {
-		store_slot(s, env, i32(i), s.locals[symbol], span)
+		store_slot(s, env, i32(i), local_value(s, symbol), span)
 	}
 	return ir.emit(&s.fb, ir.CLOSURE, ir.Make_Closure{func = func, env = env}, span)
 }

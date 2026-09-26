@@ -1,7 +1,6 @@
 package console
 
 import "core:math"
-import "core:unicode/utf16"
 
 import "../../abi"
 import "../gc"
@@ -13,6 +12,10 @@ import "../value"
 JSON.stringify of one value, for %j. Node answers "undefined" where JSON.stringify answers
 undefined, for undefined itself and a function, and "[Circular]" for a value that contains itself,
 where JSON.stringify throws.
+
+An object or an array is walked with a stack of frames in context.allocator rather than by
+recursion, so the depth of a value costs heap and not native stack: Node writes a list thousands
+deep. The frames are also the ancestors a value is looked for among for [Circular].
 */
 
 @(private)
@@ -23,11 +26,24 @@ Json_Result :: enum u8 {
 	Refused, // an own toJSON function, which Node would call
 }
 
+// Json_Frame is an object or an array being written, and how far: the next element or field, and
+// for an object whether a field was written yet and where the key of the last one begins, which a
+// value that turns out to be nothing takes back out.
+@(private)
+Json_Frame :: struct {
+	cell:  ^abi.Cell_Header,
+	table: abi.Type_Table,
+	next:  int,
+	first: bool,
+	mark:  int,
+}
+
 @(private)
 write_json :: proc(heap: ^gc.Heap, v: abi.Tagged, out: ^[dynamic]u16) -> Format_Error {
 	start := len(out)
-	stack := make([dynamic]^abi.Cell_Header)
-	switch json_value(heap, v, &stack, out) {
+	frames := make([dynamic]Json_Frame)
+	defer delete(frames)
+	switch json_value(heap, v, &frames, out) {
 	case .Written:
 	case .Nothing:
 		append_ascii(out, "undefined")
@@ -40,16 +56,49 @@ write_json :: proc(heap: ^gc.Heap, v: abi.Tagged, out: ^[dynamic]u16) -> Format_
 	return .None
 }
 
+// json_value writes v, and a value it opens: after each step, the value that step finished is
+// settled into the frame on top (json_settle), and the frame moves on to its next value or closes.
 @(private)
 json_value :: proc(
 	heap: ^gc.Heap,
 	v: abi.Tagged,
-	stack: ^[dynamic]^abi.Cell_Header,
+	frames: ^[dynamic]Json_Frame,
 	out: ^[dynamic]u16,
 ) -> Json_Result {
+	result, opened := json_enter(heap, v, frames, out)
+	for len(frames) > 0 {
+		if !opened {
+			if result == .Circular || result == .Refused {
+				return result
+			}
+			json_settle(&frames[len(frames) - 1], result, out)
+		}
+		child, has_child := json_next(heap, &frames[len(frames) - 1], out)
+		if !has_child {
+			frame := pop(frames)
+			append(out, ']' if frame.table.kind == .Array else '}')
+			result, opened = .Written, false
+			continue
+		}
+		result, opened = json_enter(heap, child, frames, out)
+	}
+	return result
+}
+
+// json_enter writes a value that has no parts, and opens a frame for an object or an array.
+@(private)
+json_enter :: proc(
+	heap: ^gc.Heap,
+	v: abi.Tagged,
+	frames: ^[dynamic]Json_Frame,
+	out: ^[dynamic]u16,
+) -> (
+	result: Json_Result,
+	opened: bool,
+) {
 	switch v.tag {
 	case .Undefined, .Function:
-		return .Nothing
+		return .Nothing, false
 	case .Null:
 		append_ascii(out, "null")
 	case .Boolean:
@@ -67,90 +116,81 @@ json_value :: proc(
 		json_quote(str.units((^abi.String_Cell)(v.payload.ref)), out)
 	case .Object:
 		cell := v.payload.ref
-		for outer in stack {
-			if outer == cell {
-				return .Circular
+		for outer in frames {
+			if outer.cell == cell {
+				return .Circular, false
 			}
 		}
-		append(stack, cell)
-		defer pop(stack)
 		table := gc.table_of(heap, cell)
 		if table.kind == .Array {
-			return json_array(heap, (^abi.Array_Cell)(cell), table.element, stack, out)
+			append(out, '[')
+		} else {
+			if _, found := value.own_method(heap, cell, "toJSON"); found {
+				return .Refused, false
+			}
+			append(out, '{')
 		}
-		return json_object(heap, cell, table, stack, out)
+		append(frames, Json_Frame{cell = cell, table = table, first = true})
+		return .Written, true
 	}
-	return .Written
+	return .Written, false
 }
 
+// json_settle takes in the value just written in a frame: nothing is null in an array, and takes
+// its key back out of an object.
 @(private)
-json_array :: proc(
+json_settle :: proc(frame: ^Json_Frame, result: Json_Result, out: ^[dynamic]u16) {
+	switch {
+	case result == .Nothing && frame.table.kind == .Array:
+		append_ascii(out, "null")
+	case result == .Nothing:
+		resize(out, frame.mark)
+	case frame.table.kind == .Object:
+		frame.first = false
+	}
+}
+
+// json_next writes the separator, and for an object the key, of the frame's next value and answers
+// that value; has_child is false once there is none.
+@(private)
+json_next :: proc(
 	heap: ^gc.Heap,
-	array: ^abi.Array_Cell,
-	kind: abi.Slot_Kind,
-	stack: ^[dynamic]^abi.Cell_Header,
+	frame: ^Json_Frame,
 	out: ^[dynamic]u16,
-) -> Json_Result {
-	append(out, '[')
-	size := abi.SLOT_SIZE[kind]
-	for i in 0 ..< array.length {
-		if i > 0 {
+) -> (
+	child: abi.Tagged,
+	has_child: bool,
+) {
+	if frame.table.kind == .Array {
+		array := (^abi.Array_Cell)(frame.cell)
+		if frame.next >= array.length {
+			return {}, false
+		}
+		if frame.next > 0 {
 			append(out, ',')
 		}
-		element := value.load(heap, &([^]byte)(array.elements)[i * size], kind)
-		switch json_value(heap, element, stack, out) {
-		case .Written:
-		case .Nothing:
-			append_ascii(out, "null")
-		case .Circular:
-			return .Circular
-		case .Refused:
-			return .Refused
-		}
+		kind := frame.table.element
+		slot := &([^]byte)(array.elements)[frame.next * abi.SLOT_SIZE[kind]]
+		child = value.load(heap, slot, kind)
+		frame.next += 1
+		return child, true
 	}
-	append(out, ']')
-	return .Written
-}
-
-@(private)
-json_object :: proc(
-	heap: ^gc.Heap,
-	cell: ^abi.Cell_Header,
-	table: abi.Type_Table,
-	stack: ^[dynamic]^abi.Cell_Header,
-	out: ^[dynamic]u16,
-) -> Json_Result {
-	if method, found := own_property(heap, cell, table, "toJSON");
-	   found && method.tag == .Function {
-		return .Refused
-	}
-	append(out, '{')
-	first := true
-	for field in table.fields {
-		v, present := field_value(heap, cell, field)
+	for frame.next < len(frame.table.fields) {
+		field := frame.table.fields[frame.next]
+		frame.next += 1
+		v, present := value.field(heap, frame.cell, field)
 		if !present {
 			continue
 		}
-		mark := len(out)
-		if !first {
+		frame.mark = len(out)
+		if !frame.first {
 			append(out, ',')
 		}
-		key := make([]u16, len(field.name))
-		json_quote(string16(key[:utf16.encode_string(key, field.name)]), out)
+		json_quote(key_units(field.name), out)
 		append(out, ':')
-		switch json_value(heap, v, stack, out) {
-		case .Written:
-			first = false
-		case .Nothing:
-			resize(out, mark)
-		case .Circular:
-			return .Circular
-		case .Refused:
-			return .Refused
-		}
+		return v, true
 	}
-	append(out, '}')
-	return .Written
+	return {}, false
 }
 
 // json_quote is QuoteJSONString: the short escapes, \u00XX for the other control characters, and

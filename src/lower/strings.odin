@@ -139,7 +139,7 @@ compare_strings :: proc(
 	}
 	answer := ir.emit(&s.fb, ir.BOOL, call, span)
 	if negate {
-		answer = ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = answer}, span)
+		answer = negated(s, answer, span)
 	}
 	return answer
 }
@@ -168,7 +168,7 @@ lower_string_includes :: proc(
 	search := runtime_argument(s, node.args[0], .Ptr)
 	position: ir.Value_ID
 	if len(node.args) > 1 {
-		position = optional_number(s, node.args[1], 0, span)
+		position = optional_argument(s, node.args[1], 0, span)
 	} else {
 		position = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	}

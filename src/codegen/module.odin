@@ -265,13 +265,31 @@ closure_signature :: proc(m: ^Module, params: []ir.Type, result: ir.Type) -> llv
 	types := make([dynamic]llvm.LLVMTypeRef, 0, 1 + 2 * len(params), context.temp_allocator)
 	append(&types, m.types.ptr)
 	for type in params {
-		if type.kind == .Tagged {
+		if param_words(type) == 2 {
 			append(&types, m.types.int64, m.types.int64)
 		} else {
 			append(&types, storage_type(m, type))
 		}
 	}
 	return llvm.LLVMFunctionType(storage_type(m, result), raw_data(types), u32(len(types)), false)
+}
+
+// param_words is how many LLVM parameters a value of the IR type takes in a call, as an argument of
+// a function or of a runtime export: a tagged value passes its two words.
+@(private)
+param_words :: proc(type: ir.Type) -> u32 {
+	return 2 if type.kind == .Tagged else 1
+}
+
+// param_index is the LLVM parameter where parameter i of a function of the program starts, after
+// the environment and the words of the parameters before it.
+@(private)
+param_index :: proc(params: []ir.Type, i: int) -> u32 {
+	index := u32(1)
+	for type in params[:i] {
+		index += param_words(type)
+	}
+	return index
 }
 
 // add_globals gives every module binding a zero filled cell in the data segment. The zero is load

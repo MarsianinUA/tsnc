@@ -42,16 +42,12 @@ lower_object_literal :: proc(
 	for property_id in node.properties {
 		property := s.tree.nodes[property_id].variant.(ast.Property)
 		value := lower_expression(s, property.value)
-		if field, has := find_field(object, property.name.text); has {
-			at := s.tree.nodes[property_id].span
-			if !flow_intact(s, s.typed.node_types[property.value], field.type, at) {
-				value = ir.NO_VALUE
-			}
-		}
+		field, _ := find_field(object, property.name.text)
 		place, found := field_place(s, cell, object, property.name.text)
-		stored :=
-			found && store_place(s, &place, value, s.tree.nodes[property_id].span) != ir.NO_VALUE
-		complete = complete && stored
+		at := s.tree.nodes[property_id].span
+		given := s.typed.node_types[property.value]
+		stored := found && store_place(s, &place, value, at, given, field.type) != ir.NO_VALUE
+		complete &&= stored
 	}
 	return cell if complete else ir.NO_VALUE
 }

@@ -5,6 +5,7 @@ import "../arr"
 import "../gc"
 import "../num"
 import "../str"
+import "../value"
 
 /*
 util.formatWithOptions, formatWithOptionsInternal of lib/internal/util/inspect.js: a string first
@@ -141,8 +142,7 @@ write_string_specifier :: proc(
 	case .Number:
 		format_number(false, v.payload.number, units)
 	case .Object:
-		table := gc.table_of(heap, v.payload.ref)
-		if method, found := own_property(heap, v.payload.ref, table, "toString"); found {
+		if method, found := value.own_method(heap, v.payload.ref, "toString"); found {
 			if method.tag == .Function {
 				return .Not_Convertible_To_String
 			}
@@ -174,9 +174,9 @@ to_number :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (n: f64, err: Format_Error) 
 	case .Object:
 		table := gc.table_of(heap, v.payload.ref)
 		if table.kind == .Object {
-			method, has_value_of := own_property(heap, v.payload.ref, table, "valueOf")
-			_, has_to_string := own_property(heap, v.payload.ref, table, "toString")
-			if has_value_of && method.tag == .Function || has_to_string {
+			_, has_value_of := value.own_method(heap, v.payload.ref, "valueOf")
+			_, has_to_string := value.own_method(heap, v.payload.ref, "toString")
+			if has_value_of || has_to_string {
 				return 0, .Not_Convertible_To_Number
 			}
 			// "[object Object]"
@@ -233,24 +233,4 @@ ascii_prefix :: proc(text: []u16) -> string {
 		ascii[i] = byte(unit)
 	}
 	return string(ascii)
-}
-
-// own_property reads a property of an object by its name, answering found = false for an absent
-// optional field as for a missing one.
-@(private)
-own_property :: proc(
-	heap: ^gc.Heap,
-	cell: ^abi.Cell_Header,
-	table: abi.Type_Table,
-	name: string,
-) -> (
-	v: abi.Tagged,
-	found: bool,
-) {
-	for field in table.fields {
-		if field.name == name {
-			return field_value(heap, cell, field)
-		}
-	}
-	return {}, false
 }

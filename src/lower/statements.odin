@@ -33,15 +33,25 @@ build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) 
 		if !is_global {
 			continue
 		}
-		zero := zero_value(&s, low.builder.globals[global].type, span)
+		type := low.builder.globals[global].type
+		zero: ir.Value_ID
+		if low.closures[file].checked[symbol] && type == ir.STR {
+			zero = ir.emit(&s.fb, ir.STR, ir.Const_Null{}, span) // the mark check_ready tests
+		} else {
+			zero = zero_value(&s, type, span)
+		}
 		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = zero}, span)
+		if flag, has_flag := low.ready[{file, declaration}]; has_flag {
+			not_yet := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
+			ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = flag, value = not_yet}, span)
+		}
 	}
 
 	for statement in low.prog.trees[file].nodes[ast.ROOT].variant.(ast.Module).statements {
 		lower_statement(&s, statement)
 	}
 	close_body(&s, span)
-	ir.end_func(&s.fb)
+	end_function(&s)
 }
 
 // build_functions builds the declarations first and the arrows after, each in walk order.
@@ -60,7 +70,7 @@ build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 		s := begin_function(low, file, func, id, bound.node_scopes[decl.body], decl.params, span)
 		lower_statement(&s, decl.body)
 		close_body(&s, span)
-		ir.end_func(&s.fb)
+		end_function(&s)
 	}
 	for id in low.closures[file].functions {
 		func, is_declared := low.funcs[{file, id}]
@@ -70,18 +80,19 @@ build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 		}
 		span := tree.nodes[id].span
 		s := begin_function(low, file, func, id, bound.node_scopes[id], arrow.params, span)
-		build_arrow_body(&s, arrow.body, span)
-		close_body(&s, span)
-		ir.end_func(&s.fb)
+		lower_arrow_body(&s, arrow.body, span)
+		end_function(&s)
 	}
 }
 
-// build_arrow_body gives an expression body the shapes inline_arrow gives one: an expression that
-// does not come back, one whose value the arrow's own type throws away, and one it returns.
+// lower_arrow_body lowers the body of an arrow, a closure's or one inline_arrow puts in a loop, and
+// leaves it. A block runs off its end as close_body says. An expression either does not come back,
+// or the arrow returns it, one typed void as leave says.
 @(private)
-build_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
+lower_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
 	if _, is_block := s.tree.nodes[body].variant.(ast.Block); is_block {
 		lower_statement(s, body)
+		close_body(s, span)
 		return
 	}
 	switch {
@@ -91,18 +102,61 @@ build_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
 			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 		}
 	case s.declared == ir.VOID:
-		lower_effect(s, body)
+		leave(s, lower_effect(s, body), span)
 	case:
 		value := lower_expression(s, body)
-		if !flow_intact(s, s.typed.node_types[body], s.returns, span) {
-			value = ir.NO_VALUE
-		}
-		leave_function(s, coerce(s, value, s.declared, span), span)
+		given := s.typed.node_types[body]
+		leave(s, flow_into(s, value, given, s.returns, s.declared, span), span)
 	}
 }
 
-// close_body only has to keep the IR well formed: a function that promises a value and can still
-// reach its end is one check reports.
+// inline_arrow lowers the arrow's body where the loop of map, filter, forEach or reduce calls it,
+// with args, of the check types given, bound to its parameters. Its locals take their zero at every
+// pass, as a new call's would. `break` and `continue` cannot leave an arrow, so the loops around the
+// call are no targets inside it. Inside it, a `return` produces the arrow's own result and goes to
+// the join of its Inline_Frame.
+@(private)
+inline_arrow :: proc(
+	s: ^Func_State,
+	callback: Callback,
+	args: []ir.Value_ID,
+	given: []check.Type_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	arrow := s.tree.nodes[callback.arrow].variant.(ast.Arrow)
+	zero_locals(s, s.bound.node_scopes[callback.arrow], span)
+	for param, i in arrow.params {
+		symbol := s.bound.node_symbols[param]
+		if i >= len(args) || symbol == bind.NO_SYMBOL || is_refused(s, symbol) {
+			continue
+		}
+		wanted := s.typed.node_types[param]
+		value := flow_into(s, args[i], given[i], wanted, local_type(s, symbol), span)
+		bind_local(s, symbol, value, span)
+	}
+
+	outer_loops, outer_declared, outer_returns := s.loops, s.declared, s.returns
+	s.loops = make([dynamic]Loop_Frame, context.temp_allocator)
+	s.declared, s.returns = callback.result, callback.function.result
+	frame := Inline_Frame {
+		join   = ir.add_block(&s.fb),
+		edges  = make([dynamic]Edge, 0, 2, context.temp_allocator),
+		values = make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator),
+		answer = callback.result,
+	}
+	if callback.result == ir.VOID && hands_on_value(s.low, s.file, callback.arrow) {
+		frame.answer = ir.TAGGED
+	}
+	append(&s.inlines, frame)
+	lower_arrow_body(s, arrow.body, span)
+	frame = pop(&s.inlines)
+	s.loops, s.declared, s.returns = outer_loops, outer_declared, outer_returns
+	return join_values(s, frame.join, frame.edges[:], frame.values[:], frame.answer, span)
+}
+
+// close_body leaves a body whose end control still reaches, as running off it does: with nothing
+// for a result of void, and with undefined for a tagged one. Any other result makes the end
+// unreachable, since check reports a body that promises a value and can reach its end (T3024).
 @(private)
 close_body :: proc(s: ^Func_State, span: source.Span) {
 	if terminated(s) {
@@ -110,17 +164,34 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 	}
 	switch s.declared.kind {
 	case .Void:
-		leave_function(s, ir.NO_VALUE, span)
+		leave(s, ir.NO_VALUE, span)
 	case .Tagged:
-		leave_function(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
+		leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
 	case .F64, .Bool, .Str, .Closure, .Ref:
 		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 	}
 }
 
-// leave_function returns what the function's own type gives as the result of its class: boxed into
-// a wider class, or the class zero where the function itself gives back nothing. Poison ends the
-// block unreachable; it was reported.
+// leave returns from the innermost inlined arrow, a jump to the join of its frame, or else from the
+// function. A body typed void gives back what its value turned out to be (handed_on).
+@(private)
+leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
+	if len(s.inlines) == 0 {
+		leave_function(s, value, span)
+		return
+	}
+	frame := &s.inlines[len(s.inlines) - 1]
+	value := value
+	if s.declared == ir.VOID {
+		value = handed_on(s, value, frame.answer, span)
+	}
+	append(&frame.edges, here(s))
+	append(&frame.values, value)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = frame.join}, span)
+}
+
+// leave_function returns what the function's own type gives as the result of its class, boxed into
+// a wider class. Poison ends the block unreachable; it was reported.
 @(private)
 leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if s.result == ir.VOID {
@@ -129,7 +200,7 @@ leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	}
 	returned: ir.Value_ID
 	if s.declared == ir.VOID {
-		returned = zero_value(s, s.result, span)
+		returned = handed_on(s, value, s.result, span)
 	} else {
 		returned = coerce(s, value, s.result, span)
 	}
@@ -138,6 +209,23 @@ leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 		return
 	}
 	ir.emit(&s.fb, ir.VOID, ir.Return{value = returned}, span)
+}
+
+// handed_on is what a body typed void gives back where the caller keeps the answer as want: what a
+// call in it answered, since Node returns that whatever the type says, or undefined where nothing
+// came back. Nothing reads an answer wanted as VOID, so no undefined is made for it.
+@(private)
+handed_on :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	want: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value != ir.NO_VALUE || want == ir.VOID {
+		return coerce(s, value, want, span)
+	}
+	undefined := ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
+	return coerce(s, undefined, want, span)
 }
 
 // lower_statement first replaces a block the last terminator closed, so whatever follows a
@@ -203,16 +291,7 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 
 	// A binding this slice has no room for was reported where it was declared. Its initializer is
 	// dead, and walking it would name the same construct a second time.
-	if !is_global && (symbol == bind.NO_SYMBOL || s.refused[symbol]) {
-		return
-	}
-	if node.init == ast.NO_NODE {
-		return
-	}
-
-	value := lower_expression(s, node.init)
-	if value == ir.NO_VALUE ||
-	   !flow_intact(s, s.typed.node_types[node.init], s.typed.node_types[id], span) {
+	if !is_global && (local_at(s, symbol) < 0 || is_refused(s, symbol)) {
 		return
 	}
 	type: ir.Type
@@ -221,33 +300,33 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 	} else {
 		type = local_type(s, symbol)
 	}
-	if type == ir.VOID {
-		return // a binding typed `never` holds nothing (store_place)
+
+	stored := ir.NO_VALUE
+	if node.init != ast.NO_NODE {
+		value := lower_expression(s, node.init)
+		if type == ir.VOID {
+			return // a binding typed `never` holds nothing (store_place)
+		}
+		given, wanted := s.typed.node_types[node.init], s.typed.node_types[id]
+		stored = flow_into(s, value, given, wanted, type, span)
+	} else if s.low.closures[s.file].checked[symbol] && type == ir.STR {
+		// No initializer leaves the zero, the empty cell, in place of the mark of check_ready.
+		stored = zero_value(s, ir.STR, span)
 	}
-	stored := coerce(s, value, type, span)
 	if !is_global {
 		write_local(s, symbol, stored, span)
 	} else if stored != ir.NO_VALUE {
 		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = stored}, span)
 	}
+	if stored != ir.NO_VALUE || node.init == ast.NO_NODE {
+		mark_ready(s, symbol, span)
+	}
 }
 
-// lower_return inside an inlined arrow ends the arrow and not the function around it: a bare one as
-// well, which close_body would turn into the function's own Return.
+// lower_return inside an inlined arrow ends the arrow and not the function around it (leave), a bare
+// one as well.
 @(private)
 lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
-	if len(s.inlines) > 0 {
-		result := s.inlines[len(s.inlines) - 1].result
-		value := ir.NO_VALUE
-		if node.value != ast.NO_NODE {
-			value = lower_expression(s, node.value)
-			value = coerce(s, value, result, span) if result != ir.VOID else ir.NO_VALUE
-		} else {
-			value = undefined_of(s, result, span)
-		}
-		leave_arrow(s, value, span)
-		return
-	}
 	if node.value == ast.NO_NODE {
 		close_body(s, span)
 		return
@@ -255,12 +334,10 @@ lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
 
 	value := lower_expression(s, node.value)
 	if s.declared != ir.VOID {
-		if !flow_intact(s, s.typed.node_types[node.value], s.returns, span) {
-			value = ir.NO_VALUE
-		}
-		value = coerce(s, value, s.declared, span)
+		given := s.typed.node_types[node.value]
+		value = flow_into(s, value, given, s.returns, s.declared, span)
 	}
-	leave_function(s, value, span)
+	leave(s, value, span)
 }
 
 // lower_jump ignores a missing frame: bind has already reported a `break` or `continue` that leaves
@@ -355,7 +432,7 @@ open_loop :: proc(s: ^Func_State) -> Loop_Blocks {
 enter_loop :: proc(
 	s: ^Func_State,
 	blocks: Loop_Blocks,
-	assigned: []bind.Symbol_ID,
+	assigned: []int,
 	span: source.Span,
 ) -> []ir.Value_ID {
 	from := here(s)
@@ -389,7 +466,7 @@ close_latch :: proc(
 	blocks: Loop_Blocks,
 	frame: Loop_Frame,
 	phis: []ir.Value_ID,
-	assigned: []bind.Symbol_ID,
+	assigned: []int,
 	renewed: []bind.Symbol_ID,
 	update: ast.Node_ID,
 	span: source.Span,
@@ -435,7 +512,7 @@ lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.S
 	}
 
 	// The box of a renewed binding changes from one pass to the next.
-	assigned := assigned_symbols(s, id, renewed)
+	assigned := assigned_locals(s, id, renewed)
 	blocks := open_loop(s)
 	phis := enter_loop(s, blocks, assigned, span)
 
@@ -476,7 +553,7 @@ boxed_lets :: proc(s: ^Func_State, scope: bind.Scope_ID) -> []bind.Symbol_ID {
 	found := make([dynamic]bind.Symbol_ID, 0, 2, context.temp_allocator)
 	for symbol in s.bound.scopes[scope].symbols {
 		entry := s.bound.symbols[symbol]
-		if entry.kind == .Let && s.low.closures[s.file].boxed[symbol] && !s.refused[symbol] {
+		if entry.kind == .Let && s.low.closures[s.file].boxed[symbol] && !is_refused(s, symbol) {
 			append(&found, symbol)
 		}
 	}
@@ -493,7 +570,7 @@ renew_bindings :: proc(s: ^Func_State, symbols: []bind.Symbol_ID, span: source.S
 
 @(private)
 lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span: source.Span) {
-	assigned := assigned_symbols(s, id)
+	assigned := assigned_locals(s, id)
 	blocks := open_loop(s)
 	phis := enter_loop(s, blocks, assigned, span)
 
@@ -502,7 +579,9 @@ lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span
 	lower_statement(s, node.body)
 	frame := pop(&s.loops)
 
-	leaving := Edge{}
+	leaving := Edge {
+		block = ir.NO_BLOCK,
+	}
 	if open_latch(s, blocks.latch, frame, span) {
 		test := branch_condition(s, node.condition, span)
 		leaving = here(s)
@@ -521,7 +600,7 @@ lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span
 	ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 
 	exits := make([dynamic]Edge, 0, 2, context.temp_allocator)
-	if leaving.values != nil {
+	if leaving.block != ir.NO_BLOCK {
 		append(&exits, leaving)
 	}
 	append(&exits, ..frame.breaks[:])
@@ -626,10 +705,80 @@ case_test :: proc(s: ^Func_State, subject: ^Switch_Subject, value: ast.Node_ID) 
 	other := lower_expression(s, value)
 	if subject.value != ir.NO_VALUE && other != ir.NO_VALUE {
 		values := [2]ir.Value_ID{subject.value, other}
-		types := [2]check.Type_ID{subject.type, s.typed.node_types[value]}
-		if test := lower_compare(s, .Equal, values, types, span); test != ir.NO_VALUE {
+		if test := lower_compare(s, .Equal, values, span); test != ir.NO_VALUE {
 			return test
 		}
 	}
 	return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
+}
+
+// lower_for_of reads the length again before every step, as the iterator does, so a body that
+// pushes is walked to the new end. A string is walked by code point: a step takes a surrogate pair
+// whole and moves the index by the length of what it took.
+@(private)
+lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: source.Span) {
+	iterable := lower_expression(s, node.iterable)
+	declaration := s.tree.nodes[node.declaration].variant.(ast.Var_Decl)
+	symbol := s.bound.node_symbols[declaration.declarators[0]]
+	element, is_array := element_type(s, s.typed.node_types[node.iterable])
+	is_string := iterable != ir.NO_VALUE && value_type(s, iterable) == ir.STR
+	is_array &&= iterable != ir.NO_VALUE && value_type(s, iterable).kind == .Ref
+	if iterable != ir.NO_VALUE && !is_string && !is_array {
+		// check loops over an array or a string, and nothing else.
+		later(s, span, "looping over this value")
+	}
+	if !is_string && !is_array || symbol == bind.NO_SYMBOL || is_refused(s, symbol) {
+		// Whatever is wrong was reported; the body is still walked for what it holds.
+		lower_statement(s, node.body)
+		return
+	}
+
+	assigned := assigned_locals(s, id)
+	blocks := open_loop(s)
+	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
+	entry := s.fb.current
+	phis := enter_loop(s, blocks, assigned, span)
+	index := ir.phi(&s.fb, ir.F64, span)
+	ir.phi_incoming(&s.fb, index, entry, start)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = iterable}, span)
+	more := ir.emit(&s.fb, ir.BOOL, ir.Compare{op = .Less, left = index, right = length}, span)
+	leaving := here(s)
+	branch := ir.Branch {
+		condition  = more,
+		then_block = blocks.body,
+		else_block = blocks.exit,
+	}
+	ir.emit(&s.fb, ir.VOID, branch, span)
+
+	ir.use_block(&s.fb, blocks.body)
+	checked := bounds_check(s, iterable, index, span)
+	step, piece: ir.Value_ID
+	if is_string {
+		call := ir.Call_Runtime {
+			export = .String_Code_Point_At,
+			args   = {iterable, checked},
+		}
+		piece = ir.emit(&s.fb, ir.STR, call, span)
+		step = ir.emit(&s.fb, ir.F64, ir.Length{value = piece}, span)
+	} else {
+		load := ir.Element_Load {
+			array = iterable,
+			index = checked,
+		}
+		piece = ir.emit(&s.fb, element, load, span)
+		step = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
+	}
+	next := ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = index, right = step}, span)
+	bind_local(s, symbol, coerce(s, piece, local_type(s, symbol), span), span)
+
+	push_frame(s, blocks.latch, blocks.exit)
+	lower_statement(s, node.body)
+	frame := pop(&s.loops)
+	if open_latch(s, blocks.latch, frame, span) {
+		back := here(s)
+		ir.emit(&s.fb, ir.VOID, ir.Jump{target = blocks.header}, span)
+		patch_header(s, phis, assigned, back)
+		ir.phi_incoming(&s.fb, index, back.block, next)
+	}
+	leave_loop(s, blocks.exit, leaving, frame, span)
 }

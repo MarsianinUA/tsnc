@@ -283,6 +283,33 @@ as_to_a_narrower_union_tests_membership :: proc(t: ^testing.T) {
 }
 
 @(test)
+an_any_nested_in_a_flow_never_becomes_a_function :: proc(t: ^testing.T) {
+	// The `any` stands in a parameter, a field, the result of an inlined arrow and the element an
+	// inlined callback takes. The first called 41 through a closure of another signature.
+	result := expect_later(
+		t,
+		`type NF = (n: number) => number;
+const k: (x: any) => number = (x: NF): number => x(41);
+function f(a: any, anys: any[]): void {
+const loose: { f: any } = { f: a };
+const tight: { f: NF } = loose;
+const made = [1, 2].map((x: number): NF => a);
+anys.forEach((g: NF) => g(1));
+}
+`,
+		{
+			{.Any_Operation, 2, 7},
+			{.Any_Operation, 5, 7},
+			{.Any_Operation, 6, 14},
+			{.Any_Operation, 7, 1},
+		},
+	)
+	for construct in result.constructs {
+		testing.expect_value(t, construct, "become a function")
+	}
+}
+
+@(test)
 any_never_becomes_a_function :: proc(t: ^testing.T) {
 	// Only the tag of a closure out of `any` could be checked, never its signature. The flow is
 	// refused where it happens: an `as`, a declarator, and a union that holds a function.
@@ -573,4 +600,50 @@ block_of :: proc(body: ir.Func, value: ir.Value_ID) -> ir.Block_ID {
 		}
 	}
 	return ir.NO_BLOCK
+}
+
+@(test)
+a_tagged_value_is_read_even_where_check_narrowed_it :: proc(t: ^testing.T) {
+	// check narrows `count` to undefined by its initializer and keeps the narrowing across the
+	// calls, as tsc does, but the variable holds a number by then. `??`, `===`, console.log and
+	// typeof read the value itself instead of trusting the narrowed type.
+	result := lower_text(
+		t,
+		`
+		let count: number | undefined = undefined;
+		function bump(): void {
+			count = (count ?? 0) + 1;
+		}
+		bump();
+		console.log(count ?? 0, count === undefined, count, typeof count);
+	`,
+	)
+	init, _ := func_named(result.output, "init$m1")
+	testing.expectf(t, calls_to(init, .Value_Typeof) == 1, "%s", result.text)
+	// `??` tests for null and undefined and then for the number it keeps; `===` tests for undefined.
+	tests := instructions_of(init, ir.Tag_Test)
+	testing.expectf(t, len(tests) == 3, "%s", result.text)
+	for test in tests {
+		_, is_constant := init.values[test.value].variant.(ir.Const_Undefined)
+		testing.expectf(t, !is_constant, "a tag test of the constant:\n%s", result.text)
+	}
+}
+
+@(test)
+an_any_given_to_a_union_is_checked_against_its_members :: proc(t: ^testing.T) {
+	// The union stays tagged, so no unbox would look at what the `any` holds: the flow tests the
+	// tag, and the layout of an object, and fails with Tagged_Holds_Other_Kind.
+	result := lower_text(
+		t,
+		"function f(a: any): number | undefined {\nconst n: number | undefined = a;\nreturn n;\n}\nf(1);\n",
+	)
+	body, _ := func_named(result.output, "m1.f")
+	tests := instructions_of(body, ir.Tag_Test)
+	fails := instructions_of(body, ir.Fail)
+	if !testing.expectf(t, len(tests) == 1 && len(fails) == 1, "%s", result.text) {
+		return
+	}
+	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number, .Undefined})
+	error := result.output.fail_sites[fails[0].site].error
+	testing.expect_value(t, error, abi.Runtime_Error.Tagged_Holds_Other_Kind)
 }

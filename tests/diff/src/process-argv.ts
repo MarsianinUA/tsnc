@@ -7,6 +7,12 @@
 
 const args = process.argv.slice(2);
 
+// Without its header this program would print a shorter list, and still match Node. Exit 1, a code
+// the runner refuses, rather than pass on nothing.
+if (args.length !== 5) {
+  process.exit(1);
+}
+
 function widths(list: string[]): number[] {
   return list.map((arg) => arg.length);
 }

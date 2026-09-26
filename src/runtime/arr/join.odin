@@ -39,13 +39,12 @@ to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok:
 
 // to_primitive_string is ToString(ToPrimitive(v)), the string `+` joins. ToPrimitive asks an object
 // for its valueOf before its toString, so an object with a valueOf of its own answers ok = false,
-// as one with its own toString does. An array has neither, and its elements stay ToString.
+// as one with its own toString does (value.own_method). An array has neither, and its elements
+// stay ToString.
 to_primitive_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok: bool) {
 	if v.tag == .Object {
-		for field in gc.table_of(heap, v.payload.ref).fields {
-			if field.name == "valueOf" {
-				return nil, false
-			}
+		if _, found := value.own_method(heap, v.payload.ref, "valueOf"); found {
+			return nil, false
 		}
 	}
 	return to_string(heap, v)

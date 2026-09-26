@@ -10,7 +10,7 @@ import "../../src/link"
 import "../../src/source"
 import "../../src/target"
 
-RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:%s -vet -strict-style"
+RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:%s -vet -strict-style"
 
 HELLO :: "Hello, world!"
 

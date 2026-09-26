@@ -274,28 +274,49 @@ read_header :: proc(path: string) -> (header: Header, ok: bool) {
 		return {}, false
 	}
 
+	// A header spelled another way, or with nothing after it, would run the program without it,
+	// and the two runs could still agree; such a line is refused rather than read as prose.
 	settings: []string
 	has_env, has_args: bool
 	text := string(data)
-	lines: for line in strings.split_lines_iterator(&text) {
+	for line in strings.split_lines_iterator(&text) {
+		if !names_header(line) {
+			break
+		}
+		well_formed := false
 		switch {
 		case strings.has_prefix(line, ENV) && !has_env:
 			settings = strings.fields(line[len(ENV):], context.temp_allocator)
 			has_env = true
+			well_formed = len(settings) > 0
 		case strings.has_prefix(line, ARGS) && !has_args:
 			header.arguments = strings.fields(line[len(ARGS):], context.temp_allocator)
 			has_args = true
+			well_formed = len(header.arguments) > 0
 		case strings.has_prefix(line, ENV), strings.has_prefix(line, ARGS):
 			fmt.eprintfln("diff: %s: a second header line %q", path, line)
 			return {}, false
-		case:
-			break lines
+		}
+		if !well_formed {
+			fmt.eprintfln("diff: %s: a header line %q lists nothing or is misspelled", path, line)
+			return {}, false
 		}
 	}
 	if has_env {
 		header.environment = environment_with(path, settings) or_return
 	}
 	return header, true
+}
+
+// names_header says whether a line is a comment that starts as a header does, `env:` or `args:`
+// after the slashes, however it is spaced; read_header takes only the one spelling.
+@(private = "file")
+names_header :: proc(line: string) -> bool {
+	if !strings.has_prefix(line, "//") {
+		return false
+	}
+	rest := strings.trim_left_space(line[2:])
+	return strings.has_prefix(rest, "env:") || strings.has_prefix(rest, "args:")
 }
 
 // environment_with lets a name the program sets replace the runner's own, whose case Windows

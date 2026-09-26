@@ -1,7 +1,7 @@
 package console
 
 import "core:math"
-import "core:unicode/utf16"
+import "core:unicode/utf8"
 
 import "../../abi"
 import "../gc"
@@ -266,7 +266,7 @@ format_fields :: proc(
 	entries: ^[dynamic][]u16,
 ) {
 	for field in table.fields {
-		v, present := field_value(ins.heap, cell, field)
+		v, present := value.field(ins.heap, cell, field)
 		if !present {
 			continue
 		}
@@ -288,9 +288,8 @@ format_key :: proc(colors: bool, name: string, out: ^[dynamic]u16) {
 		append_ascii(out, "['__proto__']" if name == "__proto__" else name)
 		return
 	}
-	units := make([]u16, len(name))
 	open_style(colors, out, .String)
-	str_escape(string16(units[:utf16.encode_string(units, name)]), out)
+	str_escape(key_units(name), out)
 	close_style(colors, out, .String)
 }
 
@@ -737,26 +736,11 @@ contains_template_start :: proc(text: string16) -> bool {
 @(private)
 has_fields :: proc(heap: ^gc.Heap, cell: ^abi.Cell_Header, table: abi.Type_Table) -> bool {
 	for field in table.fields {
-		if _, present := field_value(heap, cell, field); present {
+		if _, present := value.field(heap, cell, field); present {
 			return true
 		}
 	}
 	return false
-}
-
-// field_value answers present = false for an optional field that holds undefined, which is how a
-// property that was never set reads.
-@(private)
-field_value :: proc(
-	heap: ^gc.Heap,
-	cell: ^abi.Cell_Header,
-	field: abi.Field,
-) -> (
-	v: abi.Tagged,
-	present: bool,
-) {
-	v = value.load(heap, &([^]byte)(cell)[field.offset], field.kind)
-	return v, !(field.optional && v.tag == .Undefined)
 }
 
 @(private)
@@ -764,6 +748,30 @@ append_ascii :: proc(out: ^[dynamic]u16, text: string) {
 	for i in 0 ..< len(text) {
 		append(out, u16(text[i]))
 	}
+}
+
+// key_units spells a field name in UTF-16. A name is WTF-8, as the compiler writes it: a lone
+// surrogate the program wrote, as in `{ "\ud800": 7 }`, keeps its three-byte form, which
+// utf16.encode_string would turn into three U+FFFD. ir.encode_units reads a name the same way.
+@(private)
+key_units :: proc(name: string) -> string16 {
+	units := make([dynamic]u16, 0, len(name))
+	for i := 0; i < len(name); {
+		if i + 3 <= len(name) && name[i] == 0xED && 0xA0 <= name[i + 1] && name[i + 1] <= 0xBF {
+			append(&units, 0xD000 | u16(name[i + 1] & 0x3F) << 6 | u16(name[i + 2] & 0x3F))
+			i += 3
+			continue
+		}
+		r, size := utf8.decode_rune_in_string(name[i:])
+		i += max(size, 1)
+		if r <= 0xFFFF {
+			append(&units, u16(r))
+			continue
+		}
+		rest := u32(r) - 0x10000
+		append(&units, u16(0xD800 + (rest >> 10)), u16(0xDC00 + (rest & 0x3FF)))
+	}
+	return string16(units[:])
 }
 
 @(private)

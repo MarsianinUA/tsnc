@@ -315,3 +315,43 @@ an_exported_let_with_no_initializer_is_reported_at_its_declaration :: proc(t: ^t
 		[]File_Error{{MAIN, .Used_Before_Assigned, 1, 12}},
 	)
 }
+
+@(test)
+a_name_used_where_it_stands_before_its_declaration_is_reported :: proc(t: ^testing.T) {
+	// tsc's TS2448. The read, the write, and the read inside the initializer itself all run before
+	// the declaration has.
+	expect_errors(
+		t,
+		lines(
+			`console.log(later);`, //
+			`later = 2;`,
+			`let later: number = later + 1;`,
+			`function f(): void {`,
+			`console.log(inner);`,
+			`const inner = 1;`,
+			`}`,
+		),
+		[]Error {
+			{.Used_Before_Declaration, 1, 13},
+			{.Used_Before_Declaration, 2, 1},
+			{.Used_Before_Declaration, 3, 21},
+			{.Used_Before_Declaration, 5, 13},
+		},
+	)
+}
+
+@(test)
+a_name_used_in_a_function_before_its_declaration_is_left_to_the_run :: proc(t: ^testing.T) {
+	// A function, an arrow and a callback may each run later than where they stand, after the
+	// declaration or before it; lower checks such a read when it runs.
+	expect_checked(
+		t,
+		lines(
+			`function read(): number { return later; }`, //
+			`const get = (): number => later;`,
+			`const all = [1].map((x: number): number => x + later);`,
+			`const later = 1;`,
+			`console.log(read(), get(), all);`,
+		),
+	)
+}

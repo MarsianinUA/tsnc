@@ -80,6 +80,11 @@ Bound_File :: struct {
 	// An ast.Ident, ast.Member or ast.Index holds the flow before the value is read; the body
 	// ast.Block of a function holds the flow at its end.
 	node_flow:        []Flow_ID,
+	// A node that names a value of this file, an ast.Ident or the qualifier of an ast.Type_Ref,
+	// holds the outermost function scope between it and the scope that declares the name: code that
+	// may run later than where it stands, so before or after the declaration. MODULE_SCOPE when
+	// there is none, and for every other node.
+	node_deferred:    []Scope_ID,
 	imports:          []Import, // in symbol order
 	exports:          []Export, // in source order
 	has_side_effects: bool,
@@ -274,6 +279,7 @@ bind_file :: proc(
 		node_symbols    = make([]Symbol_ID, len(tree.nodes), allocator),
 		node_scopes     = make([]Scope_ID, len(tree.nodes), allocator),
 		node_flow       = make([]Flow_ID, len(tree.nodes), allocator),
+		node_deferred   = make([]Scope_ID, len(tree.nodes), allocator),
 		imports         = make([dynamic]Import, allocator),
 		exports         = make([dynamic]Export, allocator),
 		diagnostics     = make([dynamic]diag.Diagnostic, allocator),
@@ -354,6 +360,7 @@ Binder :: struct {
 	node_symbols:     []Symbol_ID,
 	node_scopes:      []Scope_ID,
 	node_flow:        []Flow_ID,
+	node_deferred:    []Scope_ID,
 	imports:          [dynamic]Import,
 	exports:          [dynamic]Export,
 	diagnostics:      [dynamic]diag.Diagnostic,
@@ -418,6 +425,7 @@ freeze :: proc(b: ^Binder) -> Bound_File {
 		node_symbols = b.node_symbols,
 		node_scopes = b.node_scopes,
 		node_flow = b.node_flow,
+		node_deferred = b.node_deferred,
 		imports = b.imports[:],
 		exports = b.exports[:],
 		has_side_effects = b.has_side_effects,

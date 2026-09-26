@@ -301,11 +301,13 @@ check_bound :: proc(t: ^testing.T, b: Bound, loc := #caller_location) {
 		t,
 		len(bound.node_symbols) == node_count &&
 		len(bound.node_scopes) == node_count &&
-		len(bound.node_flow) == node_count,
-		"node tables are %d, %d and %d long, want %d",
+		len(bound.node_flow) == node_count &&
+		len(bound.node_deferred) == node_count,
+		"node tables are %d, %d, %d and %d long, want %d",
 		len(bound.node_symbols),
 		len(bound.node_scopes),
 		len(bound.node_flow),
+		len(bound.node_deferred),
 		node_count,
 		loc = loc,
 	)

@@ -169,18 +169,18 @@ type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 	}
 
 	symbol := c.program.bound[ref.file].symbols[ref.symbol]
-	if started, found := c.resolving[ref]; found {
-		if c.depth > started {
-			if type := recorded_declaration(c, ref, symbol); type != ERROR {
-				return type
-			}
+	if _, found := c.resolving[ref]; found {
+		// Outside a body only an annotation records the type this early, and then a read of the
+		// name inside its own initializer is a use before the declaration (check_declared).
+		if type := recorded_declaration(c, ref, symbol); type != ERROR {
+			return type
 		}
 		report(c, recursion_code(c, ref, symbol), symbol.name.span, symbol.name.text)
 		c.symbol_types[ref] = ERROR
 		return ERROR
 	}
 
-	c.resolving[ref] = c.depth
+	c.resolving[ref] = true
 	previous := move_to(c, ref.file)
 	type := declared_type(c, ref, symbol)
 	c.at = previous
@@ -412,13 +412,9 @@ check_body :: proc(c: ^Checker, body: ast.Node_ID, result: Type_ID, returns: ^[d
 
 	previous_result, previous_returns := c.at.result, c.at.returns
 	c.at.result, c.at.returns = result, returns
-	// The body runs after every declaration around it has its type, which is what lets a name
-	// inside it refer to a declaration whose own type is still being worked out.
-	c.depth += 1
 	defer {
 		c.at.result = previous_result
 		c.at.returns = previous_returns
-		c.depth -= 1
 	}
 
 	if block, is_block := c.at.tree.nodes[body].variant.(ast.Block); is_block {

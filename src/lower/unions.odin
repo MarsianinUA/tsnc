@@ -7,6 +7,7 @@ import "../ast"
 import "../bind"
 import "../check"
 import "../ir"
+import "../program"
 import "../source"
 
 /*
@@ -119,16 +120,6 @@ narrowed :: proc(
 	return unbox_checked(s, value, node_type(s, id), .Tagged_Holds_Other_Kind, span)
 }
 
-@(private)
-tag_test :: proc(
-	s: ^Func_State,
-	value: ir.Value_ID,
-	tags: ir.Tag_Set,
-	span: source.Span,
-) -> ir.Value_ID {
-	return ir.emit(&s.fb, ir.BOOL, ir.Tag_Test{value = value, tags = tags}, span)
-}
-
 // typeof_tags is the set of tags whose values `typeof` answers the word for. "bigint" and "symbol"
 // name no value of v1, and `==` still lets a program compare with them.
 @(private)
@@ -150,41 +141,6 @@ typeof_tags :: proc(word: string) -> (ir.Tag_Set, bool) {
 	return {}, false
 }
 
-@(private)
-fail_if :: proc(
-	s: ^Func_State,
-	condition: ir.Value_ID,
-	error: abi.Runtime_Error,
-	span: source.Span,
-) {
-	passed := ir.add_block(&s.fb)
-	failed := ir.add_block(&s.fb)
-	branch := ir.Branch {
-		condition  = condition,
-		then_block = failed,
-		else_block = passed,
-	}
-	ir.emit(&s.fb, ir.VOID, branch, span)
-	fail_block(s, failed, error, span)
-	ir.use_block(&s.fb, passed)
-}
-
-@(private)
-fail_block :: proc(
-	s: ^Func_State,
-	block: ir.Block_ID,
-	error: abi.Runtime_Error,
-	span: source.Span,
-) {
-	ir.use_block(&s.fb, block)
-	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, error)}, span)
-}
-
-@(private)
-negated :: proc(s: ^Func_State, test: ir.Value_ID, span: source.Span) -> ir.Value_ID {
-	return ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = test}, span)
-}
-
 // members_of lists the members of a union, or the type itself for any other.
 @(private)
 members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
@@ -198,10 +154,97 @@ members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
 
 // `typeof`.
 
+// lower_typeof answers the word statically where the operand's value has a static representation,
+// and asks the runtime for the word of a tagged value. `typeof x === "number"` never gets here: it
+// is a tag test (lower_typeof_test).
+@(private)
+lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
+	tagged, word := typeof_operand(s, operand)
+	if tagged != ir.NO_VALUE {
+		call := ir.Call_Runtime {
+			export = .Value_Typeof,
+			args   = {tagged},
+		}
+		return ir.emit(&s.fb, ir.STR, call, span)
+	}
+	if word == "" {
+		return ir.NO_VALUE // reported where the operand stands
+	}
+	return string_constant(s, word, span)
+}
+
+// typeof_operand evaluates the operand of a `typeof` and answers either a tagged value, whose tag
+// tells the word at run time, or the word itself. The representation the value has decides, never
+// the type check narrowed it to: a call may have written the variable after the test that narrowed
+// it. A name whose storage is static is not read, since its word is known without it; closures.odin
+// counts `typeof f` as a call, so a nested function with no environment has no local to read. A
+// name read before its declaration ran still fails, as in Node.
+@(private)
+typeof_operand :: proc(
+	s: ^Func_State,
+	operand: ast.Node_ID,
+) -> (
+	tagged: ir.Value_ID,
+	word: string,
+) {
+	_, is_ident := s.tree.nodes[operand].variant.(ast.Ident)
+	ref := s.typed.node_symbols[operand]
+	if ref.symbol != bind.NO_SYMBOL && ref.file != program.LIB {
+		stored, _ := symbol_type(s.low, ref.file, ref.symbol)
+		if stored != ir.TAGGED {
+			if is_ident && early_use(s.tree, s.bound, operand) {
+				check_ready(s, s.bound.node_symbols[operand], s.tree.nodes[operand].span)
+			}
+			return ir.NO_VALUE, typeof_word(s, operand)
+		}
+	} else if is_ident || ref.symbol != bind.NO_SYMBOL {
+		return ir.NO_VALUE, typeof_word(s, operand) // `undefined`, or a name of the lib
+	}
+	value := lower_raw(s, operand)
+	if value == ir.NO_VALUE {
+		return ir.NO_VALUE, ""
+	}
+	if value_type(s, value) == ir.TAGGED {
+		return value, ""
+	}
+	return ir.NO_VALUE, typeof_word(s, operand)
+}
+
+// typeof_word is the word `typeof` answers for the static type of its operand, or "" when only the
+// tag of a tagged value could tell.
+@(private)
+typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
+	type := s.typed.node_types[operand]
+	switch type {
+	case check.UNDEFINED, check.VOID:
+		return "undefined"
+	case check.NULL:
+		return "object"
+	}
+	#partial switch _ in s.types[type] {
+	case check.Function, check.Overload:
+		return "function"
+	}
+	kind, _ := representation(s.types, type)
+	#partial switch kind {
+	case .F64:
+		return "number"
+	case .Bool:
+		return "boolean"
+	case .Str:
+		return "string"
+	case .Ref:
+		return "object"
+	case .Closure:
+		return "function" // a union of function types
+	}
+	return ""
+}
+
 // lower_typeof_test is `typeof E` compared with a string literal by `===`, `!==`, `==` or `!=`,
-// which needs no word at run time: a statically typed E answers a constant, a tagged one a test of
-// its tag. matched is false for any other comparison. Both sides run in source order, the literal's
-// own side only when it is more than a literal.
+// which needs no word at run time: an E of a static representation answers a constant, a tagged
+// one a test of its tag. matched is false for any other comparison. Both sides run in source order,
+// the literal's own side only when it is more than a literal.
 @(private)
 lower_typeof_test :: proc(
 	s: ^Func_State,
@@ -234,26 +277,23 @@ lower_typeof_test :: proc(
 	}
 
 	span := s.tree.nodes[id].span
-	tagged := is_tagged(s, operand)
-	value := ir.NO_VALUE
+	tagged, static_word := ir.NO_VALUE, ""
 	for side, i in sides {
 		switch {
-		case i == at && tagged:
-			value = lower_expression(s, operand)
 		case i == at:
-			evaluate_typeof_operand(s, operand)
+			tagged, static_word = typeof_operand(s, operand)
 		case !is_string_literal(s, side):
 			lower_effect(s, side)
 		}
 	}
 
-	if tagged {
-		if value == ir.NO_VALUE {
-			return ir.NO_VALUE, true
-		}
-		test = typeof_is(s, value, word, span)
-	} else {
-		same := typeof_word(s, operand) == word
+	switch {
+	case tagged != ir.NO_VALUE:
+		test = typeof_is(s, tagged, word, span)
+	case static_word == "":
+		return ir.NO_VALUE, true // reported where the operand stands
+	case:
+		same := static_word == word
 		test = ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = same}, span)
 	}
 	if node.op == .Strict_Not_Equal || node.op == .Not_Equal {
@@ -275,24 +315,6 @@ typeof_is :: proc(
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
 	}
 	return tag_test(s, value, tags, span)
-}
-
-// evaluate_typeof_operand runs the operand of a `typeof` whose word is known statically: it may
-// call something. A name runs nothing, and closures.odin counts `typeof f` as a call, so a nested
-// function with no environment has no local to read.
-@(private)
-evaluate_typeof_operand :: proc(s: ^Func_State, operand: ast.Node_ID) {
-	_, is_ident := s.tree.nodes[operand].variant.(ast.Ident)
-	names_something := s.typed.node_symbols[operand].symbol != bind.NO_SYMBOL
-	if !is_ident && !names_something {
-		lower_effect(s, operand)
-	}
-}
-
-@(private)
-is_tagged :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
-	kind, ok := representation(s.types, s.typed.node_types[id])
-	return ok && kind == .Tagged
 }
 
 // literal_word answers the text of a node check typed as a string literal type.
@@ -317,7 +339,6 @@ is_string_literal :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 @(private)
 Switch_Subject :: struct {
 	value:     ir.Value_ID,
-	type:      check.Type_ID,
 	of_tagged: bool, // the subject is `typeof` of a tagged value
 	tagged:    ir.Value_ID, // that value, when of_tagged
 }
@@ -327,15 +348,17 @@ Switch_Subject :: struct {
 switch_subject :: proc(s: ^Func_State, id: ast.Node_ID) -> Switch_Subject {
 	subject := Switch_Subject {
 		value  = ir.NO_VALUE,
-		type   = s.typed.node_types[id],
 		tagged = ir.NO_VALUE,
 	}
 	if unary, is_unary := s.tree.nodes[id].variant.(ast.Unary); is_unary && unary.op == .Typeof {
-		if is_tagged(s, unary.operand) {
+		tagged, word := typeof_operand(s, unary.operand)
+		if tagged != ir.NO_VALUE {
 			subject.of_tagged = true
-			subject.tagged = lower_expression(s, unary.operand)
-			return subject
+			subject.tagged = tagged
+		} else if word != "" {
+			subject.value = string_constant(s, word, s.tree.nodes[id].span)
 		}
+		return subject
 	}
 	subject.value = lower_expression(s, id)
 	return subject
@@ -376,25 +399,25 @@ typeof_case_test :: proc(
 
 // Equality and truthiness.
 
-// compare_tagged is `===` or `!==` with a tagged side. Against a side typed `null` or `undefined`
-// it tests the tag of the other; anything else goes to the runtime, both sides boxed.
+// compare_tagged is `===` or `!==` with a tagged side. Against a side whose value is null or
+// undefined itself (nullish_tags) it tests the tag of the other; anything else goes to the runtime,
+// both sides boxed. A type check narrowed a side to never decides: a call may have written the
+// variable since the test that narrowed it.
 @(private)
 compare_tagged :: proc(
 	s: ^Func_State,
 	op: ir.Compare_Op,
 	values: [2]ir.Value_ID,
-	types: [2]check.Type_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
 	test := ir.NO_VALUE
-	for type, i in types {
+	for value, i in values {
 		other := values[1 - i]
-		nullish := type == check.NULL || type == check.UNDEFINED
+		tags, nullish := nullish_tags(s, value)
 		if !nullish || value_type(s, other) != ir.TAGGED {
 			continue
 		}
-		tag := ir.Tag_Set{.Null} if type == check.NULL else ir.Tag_Set{.Undefined}
-		test = tag_test(s, other, tag, span)
+		test = tag_test(s, other, tags, span)
 		break
 	}
 	if test == ir.NO_VALUE {
@@ -413,6 +436,28 @@ compare_tagged :: proc(
 		return negated(s, test, span)
 	}
 	return test
+}
+
+// nullish_tags answers the tag of a value that is null or undefined whatever runs: the constant, or
+// the answer of a call typed void.
+@(private)
+nullish_tags :: proc(s: ^Func_State, value: ir.Value_ID) -> (tags: ir.Tag_Set, nullish: bool) {
+	if value == ir.NO_VALUE {
+		return {}, false
+	}
+	#partial switch _ in s.fb.values[value].variant {
+	case ir.Const_Undefined:
+		return {.Undefined}, true
+	case ir.Const_Null:
+		return {.Null}, value_type(s, value) == ir.TAGGED
+	}
+	return {.Undefined}, value_type(s, value) == ir.VOID
+}
+
+@(private)
+is_nullish_constant :: proc(s: ^Func_State, value: ir.Value_ID) -> bool {
+	_, nullish := nullish_tags(s, value)
+	return nullish
 }
 
 // truthy_tagged tests a tagged value. One whose members are all nullish or references is true
@@ -473,7 +518,7 @@ lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 	if target != ir.TAGGED {
 		return unbox_checked(s, value, target, .Type_Assertion, span)
 	}
-	check_members(s, value, to, span)
+	check_members(s, value, to, .Type_Assertion, span)
 	return value
 }
 
@@ -481,7 +526,13 @@ lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 // primitive or a function member, or an object of the layout of an object or an array member. An
 // `any` member admits everything, and a literal member its whole kind.
 @(private)
-check_members :: proc(s: ^Func_State, value: ir.Value_ID, type: check.Type_ID, span: source.Span) {
+check_members :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	type: check.Type_ID,
+	error: abi.Runtime_Error,
+	span: source.Span,
+) {
 	tags: ir.Tag_Set
 	layouts := make([dynamic]ir.Layout_ID, 0, 4, context.temp_allocator)
 	for member in members_of(s.types, type) {
@@ -534,7 +585,7 @@ check_members :: proc(s: ^Func_State, value: ir.Value_ID, type: check.Type_ID, s
 		slice.fill(hits, passed)
 		dispatch_layouts(s, value, layouts[:], hits, failed, span)
 	}
-	fail_block(s, failed, .Type_Assertion, span)
+	fail_block(s, failed, error, span)
 	ir.use_block(&s.fb, passed)
 }
 
@@ -576,6 +627,82 @@ dispatch_layouts :: proc(
 			ir.use_block(&s.fb, next)
 		}
 	}
+}
+
+// any_to_function answers ANY or UNKNOWN where a flow of given into wanted brings a value of that
+// type to a position that may hold a function, and ERROR where it does not. It walks the positions
+// the way check's list_widenings does: a union member by member, the parameters of two functions
+// the other way round and their results, unless wanted throws its result away, the fields of two
+// objects and the elements of two arrays. A pair walked once ends the walk.
+@(private)
+any_to_function :: proc(types: []check.Type, given, wanted: check.Type_ID) -> check.Type_ID {
+	seen := make([dynamic][2]check.Type_ID, 0, 8, context.temp_allocator)
+	return any_to_function_in(types, given, wanted, &seen)
+}
+
+@(private)
+any_to_function_in :: proc(
+	types: []check.Type,
+	given, wanted: check.Type_ID,
+	seen: ^[dynamic][2]check.Type_ID,
+) -> check.Type_ID {
+	if given == wanted || given == check.ERROR || wanted == check.ERROR {
+		return check.ERROR
+	}
+	if given == check.ANY || given == check.UNKNOWN {
+		return given if holds_function(types, wanted) else check.ERROR
+	}
+	pair := [2]check.Type_ID{given, wanted}
+	if slice.contains(seen[:], pair) {
+		return check.ERROR
+	}
+	append(seen, pair)
+
+	if members, is_union := types[given].(check.Union); is_union {
+		for member in members.members {
+			if found := any_to_function_in(types, member, wanted, seen); found != check.ERROR {
+				return found
+			}
+		}
+		return check.ERROR
+	}
+	if members, is_union := types[wanted].(check.Union); is_union {
+		for member in members.members {
+			if found := any_to_function_in(types, given, member, seen); found != check.ERROR {
+				return found
+			}
+		}
+		return check.ERROR
+	}
+	#partial switch from in types[given] {
+	case check.Function:
+		to := types[wanted].(check.Function) or_break
+		for i in 0 ..< min(len(from.params), len(to.params)) {
+			found := any_to_function_in(types, to.params[i].type, from.params[i].type, seen)
+			if found != check.ERROR {
+				return found
+			}
+		}
+		if to.result != check.VOID {
+			return any_to_function_in(types, from.result, to.result, seen)
+		}
+	case check.Object:
+		to := types[wanted].(check.Object) or_break
+		for field in from.fields {
+			other, found := find_field(to, field.name)
+			if !found {
+				continue
+			}
+			nested := any_to_function_in(types, field.type, other.type, seen)
+			if nested != check.ERROR {
+				return nested
+			}
+		}
+	case check.Array:
+		to := types[wanted].(check.Array) or_break
+		return any_to_function_in(types, from.element, to.element, seen)
+	}
+	return check.ERROR
 }
 
 // holds_function says whether a value of the type may hold a function anywhere: the type itself, a

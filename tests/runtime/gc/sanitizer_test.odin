@@ -17,6 +17,16 @@ A point takes 40 bytes of a 48-byte slot, and a page holds 1365 of them with 16 
 
 POINT_SLOT :: 48
 
+// TSNC_EXPECT_ASAN is set by the CI step that runs these tests under ASan, so a build that lost the
+// sanitizer fails there instead of passing every test above with nothing checked.
+EXPECT_ASAN :: #config(TSNC_EXPECT_ASAN, false)
+
+@(test)
+the_build_has_the_sanitizer_it_expects :: proc(t: ^testing.T) {
+	has_asan := .Address in ODIN_SANITIZER_FLAGS
+	testing.expect(t, has_asan || !EXPECT_ASAN, "the build lacks -sanitize:address")
+}
+
 @(test)
 a_new_cell_is_addressable_for_its_size_alone :: proc(t: ^testing.T) {
 	when .Address in ODIN_SANITIZER_FLAGS {

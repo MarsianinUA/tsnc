@@ -54,7 +54,7 @@ Spec :: struct {
 	linker:              Linker,
 	link_flags:          []string, // one command line argument per element, unquoted
 	runtime_object:      string, // file name; link looks for it next to tsnc
-	asan_runtime_object: string, // the same runtime built with -sanitize:address
+	asan_runtime_object: string, // with -sanitize:address; empty on macOS, which has none
 	executable_suffix:   string,
 	pointer_size:        int, // bytes
 }
@@ -98,7 +98,7 @@ SPECS := #partial [Target]Spec {
 		linker = .Cc,
 		link_flags = {"-target", "arm64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_arm64.obj",
-		asan_runtime_object = "tsnc_rt-darwin_arm64-asan.obj",
+		asan_runtime_object = "",
 		executable_suffix = "",
 		pointer_size = 8,
 	},
@@ -107,7 +107,7 @@ SPECS := #partial [Target]Spec {
 		linker = .Cc,
 		link_flags = {"-target", "x86_64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_amd64.obj",
-		asan_runtime_object = "tsnc_rt-darwin_amd64-asan.obj",
+		asan_runtime_object = "",
 		executable_suffix = "",
 		pointer_size = 8,
 	},

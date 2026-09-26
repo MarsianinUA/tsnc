@@ -91,6 +91,7 @@ Code :: enum u16 {
 	Used_Before_Assigned, // {0} is the name
 	Assign_To_Function, // {0} is the name
 	Circular_Initializer, // {0} is the name
+	Used_Before_Declaration, // {0} is the name
 
 	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
 	// need a file system to decide, program (T3.1) the one that needs the whole module graph, and
@@ -326,7 +327,7 @@ REGISTRY := [Code]Row {
 	.Not_Lowered = {
 		number = 2027,
 		text = "tsnc cannot compile {0} yet",
-		hint = "it is part of the v1 language and lands in milestone 5 of the compiler; `tsnc check` already types the whole program",
+		hint = "it is part of the v1 language but not compiled yet; `tsnc check` already types the whole program",
 	},
 	.Function_To_String = {
 		number = 2028,
@@ -345,7 +346,7 @@ REGISTRY := [Code]Row {
 	},
 	.Loose_Equality = {
 		number = 3002,
-		text = "`==` and `!=` need both sides to have the same type, but these are `{0}` and `{1}`",
+		text = "`==` and `!=` need both sides to have one type that holds one kind of value, but these are `{0}` and `{1}`",
 		hint = "use `===` or `!==`, which compare without converting; tsnc allows `==` only where it already means `===`",
 	},
 	.Operand_Not_Number = {
@@ -472,6 +473,11 @@ REGISTRY := [Code]Row {
 		number = 3027,
 		text = "the type of `{0}` cannot be inferred, because its initializer refers to itself",
 		hint = "write the type after the name, as `let {0}: number = ...`",
+	},
+	.Used_Before_Declaration = {
+		number = 3028,
+		text = "`{0}` is used before its declaration",
+		hint = "move the declaration above this use; a function may use it above its declaration if the function is called after it",
 	},
 	.Redeclared_Name = {
 		number = 4001,

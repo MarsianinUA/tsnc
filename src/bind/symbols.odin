@@ -190,6 +190,7 @@ resolve :: proc(b: ^Binder, id: ast.Node_ID, name: ast.Name, meaning: Meaning) -
 	}
 	symbol := NO_SYMBOL
 	scope := b.scope
+	crossed := MODULE_SCOPE // the outermost function passed on the way to the name
 	for {
 		if found, ok := b.scopes[scope].names[Name_Key{name.text, meaning}]; ok {
 			symbol = found
@@ -198,11 +199,17 @@ resolve :: proc(b: ^Binder, id: ast.Node_ID, name: ast.Name, meaning: Meaning) -
 		if b.scopes[scope].kind == .Module {
 			break
 		}
+		if b.scopes[scope].kind == .Function {
+			crossed = scope
+		}
 		scope = b.scopes[scope].parent
 	}
 	b.node_symbols[id] = symbol
 	if meaning == .Value {
 		capture(b, symbol)
+		if symbol != NO_SYMBOL {
+			b.node_deferred[id] = crossed
+		}
 	}
 	return symbol
 }

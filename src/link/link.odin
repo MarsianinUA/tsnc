@@ -32,6 +32,7 @@ import "../target"
 Error_Kind :: enum u8 {
 	None,
 	Unsupported_Target, // no target.SPECS row, or not the host: v1 links natively only
+	Sanitizer_Unsupported, // -sanitize:address for a target with no ASan runtime, which is macOS
 	Runtime_Object_Missing, // detail: the path looked at
 	Windows_SDK_Missing, // detail: the registry value or the directory looked at
 	MSVC_Missing, // detail: vswhere, or the file or directory looked at
@@ -41,7 +42,7 @@ Error_Kind :: enum u8 {
 
 Link_Error :: struct {
 	kind:   Error_Kind,
-	detail: string, // allocated with link's allocator; empty for None and Unsupported_Target
+	detail: string, // allocated with link's allocator; empty for None and the two Unsupported
 }
 
 // Sanitizer values are lowercase because they are the values of `tsnc -sanitize:`, spelled as
@@ -63,6 +64,12 @@ link :: proc(
 	allocator := context.allocator,
 ) -> Link_Error {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
+	// Before the host is asked: macOS refuses the sanitizer for good, not only as another machine.
+	if sanitizer == .address && target.supported(build_target) {
+		if target.SPECS[build_target].asan_runtime_object == "" {
+			return {kind = .Sanitizer_Unsupported}
+		}
+	}
 	if !target.supported(build_target) || build_target != target.HOST {
 		return {kind = .Unsupported_Target}
 	}

@@ -40,7 +40,7 @@ Built :: struct {
 // RUNTIME_BUILD puts the runtime object where link looks for it: next to the running executable,
 // which for these tests is the one `odin test` wrote. A test that links names this command when it
 // fails, so a fresh clone gets the fix rather than a missing file.
-RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
+RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
 // check_project leaves the result to the caller, who must call driver.destroy on its report.
 //

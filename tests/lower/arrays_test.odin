@@ -1,5 +1,6 @@
 package lower_tests
 
+import "core:slice"
 import "core:testing"
 
 import "../../src/abi"
@@ -40,6 +41,20 @@ a_write_at_the_length_appends :: proc(t: ^testing.T) {
 	testing.expectf(t, len(instructions_of(body, ir.Element_Store_Ref)) == 1, "%s", result.text)
 	compares := instructions_of(body, ir.Compare)
 	testing.expect(t, len(compares) == 1 && compares[0].op == .Equal, "no test against the length")
+}
+
+@(test)
+a_compound_element_assignment_checks_the_index_again_where_it_writes :: proc(t: ^testing.T) {
+	// The right side runs between the read and the write and may change the array's length, so
+	// the write compares the index with the length again, where it may append.
+	result := lower_text(
+		t,
+		"function add(a: number[], i: number, f: () => number): void {\na[i] += f();\n}\n",
+	)
+	body, _ := func_named(result.output, "m1.add")
+	testing.expectf(t, len(instructions_of(body, ir.Bounds_Check)) == 2, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Length)) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(body, .Array_Push) == 1, "%s", result.text)
 }
 
 @(test)
@@ -130,6 +145,49 @@ the_four_callback_methods_are_loops_with_the_callback_inlined :: proc(t: ^testin
 }
 
 @(test)
+an_arrow_whose_switch_covers_every_case_runs_off_no_end :: proc(t: ^testing.T) {
+	// check proves the end of each arrow unreachable (T3024). map used to refuse the arrow for the
+	// value its end lacked, and reduce to keep its initial value on every pass.
+	result := lower_text(
+		t,
+		`
+		type K = "a" | "b";
+		function score(ks: K[]): number {
+			const scores = ks.map((k): number => {
+				switch (k) {
+					case "a":
+						return 1;
+					case "b":
+						return 2;
+				}
+			});
+			return scores.length + ks.reduce((total: number, k: K): number => {
+				switch (k) {
+					case "a":
+						return total + 1;
+					case "b":
+						return total + 2;
+				}
+			}, 0);
+		}
+		console.log(score(["a", "b"]));
+	`,
+	)
+	body, _ := func_named(result.output, "m1.score")
+	// No callback assigns a local, so the only loop phis are the index and the accumulator, and
+	// neither may take itself back.
+	for instruction, id in body.values {
+		phi, is_phi := instruction.variant.(ir.Phi)
+		if !is_phi {
+			continue
+		}
+		for incoming in phi.incoming {
+			testing.expectf(t, incoming.value != ir.Value_ID(id), "%%%d:\n%s", id, result.text)
+		}
+	}
+}
+
+@(test)
 a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,
@@ -208,4 +266,36 @@ sorting_with_a_comparator_hands_the_runtime_a_closure :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, found, "%s", result.text)
+}
+
+@(test)
+join_takes_the_comma_where_the_separator_is_undefined :: proc(t: ^testing.T) {
+	// Node joins with "," for a separator that is undefined when it runs, not only for one the call
+	// leaves out: the separator is tested for undefined before it is read as a string.
+	result := lower_text(
+		t,
+		"function glue(xs: number[], s: string | undefined): string {\nreturn xs.join(s);\n}\n",
+	)
+	body, _ := func_named(result.output, "m1.glue")
+	tests := instructions_of(body, ir.Tag_Test)
+	if testing.expectf(t, len(tests) == 2, "%s", result.text) {
+		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Undefined})
+		testing.expect_value(t, tests[1].tags, ir.Tag_Set{.String})
+	}
+	merged := 0
+	for instruction in body.values {
+		_, is_phi := instruction.variant.(ir.Phi)
+		merged += 1 if is_phi && instruction.type == ir.STR else 0
+	}
+	testing.expectf(t, merged == 1, "%s", result.text)
+}
+
+@(test)
+join_with_a_string_separator_leaves_the_comma_out_of_the_pool :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		"function glue(xs: number[], s: string): string {\nreturn xs.join(s);\n}\n",
+	)
+	words := pool_words(result.output)
+	testing.expectf(t, !slice.contains(words, ","), "pool %v", words)
 }
