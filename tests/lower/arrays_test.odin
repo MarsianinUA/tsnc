@@ -1,5 +1,6 @@
 package lower_tests
 
+import "core:slice"
 import "core:testing"
 
 import "../../src/abi"
@@ -287,4 +288,14 @@ join_takes_the_comma_where_the_separator_is_undefined :: proc(t: ^testing.T) {
 		merged += 1 if is_phi && instruction.type == ir.STR else 0
 	}
 	testing.expectf(t, merged == 1, "%s", result.text)
+}
+
+@(test)
+join_with_a_string_separator_leaves_the_comma_out_of_the_pool :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		"function glue(xs: number[], s: string): string {\nreturn xs.join(s);\n}\n",
+	)
+	words := pool_words(result.output)
+	testing.expectf(t, !slice.contains(words, ","), "pool %v", words)
 }

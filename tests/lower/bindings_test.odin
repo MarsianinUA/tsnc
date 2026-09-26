@@ -186,6 +186,42 @@ a_local_read_early_through_a_closure_is_checked_in_its_box :: proc(t: ^testing.T
 }
 
 @(test)
+a_let_read_in_a_later_case_of_its_switch_is_checked_in_its_box :: proc(t: ^testing.T) {
+	// A jump to case 1 skips `let y`, and Node throws a ReferenceError at the read there, so y lives
+	// in a box whose second slot says whether the declaration ran. The read in case 0 follows the
+	// declaration on every path and is not checked.
+	result := lower_text(
+		t,
+		`
+		function pick(n: number): number {
+			switch (n) {
+				case 0:
+					let y = 1;
+					console.log(y);
+				case 1:
+					return y + 1;
+			}
+			return 0;
+		}
+		console.log(pick(0));
+	`,
+	)
+	pick, _ := func_named(result.output, "m1.pick")
+	boxes := 0
+	for alloc in instructions_of(pick, ir.Alloc) {
+		fields := result.output.layouts[alloc.layout].fields
+		is_number_box := len(fields) == 2 && fields[0].kind == .Number
+		boxes += 1 if is_number_box && fields[1].kind == .Boolean else 0
+	}
+	testing.expectf(t, boxes == 1, "%s", result.text)
+	fails := instructions_of(pick, ir.Fail)
+	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
+		error := result.output.fail_sites[fails[0].site].error
+		testing.expect_value(t, error, abi.Runtime_Error.Read_Before_Initialization)
+	}
+}
+
+@(test)
 a_read_made_after_the_declaration_needs_no_check :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,

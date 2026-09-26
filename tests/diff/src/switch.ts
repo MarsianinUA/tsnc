@@ -78,3 +78,20 @@ function kind(word: string): string {
 }
 
 console.log(kind("apple"), kind("pear"), kind(""), kind("stone"), kind("Apple"));
+
+// A `let` of one case read in a later one: every case shares the scope, and control that falls
+// through the declaration finds the value. A jump straight to case 1 would make a closure whose
+// read throws, which tests/driver pins.
+function carry(x: number): number {
+  let read = (): number => -1;
+  switch (x) {
+    case 0:
+      let base = 10;
+    // fallthrough
+    case 1:
+      read = () => base + 1;
+  }
+  return read();
+}
+
+console.log(carry(0), carry(5));

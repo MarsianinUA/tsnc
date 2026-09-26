@@ -354,6 +354,41 @@ a_void_result_joined_with_a_value_is_tagged_and_gives_undefined :: proc(t: ^test
 }
 
 @(test)
+a_void_function_that_hands_on_a_value_returns_it :: proc(t: ^testing.T) {
+	// five flows into `() => void`, so a call through that type answers 5. call and relay are typed
+	// void and return what that call answered, as Node does, so their class takes a tagged result;
+	// log hands on what console.log answers, undefined, and still returns nothing.
+	result := lower_text(
+		t,
+		`
+		const five = (): number => 5;
+		const fs: (() => void)[] = [five];
+		const call = (f: () => void) => f();
+		function relay(f: () => void): void {
+			return f();
+		}
+		const log = (x: number) => console.log(x);
+		console.log(fs.map(call), relay(five), log(1));
+	`,
+	)
+	call, _ := func_prefixed(result.output, "m1.call$")
+	relay, _ := func_named(result.output, "m1.relay")
+	log, _ := func_prefixed(result.output, "m1.log$")
+	testing.expectf(t, log.result == ir.VOID, "%s", result.text)
+	tagged := call.result == ir.TAGGED && relay.result == ir.TAGGED
+	if !testing.expectf(t, tagged, "%s", result.text) {
+		return
+	}
+	for body in ([]ir.Func{call, relay}) {
+		returns := instructions_of(body, ir.Return)
+		if testing.expectf(t, len(returns) == 1, "%s", result.text) {
+			_, is_call := body.values[returns[0].value].variant.(ir.Call_Closure)
+			testing.expectf(t, is_call, "%s", result.text)
+		}
+	}
+}
+
+@(test)
 a_function_with_a_rest_parameter_is_reported :: proc(t: ^testing.T) {
 	result := expect_later(
 		t,

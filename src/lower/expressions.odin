@@ -53,20 +53,23 @@ lower_raw :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 // lower_effect lowers an expression whose value is dropped, as a statement or the init and update
 // of a `for` do. A ternary and `&&` or `||` then join no value, so their two sides need not share a
 // representation: `debug && console.log(x);` is a branch and nothing more.
+//
+// It still answers the value, NO_VALUE for those two, since the body of an arrow typed void gives
+// back what a call in it answered (handed_on).
 @(private)
-lower_effect :: proc(s: ^Func_State, id: ast.Node_ID) {
+lower_effect :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	#partial switch v in s.tree.nodes[id].variant {
 	case ast.Binary:
 		#partial switch v.op {
 		case .And, .Or, .Coalesce:
 			lower_logical(s, id, v, ir.VOID)
-			return
+			return ir.NO_VALUE
 		}
 	case ast.Conditional:
 		lower_conditional(s, id, v, ir.VOID)
-		return
+		return ir.NO_VALUE
 	}
-	lower_raw(s, id)
+	return lower_raw(s, id)
 }
 
 // lower_node is lower_expression without the net: the one switch over the kinds of expression.

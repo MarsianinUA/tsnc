@@ -105,8 +105,8 @@ an_any_given_to_a_union_it_fits_no_member_of_ends_the_program :: proc(t: ^testin
 }
 
 // A read of a `let` or `const` that runs before its declaration has fails where Node throws its
-// ReferenceError, whatever the binding holds: an object, a number, a function, or a local that a
-// closure shares.
+// ReferenceError, whatever the binding holds: an object, a number, a function, a local that a
+// closure shares, or one that a jump to a later case of its switch skipped.
 @(test)
 a_read_before_initialization_ends_the_program :: proc(t: ^testing.T) {
 	early := "cannot access a variable before its initialization"
@@ -115,6 +115,7 @@ a_read_before_initialization_ends_the_program :: proc(t: ^testing.T) {
 	expect_failure(t, project, "number.ts", "driver-early-number.exe", "", early, 4, 9)
 	expect_failure(t, project, "function.ts", "driver-early-function.exe", "", early, 4, 9)
 	expect_failure(t, project, "captured.ts", "driver-early-captured.exe", "", early, 5, 29)
+	expect_failure(t, project, "switch.ts", "driver-early-switch.exe", "2\n", early, 9, 4)
 }
 
 @(private = "file")

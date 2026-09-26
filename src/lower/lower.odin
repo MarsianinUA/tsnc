@@ -30,9 +30,10 @@ real empty cell instead of a null pointer the collector would have to know about
 
 Read before initialization. A `let` or `const` read before its declaration ran fails the program
 with Node's ReferenceError. check reports such a read where it runs as it stands (T3028); one inside
-a function made before the declaration may run on either side of it, so the binding marks whether
-its declaration has run and the read tests the mark (check_ready, bindings.odin). A reference
-binding holds null until then, any other a ready flag beside it, as V8 holds its hole.
+a function made before the declaration may run on either side of it, and so may one in a later case
+of the switch that declares it, since a jump to that case skips the declaration. There the binding
+marks whether its declaration has run and the read tests the mark (check_ready, bindings.odin). A
+reference binding holds null until then, any other a ready flag beside it, as V8 holds its hole.
 
 Memory: everything in the answer comes from the allocator, which is meant to be an arena. Names are
 built with it, because ir borrows them and they outlive the call; the tables lower needs only while
@@ -141,6 +142,7 @@ lower :: proc(
 		low.closures[file] = analyze_closures(&low, file)
 		low.locals[file] = group_locals(&low, file)
 	}
+	widen_void_results(&low, order)
 
 	// Declare before defining: a call may name a function whose body is built later, and a module
 	// init calls functions declared below it.

@@ -55,6 +55,9 @@ Inline_Frame :: struct {
 	join:   ir.Block_ID,
 	edges:  [dynamic]Edge,
 	values: [dynamic]ir.Value_ID, // one per edge
+	// The type of the join: the arrow's own result, or TAGGED for an arrow typed void that hands
+	// on what a call answered (hands_on_value).
+	answer: ir.Type,
 }
 
 Func_State :: struct {

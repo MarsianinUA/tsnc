@@ -474,18 +474,26 @@ runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) ->
 	return operand_not_lowered(s, value, span)
 }
 
-// optional_argument hands over an argument that may be undefined at run time as what the runtime
-// takes for an argument the call leaves out: for a number, the one the specification treats exactly
-// as undefined there (abi.MISSING_END and its kin), for join's separator the string ",". missing is
-// that constant, emitted only where the argument turns out undefined.
+// Stand_In is what the runtime takes for an argument the call leaves out: for a number, the one the
+// specification treats exactly as undefined there (abi.MISSING_END and its kin), for join's
+// separator the string ",".
+@(private)
+Stand_In :: union {
+	f64,
+	string,
+}
+
+// optional_argument hands over an argument that may be undefined at run time as the stand-in,
+// which is emitted, and a text interned, only where the argument turns out undefined.
 @(private)
 optional_argument :: proc(
 	s: ^Func_State,
 	arg: ast.Node_ID,
-	missing: ir.Variant,
-	want: ir.Type,
+	missing: Stand_In,
 	span: source.Span,
 ) -> ir.Value_ID {
+	_, is_text := missing.(string)
+	want := ir.STR if is_text else ir.F64
 	value := lower_expression(s, arg)
 	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED {
 		return coerce(s, value, want, s.tree.nodes[arg].span)
@@ -501,7 +509,13 @@ optional_argument :: proc(
 	ir.emit(&s.fb, ir.VOID, branch, span)
 
 	ir.use_block(&s.fb, absent)
-	stand_in := ir.emit(&s.fb, want, missing, span)
+	stand_in: ir.Value_ID
+	switch v in missing {
+	case f64:
+		stand_in = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = v}, span)
+	case string:
+		stand_in = string_constant(s, v, span)
+	}
 	left_out := here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 
@@ -558,10 +572,7 @@ lower_method :: proc(
 	for param, i in params[1:] {
 		switch {
 		case i < len(node.args) && param == .Number:
-			missing := ir.Const_Number {
-				value = method.missing[i],
-			}
-			args[i + 1] = optional_argument(s, node.args[i], missing, ir.F64, span)
+			args[i + 1] = optional_argument(s, node.args[i], method.missing[i], span)
 		case i < len(node.args):
 			args[i + 1] = runtime_argument(s, node.args[i], param)
 		case param == .Number:
@@ -675,7 +686,7 @@ console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 lower_process_exit :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	code := ir.NO_VALUE
 	if len(node.args) > 0 {
-		code = optional_argument(s, node.args[0], ir.Const_Number{value = 0}, ir.F64, span)
+		code = optional_argument(s, node.args[0], 0, span)
 		if code == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}

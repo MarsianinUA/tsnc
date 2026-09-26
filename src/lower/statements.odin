@@ -87,7 +87,7 @@ build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 
 // lower_arrow_body lowers the body of an arrow, a closure's or one inline_arrow puts in a loop, and
 // leaves it. A block runs off its end as close_body says. An expression either does not come back,
-// or the arrow's own type throws its value away, or the arrow returns it.
+// or the arrow returns it, one typed void as leave says.
 @(private)
 lower_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
 	if _, is_block := s.tree.nodes[body].variant.(ast.Block); is_block {
@@ -102,8 +102,7 @@ lower_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
 			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 		}
 	case s.declared == ir.VOID:
-		lower_effect(s, body)
-		leave(s, ir.NO_VALUE, span)
+		leave(s, lower_effect(s, body), span)
 	case:
 		value := lower_expression(s, body)
 		given := s.typed.node_types[body]
@@ -143,12 +142,16 @@ inline_arrow :: proc(
 		join   = ir.add_block(&s.fb),
 		edges  = make([dynamic]Edge, 0, 2, context.temp_allocator),
 		values = make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator),
+		answer = callback.result,
+	}
+	if callback.result == ir.VOID && hands_on_value(s.low, s.file, callback.arrow) {
+		frame.answer = ir.TAGGED
 	}
 	append(&s.inlines, frame)
 	lower_arrow_body(s, arrow.body, span)
 	frame = pop(&s.inlines)
 	s.loops, s.declared, s.returns = outer_loops, outer_declared, outer_returns
-	return join_values(s, frame.join, frame.edges[:], frame.values[:], callback.result, span)
+	return join_values(s, frame.join, frame.edges[:], frame.values[:], frame.answer, span)
 }
 
 // close_body leaves a body whose end control still reaches, as running off it does: with nothing
@@ -170,7 +173,7 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 }
 
 // leave returns from the innermost inlined arrow, a jump to the join of its frame, or else from the
-// function.
+// function. A body typed void gives back what its value turned out to be (handed_on).
 @(private)
 leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if len(s.inlines) == 0 {
@@ -178,14 +181,17 @@ leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 		return
 	}
 	frame := &s.inlines[len(s.inlines) - 1]
+	value := value
+	if s.declared == ir.VOID {
+		value = handed_on(s, value, frame.answer, span)
+	}
 	append(&frame.edges, here(s))
 	append(&frame.values, value)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = frame.join}, span)
 }
 
-// leave_function returns what the function's own type gives as the result of its class: boxed into
-// a wider class, or undefined where the function itself gives back nothing, which the class holds
-// tagged (join_signatures). Poison ends the block unreachable; it was reported.
+// leave_function returns what the function's own type gives as the result of its class, boxed into
+// a wider class. Poison ends the block unreachable; it was reported.
 @(private)
 leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if s.result == ir.VOID {
@@ -194,8 +200,7 @@ leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	}
 	returned: ir.Value_ID
 	if s.declared == ir.VOID {
-		undefined := ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
-		returned = coerce(s, undefined, s.result, span)
+		returned = handed_on(s, value, s.result, span)
 	} else {
 		returned = coerce(s, value, s.result, span)
 	}
@@ -204,6 +209,23 @@ leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 		return
 	}
 	ir.emit(&s.fb, ir.VOID, ir.Return{value = returned}, span)
+}
+
+// handed_on is what a body typed void gives back where the caller keeps the answer as want: what a
+// call in it answered, since Node returns that whatever the type says, or undefined where nothing
+// came back. Nothing reads an answer wanted as VOID, so no undefined is made for it.
+@(private)
+handed_on :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	want: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value != ir.NO_VALUE || want == ir.VOID {
+		return coerce(s, value, want, span)
+	}
+	undefined := ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
+	return coerce(s, undefined, want, span)
 }
 
 // lower_statement first replaces a block the last terminator closed, so whatever follows a

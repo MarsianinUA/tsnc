@@ -283,10 +283,7 @@ lower_join :: proc(
 ) -> ir.Value_ID {
 	separator: ir.Value_ID
 	if len(node.args) > 0 {
-		comma := ir.Const_String {
-			text = ir.intern_string(&s.low.builder, ","),
-		}
-		separator = optional_argument(s, node.args[0], comma, ir.STR, span)
+		separator = optional_argument(s, node.args[0], ",", span)
 	} else {
 		separator = string_constant(s, ",", span)
 	}

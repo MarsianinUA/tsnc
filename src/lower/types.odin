@@ -38,8 +38,10 @@ the same closure after the flow, so the two types need one signature, or a call 
 would pass arguments the first does not take. Signature classes are built the way the widening
 classes are, over the whole program: a parameter every member agrees on keeps its type, one they
 differ on is Tagged, and so is the result, where a member that returns nothing answers undefined.
-A function then takes the arguments of its class and unboxes each into its own type (coerce), and a
-call gives the class what it wants and unboxes the answer.
+A class of void functions has a tagged result as well where one of them returns what a call
+answered, which Node passes on (widen_void_results, closures.odin). A function then takes the
+arguments of its class and unboxes each into its own type (coerce), and a call gives the class what
+it wants and unboxes the answer.
 */
 
 representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_Kind, ok: bool) {
@@ -510,7 +512,7 @@ signature_node :: proc(
 
 // join_signatures gives a parameter only one member has that member's type. A result of void joined
 // with another is tagged like any two results that differ: a call through the class may print
-// what it gets back, which is undefined from the member that returns nothing (leave_function).
+// what it gets back, which is undefined from a member that returns nothing (handed_on).
 @(private)
 join_signatures :: proc(a, b: Signature) -> Signature {
 	join :: proc(x, y: ir.Type) -> ir.Type {

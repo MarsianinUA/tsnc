@@ -26,3 +26,20 @@ inner();
 
 let v: void = undefined;
 console.log(v);
+
+// A function typed void that returns such a call returns its value too: an arrow inlined into
+// map, one passed to map as a value, and a declaration.
+const word = (): string => "w";
+const fs: (() => void)[] = [five, word];
+console.log(fs.map(f => f()));
+console.log(
+	fs.map(f => {
+		return f();
+	}),
+);
+const call = (f: () => void) => f();
+console.log(fs.map(call), call(five));
+function relay(f: () => void): void {
+	return f();
+}
+console.log(relay(word), relay(nothing));
