@@ -185,6 +185,17 @@ linker_stderr_reaches_the_error :: proc(t: ^testing.T) {
 	)
 }
 
+// macOS has no ASan runtime, and says so on every machine before any object is looked for.
+@(test)
+the_address_sanitizer_is_refused_on_macos :: proc(t: ^testing.T) {
+	for id in ([?]target.Target{.darwin_arm64, .darwin_amd64}) {
+		output := "dist/link-sanitized.exe"
+		err := link.link({"dist/link-hello.obj"}, id, output, sanitizer = .address)
+		testing.expectf(t, err.kind == .Sanitizer_Unsupported, "%v: %v", id, err.kind)
+		testing.expect_value(t, err.detail, "")
+	}
+}
+
 @(test)
 only_the_host_target_links :: proc(t: ^testing.T) {
 	for id in target.Target {

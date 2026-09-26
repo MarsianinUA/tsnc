@@ -431,6 +431,9 @@ build_executable :: proc(
 	// The missing runtime object keeps a kind of its own: it is the one link failure a user fixes
 	// with a single command, and main prints that command as a hint. The ASan one is built by
 	// another command.
+	if err.kind == .Sanitizer_Unsupported {
+		return {kind = .Sanitizer_Unsupported}
+	}
 	if err.kind == .Runtime_Object_Missing && options.sanitize == .address {
 		return {.Sanitized_Runtime_Missing, err.detail}
 	}
@@ -445,8 +448,8 @@ build_executable :: proc(
 @(private = "file")
 link_failure_text :: proc(err: link.Link_Error, allocator: runtime.Allocator) -> string {
 	switch err.kind {
-	case .None, .Runtime_Object_Missing:
-		return "" // neither reaches here: one is success, the other is a driver kind of its own
+	case .None, .Runtime_Object_Missing, .Sanitizer_Unsupported:
+		return "" // none reaches here: one is success, the others are driver kinds of their own
 	case .Unsupported_Target:
 		return strings.clone("v1 links for the host only", allocator)
 	case .Windows_SDK_Missing:

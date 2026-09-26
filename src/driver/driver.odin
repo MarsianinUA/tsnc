@@ -110,6 +110,7 @@ Error_Kind :: enum u8 {
 	Codegen_Failed, // detail: the path, then what codegen answered
 	Runtime_Object_Missing, // detail: the path link looked at
 	Sanitized_Runtime_Missing, // detail: the path link looked at under -sanitize:address
+	Sanitizer_Unsupported, // detail: empty; -sanitize:address on a target with no ASan runtime
 	Link_Failed, // detail: a sentence about what the linker, or link itself, could not do
 	Output_Unwritable, // detail: the path, then why
 	Program_Unrunnable, // detail: the path, then why

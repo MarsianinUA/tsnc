@@ -239,7 +239,7 @@ tsnc check src/main.ts                              # check only, no code genera
 tsnc build src/main.ts -emit-llvm -out:dist/app.ll  # textual LLVM IR
 tsnc build src/main.ts -emit-ir -out:dist/app.ir    # custom IR dump for debugging
 tsnc build src/main.ts -target:linux_amd64 -j:8     # target and number of threads
-tsnc build src/main.ts -sanitize:address            # link the runtime built with AddressSanitizer
+tsnc build src/main.ts -sanitize:address            # link the runtime built with AddressSanitizer (Windows and Linux)
 ```
 
 - Artifacts: an executable; on request, an object file, textual LLVM IR, and a custom IR dump. Debug info (PDB / DWARF) in v2.
@@ -253,7 +253,7 @@ tsnc build src/main.ts -sanitize:address            # link the runtime built wit
 - **Negative tests.** A file with an expected compile error: the test checks the error code, line, and column.
 - **Unit tests.** Lexer, parser, checker, number formatting, GC through `odin test`.
 - **GC stress mode.** A runtime flag that runs a collection on every allocation and checks heap integrity after each collection. The differential tests also run in this mode.
-- **AddressSanitizer.** A separate CI test run builds the runtime with `-sanitize:address` and runs the differential tests against it in GC stress mode. The collector poisons the memory of its heap that no cell owns, as Go's sweep does under ASan, so a runtime read past the end of a cell or into the body of a freed one stops the program.
+- **AddressSanitizer.** A separate CI test run, on Windows and Linux, builds the runtime with `-sanitize:address` and runs the differential tests against it in GC stress mode. macOS has no ASan build: its toolchains fail to link or run one (docs/development.md), so `-sanitize:address` is refused there. The collector poisons the memory of its heap that no cell owns, as Go's sweep does under ASan, so a runtime read past the end of a cell or into the body of a freed one stops the program.
 - **Benchmarks.** A set of programs (numeric loops, strings, arrays of objects, closures, allocations) against Node and Go equivalents, plus startup time and exe size for hello world. The repository records results per version, with no hard limits.
 - **Infrastructure smoke test.** "Hello world" through the LLVM-C bindings and the linker, runs in CI on three OSes.
 - **v1 acceptance criterion.** The reference set of programs in the v1 subset passes the differential tests on Windows, Linux, and macOS in CI; the GC survives a stress test with allocations and closures in a loop without leaks or crashes.

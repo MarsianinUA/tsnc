@@ -73,6 +73,8 @@ error_text :: proc(err: driver.Driver_Error) -> string {
 			err.detail,
 			SANITIZED_RUNTIME_BUILD,
 		)
+	case .Sanitizer_Unsupported:
+		return "-sanitize:address works on Windows and Linux only"
 	case .Link_Failed:
 		return fmt.tprintf("cannot link the program: %s", err.detail)
 	case .Output_Unwritable:
