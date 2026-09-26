@@ -117,7 +117,7 @@ join_refuses_what_node_would_run :: proc(t: ^testing.T) {
 
 	comma := str.from_utf8(&heap, ",")
 	printable := arr.new_array(&heap, REFS, 0)
-	arr.push(&heap, printable, object(gc.alloc(&heap, PRINTABLE, 16)))
+	arr.push(&heap, printable, object(with_method(&heap, PRINTABLE)))
 	_, printable_ok := arr.join(&heap, printable, comma)
 	testing.expect(t, !printable_ok, "an object with its own toString joined")
 
@@ -198,7 +198,7 @@ to_primitive_string_refuses_an_object_with_its_own_value_of :: proc(t: ^testing.
 	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
-	own := object(gc.alloc(&heap, VALUE_OF, 16))
+	own := object(with_method(&heap, VALUE_OF))
 	_, own_ok := arr.to_primitive_string(&heap, own)
 	testing.expect(t, !own_ok, "an object with its own valueOf converted")
 	text, text_ok := arr.to_string(&heap, own)
@@ -231,4 +231,23 @@ expect_join :: proc(
 	if testing.expectf(t, ok, "join refused, want %q", want, loc = loc) {
 		expect_ascii(t, joined, want, loc = loc)
 	}
+}
+
+// A valueOf that is no function is passed over, and ToPrimitive goes on to the toString every
+// object inherits:
+//
+//	node -e 'console.log("" + {valueOf: 1, n: 2})'
+//
+// prints `[object Object]`.
+@(test)
+to_primitive_string_passes_over_a_value_of_that_is_no_function :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	cell := gc.alloc(&heap, PLAIN_VALUE_OF, 24)
+	(^abi.Tagged)(&([^]byte)(cell)[8])^ = number(1)
+	text, ok := arr.to_primitive_string(&heap, object(cell))
+	testing.expect(t, ok, "a valueOf that is no function refused the object")
+	expect_ascii(t, text, "[object Object]")
 }

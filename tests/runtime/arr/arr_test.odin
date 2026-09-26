@@ -29,6 +29,7 @@ POINT :: NUMBERS + 4
 PRINTABLE :: NUMBERS + 5
 CLOSURE :: NUMBERS + 6
 VALUE_OF :: NUMBERS + 7
+PLAIN_VALUE_OF :: NUMBERS + 8
 
 TABLES := []abi.Type_Table {
 	{kind = .Array, size = size_of(abi.Array_Cell), element = .Number},
@@ -39,6 +40,7 @@ TABLES := []abi.Type_Table {
 	{kind = .Object, size = 16, fields = {{name = "toString", offset = 8, kind = .Ref}}},
 	{kind = .Closure, size = size_of(abi.Closure_Cell)},
 	{kind = .Object, size = 16, fields = {{name = "valueOf", offset = 8, kind = .Ref}}},
+	{kind = .Object, size = 24, fields = {{name = "valueOf", offset = 8, kind = .Tagged}}},
 }
 
 @(test)
@@ -339,6 +341,15 @@ number :: proc(n: f64) -> abi.Tagged {
 
 text :: proc(cell: ^abi.String_Cell) -> abi.Tagged {
 	return {tag = .String, payload = {ref = cell}}
+}
+
+// with_method makes an object of a table whose one field, at offset 8, holds a function: an object
+// with its own toString or valueOf, as a program makes one.
+with_method :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID) -> ^abi.Cell_Header {
+	closure := gc.alloc(heap, CLOSURE, size_of(abi.Closure_Cell))
+	cell := gc.alloc(heap, table, 16)
+	(^^abi.Cell_Header)(&([^]byte)(cell)[8])^ = closure
+	return cell
 }
 
 object :: proc(cell: ^abi.Cell_Header) -> abi.Tagged {

@@ -120,14 +120,13 @@ json_object :: proc(
 	stack: ^[dynamic]^abi.Cell_Header,
 	out: ^[dynamic]u16,
 ) -> Json_Result {
-	if method, found := own_property(heap, cell, table, "toJSON");
-	   found && method.tag == .Function {
+	if _, found := value.own_method(heap, cell, "toJSON"); found {
 		return .Refused
 	}
 	append(out, '{')
 	first := true
 	for field in table.fields {
-		v, present := field_value(heap, cell, field)
+		v, present := value.field(heap, cell, field)
 		if !present {
 			continue
 		}

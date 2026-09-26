@@ -266,7 +266,7 @@ format_fields :: proc(
 	entries: ^[dynamic][]u16,
 ) {
 	for field in table.fields {
-		v, present := field_value(ins.heap, cell, field)
+		v, present := value.field(ins.heap, cell, field)
 		if !present {
 			continue
 		}
@@ -737,26 +737,11 @@ contains_template_start :: proc(text: string16) -> bool {
 @(private)
 has_fields :: proc(heap: ^gc.Heap, cell: ^abi.Cell_Header, table: abi.Type_Table) -> bool {
 	for field in table.fields {
-		if _, present := field_value(heap, cell, field); present {
+		if _, present := value.field(heap, cell, field); present {
 			return true
 		}
 	}
 	return false
-}
-
-// field_value answers present = false for an optional field that holds undefined, which is how a
-// property that was never set reads.
-@(private)
-field_value :: proc(
-	heap: ^gc.Heap,
-	cell: ^abi.Cell_Header,
-	field: abi.Field,
-) -> (
-	v: abi.Tagged,
-	present: bool,
-) {
-	v = value.load(heap, &([^]byte)(cell)[field.offset], field.kind)
-	return v, !(field.optional && v.tag == .Undefined)
 }
 
 @(private)

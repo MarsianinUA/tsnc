@@ -88,16 +88,54 @@ to_string :: proc(heap: ^gc.Heap, v: abi.Tagged) -> (text: ^abi.String_Cell, ok:
 	case .Object:
 		table := gc.table_of(heap, v.payload.ref)
 		ensure(table.kind == .Object, "a tagged object that is no object; arr converts an array")
-		for field in table.fields {
-			if field.name == "toString" {
-				return nil, false
-			}
+		if _, found := own_method(heap, v.payload.ref, "toString"); found {
+			return nil, false
 		}
 		return word(.Object_Text), true
 	case .Function:
 		return nil, false
 	}
 	unreachable()
+}
+
+// own_method answers a property of the object itself that Node would call to convert it, and one
+// found stops tsnc, which cannot run it. `toString` is found wherever it is present: Node calls a
+// function there, and throws a TypeError for anything else, since the valueOf every object
+// inherits gives back no primitive. `valueOf` and `toJSON` are found only where they hold a
+// function, since Node passes over anything else.
+own_method :: proc(
+	heap: ^gc.Heap,
+	cell: ^abi.Cell_Header,
+	name: string,
+) -> (
+	method: abi.Tagged,
+	found: bool,
+) {
+	for one in gc.table_of(heap, cell).fields {
+		if one.name != name {
+			continue
+		}
+		v, present := field(heap, cell, one)
+		if !present || name != "toString" && v.tag != .Function {
+			return {}, false
+		}
+		return v, true
+	}
+	return {}, false
+}
+
+// field reads a field of an object cell. present = false for an optional field that holds
+// undefined, which is how a property that was never set reads.
+field :: proc(
+	heap: ^gc.Heap,
+	cell: ^abi.Cell_Header,
+	entry: abi.Field,
+) -> (
+	v: abi.Tagged,
+	present: bool,
+) {
+	v = load(heap, &([^]byte)(cell)[entry.offset], entry.kind)
+	return v, !(entry.optional && v.tag == .Undefined)
 }
 
 // load boxes what a slot of `kind` holds: an array element, an object field.
