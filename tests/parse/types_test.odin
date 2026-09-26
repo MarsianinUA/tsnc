@@ -68,6 +68,12 @@ function_types_have_parameters_and_a_result :: proc(t: ^testing.T) {
 	expect_type(t, "(x) => void", "(=> [x] void)")
 	// The result of a function type is a whole union.
 	expect_type(t, "() => A | B", "(=> [] (| A B))")
+	// A function type in parentheses is told from parameters by what follows the `(`, as tsc tells
+	// them apart, not by an arrow after the `)`.
+	expect_type(t, "((a: number) => number)", "(=> [(a : number)] number)")
+	expect_type(t, "((a) => void)[]", "((=> [a] void) [])")
+	// A destructured parameter is read as one, and reported as the v2 construct it is.
+	expect_errors(t, "type T = ([a]: T) => void", {{.Destructuring, 1, 11}})
 }
 
 @(test)

@@ -316,10 +316,36 @@ parse_type_params :: proc(p: ^Parser) -> []ast.Node_ID {
 }
 
 // starts_function_type reports whether the `(` at the current token opens the parameters of a
-// function type, `(x: T) => U`, rather than a type in parentheses.
+// function type, `(x: T) => U`, rather than a type in parentheses. It is tsc's
+// isUnambiguouslyStartOfFunctionType, which reads only what follows the `(`: a `)` or a `...`, or
+// a parameter followed by `:`, `,`, `?`, `=` or `) =>`. Whether an arrow follows the matching `)`
+// cannot tell: in `(k): ((a: number) => number) => ...` the result type is followed by the arrow
+// of its own function.
 starts_function_type :: proc(p: ^Parser) -> bool {
-	close := matching_close(p, p.current)
-	return close >= 0 && p.tokens[close + 1].kind == .Arrow
+	#partial switch peek(p, 1).kind {
+	case .Close_Paren, .Dot_Dot_Dot:
+		return true
+	case .Identifier, .This:
+		return starts_parameter_rest(p, p.current + 2)
+	case .Open_Brace, .Open_Bracket:
+		// A destructured parameter, which the parameter list reports.
+		close := matching_close(p, p.current + 1)
+		return close >= 0 && starts_parameter_rest(p, close + 1)
+	}
+	return false
+}
+
+// starts_parameter_rest reports whether the token at `at`, after a parameter's name, goes on as a
+// parameter list does.
+@(private = "file")
+starts_parameter_rest :: proc(p: ^Parser, at: int) -> bool {
+	#partial switch p.tokens[min(at, len(p.tokens) - 1)].kind {
+	case .Colon, .Comma, .Question, .Equal:
+		return true
+	case .Close_Paren:
+		return p.tokens[min(at + 1, len(p.tokens) - 1)].kind == .Arrow
+	}
+	return false
 }
 
 // parse_function_type parses `<U>(params) => type`.
