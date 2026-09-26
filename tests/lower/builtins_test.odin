@@ -424,14 +424,10 @@ the_four_math_names_the_ir_cannot_say_are_reported :: proc(t: ^testing.T) {
 a_non_null_assertion_tests_the_tag_before_the_number_is_read :: proc(t: ^testing.T) {
 	// The binding itself is a tagged value. `x!` fails where it is null or undefined, at the start
 	// of `x!`, and the number is then unboxed after a test of its own tag.
-	result := lower_text(
-		t,
-		"let x: number | undefined = 1;\nfunction f(): number {\nreturn x! + 1;\n}\n",
-	)
-	testing.expect(t, len(result.output.globals) == 1)
-	testing.expect(t, result.output.globals[0].type == ir.TAGGED)
-
+	result := lower_text(t, "function f(x: number | undefined): number {\nreturn x! + 1;\n}\nf(1);\n")
 	body, _ := func_named(result.output, "m1.f")
+	testing.expect(t, body.params[0] == ir.TAGGED)
+
 	tests := instructions_of(body, ir.Tag_Test)
 	fails := instructions_of(body, ir.Fail)
 	if !testing.expectf(t, len(tests) == 2 && len(fails) == 2, "%s", result.text) {
@@ -441,7 +437,7 @@ a_non_null_assertion_tests_the_tag_before_the_number_is_read :: proc(t: ^testing
 	testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Number})
 	non_null := result.output.fail_sites[fails[0].site]
 	testing.expect_value(t, non_null.error, abi.Runtime_Error.Non_Null_Assertion)
-	testing.expect_value(t, non_null.line, 3)
+	testing.expect_value(t, non_null.line, 2)
 	testing.expect_value(t, non_null.column, 8)
 	kind := result.output.fail_sites[fails[1].site].error
 	testing.expect_value(t, kind, abi.Runtime_Error.Tagged_Holds_Other_Kind)

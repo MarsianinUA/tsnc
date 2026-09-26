@@ -239,6 +239,8 @@ Runtime_Error :: enum i32 {
 	// a kind that type does not allow: it came through `any`, or changed after the test that
 	// narrowed it (requirements 3.8).
 	Tagged_Holds_Other_Kind,
+	// A read of a `let` or `const` that ran before its declaration did: Node's ReferenceError.
+	Read_Before_Initialization,
 }
 
 // Fail_Site records where generated code failed. The compiler emits one constant per failure point

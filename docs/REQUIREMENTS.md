@@ -115,6 +115,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - reading `arr[i]` out of range or with a non-integer index: runtime error;
 - writing `arr[i]`: when `i === arr.length`, append to the end, beyond that an error;
 - `x!`: a check, error on `null` / `undefined`;
+- reading a `let` or `const` before its declaration has run: a compile error where the read runs where it stands, and a runtime error, as Node's `ReferenceError`, where it stands in a function that may run before the declaration or after it;
 - reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
 - a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;

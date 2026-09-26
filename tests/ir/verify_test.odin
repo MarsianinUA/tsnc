@@ -280,6 +280,44 @@ an_element_access_takes_the_answer_of_its_bounds_check :: proc(t: ^testing.T) {
 }
 
 @(test)
+an_element_access_takes_the_bounds_check_of_its_own_array :: proc(t: ^testing.T) {
+	// A check against another array says nothing about this one's length: a compound assignment
+	// whose right side shortened the array must check again before it stores.
+	p := ir.make_builder(context.temp_allocator)
+	numbers := ir.array_layout(&p, .Number)
+	params := [?]ir.Type{ir.ref(numbers), ir.ref(numbers)}
+	write := ir.declare_func(&p, "write", params[:], ir.VOID, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+	not_integer := ir.fail_site(
+		&p,
+		abi.Fail_Site{file = "main.ts", line = 1, column = 1, error = .Index_Not_Integer},
+	)
+	out_of_range := ir.fail_site(
+		&p,
+		abi.Fail_Site{file = "main.ts", line = 1, column = 1, error = .Index_Out_Of_Range},
+	)
+
+	f := ir.begin_func(&p, write)
+	first, second := ir.Value_ID(0), ir.Value_ID(1)
+	zero := ir.emit(&f, ir.F64, ir.Const_Number{value = 0}, at(1))
+	check := ir.Bounds_Check {
+		array        = first,
+		index        = zero,
+		not_integer  = not_integer,
+		out_of_range = out_of_range,
+	}
+	checked := ir.emit(&f, ir.F64, check, at(1))
+	ir.emit(&f, ir.VOID, ir.Element_Store{array = second, index = checked, value = zero}, at(2))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(2))
+	ir.end_func(&f)
+
+	found := ir.verify(ir.finish(&p, main, nil), context.temp_allocator)
+
+	expect_one(t, found, .Unchecked_Index)
+}
+
+@(test)
 an_operand_of_the_wrong_type_is_a_violation :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	params := [?]ir.Type{ir.BOOL}
@@ -495,7 +533,8 @@ a_heap_instruction_of_the_wrong_kind_is_a_violation :: proc(t: ^testing.T) {
 		{.Foreign_Table, .Operand_Type},
 		{.Length_Of_Object, .Operand_Type},
 		{.Element_Of_Str, .Operand_Type},
-		{.Null_Str, .Result_Type},
+		{.Null_Number, .Result_Type},
+		{.Null_Test_Of_Number, .Operand_Type},
 		{.Array_Of_Object, .Operand_Type},
 		// lower gives two objects one layout wherever check lets them meet, so a comparison of two
 		// layouts is a join that went missing.
@@ -623,7 +662,8 @@ Heap_Fault :: enum {
 	Foreign_Table, // an Alloc whose header names a row of another layout
 	Length_Of_Object,
 	Element_Of_Str,
-	Null_Str,
+	Null_Number,
+	Null_Test_Of_Number,
 	Array_Of_Object,
 	Refs_Of_Two_Layouts,
 }
@@ -671,8 +711,12 @@ build_heap :: proc(fault: Heap_Fault) -> ir.Program_IR {
 	if fault == .Element_Of_Str {
 		ir.emit(&f, ir.F64, ir.Element_Load{array = text, index = checked}, at(1))
 	}
-	ir.emit(&f, ir.STR if fault == .Null_Str else ir.ref(cell), ir.Const_Null{}, at(1))
+	ir.emit(&f, ir.F64 if fault == .Null_Number else ir.ref(cell), ir.Const_Null{}, at(1))
+	// A string binding holds null only as the mark of a declaration that has not run yet.
+	unset := ir.emit(&f, ir.STR, ir.Const_Null{}, at(1))
 	count := ir.emit(&f, ir.F64, ir.Const_Number{value = 2}, at(1))
+	tested := count if fault == .Null_Test_Of_Number else unset
+	ir.emit(&f, ir.BOOL, ir.Null_Test{value = tested}, at(1))
 	made := cell if fault == .Array_Of_Object else numbers
 	ir.emit(&f, ir.ref(made), ir.New_Array{layout = made, length = count}, at(1))
 	ir.emit(&f, ir.BOOL, ir.Layout_Test{cell = object, layout = cell}, at(1))
@@ -770,7 +814,15 @@ build_clean :: proc() -> ir.Program_IR {
 	root_args := [?]ir.Value_ID{sum}
 	root := ir.emit(&s, ir.F64, ir.Intrinsic{op = .Sqrt, args = root_args[:]}, at(3))
 	boxed := ir.emit(&s, ir.TAGGED, ir.Box{value = root}, at(3))
-	ir.emit(&s, ir.VOID, ir.Element_Store_Ref{array = 3, index = checked, value = boxed}, at(3))
+	tagged_check := check
+	tagged_check.array = 3
+	tagged_index := ir.emit(&s, ir.F64, tagged_check, at(3))
+	store := ir.Element_Store_Ref {
+		array = 3,
+		index = tagged_index,
+		value = boxed,
+	}
+	ir.emit(&s, ir.VOID, store, at(3))
 	ir.emit(&s, ir.VOID, ir.Field_Store{cell = 4, field = 0, value = sum}, at(3))
 	is_number := ir.emit(&s, ir.BOOL, ir.Tag_Test{value = 1, tags = {.Number}}, at(3))
 	branch := ir.Branch {

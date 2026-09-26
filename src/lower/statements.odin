@@ -33,8 +33,18 @@ build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) 
 		if !is_global {
 			continue
 		}
-		zero := zero_value(&s, low.builder.globals[global].type, span)
+		type := low.builder.globals[global].type
+		zero: ir.Value_ID
+		if low.closures[file].checked[symbol] && type == ir.STR {
+			zero = ir.emit(&s.fb, ir.STR, ir.Const_Null{}, span) // the mark check_ready tests
+		} else {
+			zero = zero_value(&s, type, span)
+		}
 		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = zero}, span)
+		if flag, has_flag := low.ready[{file, declaration}]; has_flag {
+			not_yet := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
+			ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = flag, value = not_yet}, span)
+		}
 	}
 
 	for statement in low.prog.trees[file].nodes[ast.ROOT].variant.(ast.Module).statements {
@@ -174,8 +184,8 @@ leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 }
 
 // leave_function returns what the function's own type gives as the result of its class: boxed into
-// a wider class, or the class zero where the function itself gives back nothing. Poison ends the
-// block unreachable; it was reported.
+// a wider class, or undefined where the function itself gives back nothing, which the class holds
+// tagged (join_signatures). Poison ends the block unreachable; it was reported.
 @(private)
 leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if s.result == ir.VOID {
@@ -184,7 +194,8 @@ leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	}
 	returned: ir.Value_ID
 	if s.declared == ir.VOID {
-		returned = zero_value(s, s.result, span)
+		undefined := ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
+		returned = coerce(s, undefined, s.result, span)
 	} else {
 		returned = coerce(s, value, s.result, span)
 	}
@@ -258,29 +269,35 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 
 	// A binding this slice has no room for was reported where it was declared. Its initializer is
 	// dead, and walking it would name the same construct a second time.
-	if !is_global && (symbol == bind.NO_SYMBOL || is_refused(s, symbol)) {
+	if !is_global && (local_at(s, symbol) < 0 || is_refused(s, symbol)) {
 		return
 	}
-	if node.init == ast.NO_NODE {
-		return
-	}
-
-	value := lower_expression(s, node.init)
 	type: ir.Type
 	if is_global {
 		type = s.low.builder.globals[global].type
 	} else {
 		type = local_type(s, symbol)
 	}
-	if type == ir.VOID {
-		return // a binding typed `never` holds nothing (store_place)
+
+	stored := ir.NO_VALUE
+	if node.init != ast.NO_NODE {
+		value := lower_expression(s, node.init)
+		if type == ir.VOID {
+			return // a binding typed `never` holds nothing (store_place)
+		}
+		given, wanted := s.typed.node_types[node.init], s.typed.node_types[id]
+		stored = flow_into(s, value, given, wanted, type, span)
+	} else if s.low.closures[s.file].checked[symbol] && type == ir.STR {
+		// No initializer leaves the zero, the empty cell, in place of the mark of check_ready.
+		stored = zero_value(s, ir.STR, span)
 	}
-	given, wanted := s.typed.node_types[node.init], s.typed.node_types[id]
-	stored := flow_into(s, value, given, wanted, type, span)
 	if !is_global {
 		write_local(s, symbol, stored, span)
 	} else if stored != ir.NO_VALUE {
 		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = global, value = stored}, span)
+	}
+	if stored != ir.NO_VALUE || node.init == ast.NO_NODE {
+		mark_ready(s, symbol, span)
 	}
 }
 
@@ -666,8 +683,7 @@ case_test :: proc(s: ^Func_State, subject: ^Switch_Subject, value: ast.Node_ID) 
 	other := lower_expression(s, value)
 	if subject.value != ir.NO_VALUE && other != ir.NO_VALUE {
 		values := [2]ir.Value_ID{subject.value, other}
-		types := [2]check.Type_ID{subject.type, s.typed.node_types[value]}
-		if test := lower_compare(s, .Equal, values, types, span); test != ir.NO_VALUE {
+		if test := lower_compare(s, .Equal, values, span); test != ir.NO_VALUE {
 			return test
 		}
 	}

@@ -43,6 +43,20 @@ a_write_at_the_length_appends :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_compound_element_assignment_checks_the_index_again_where_it_writes :: proc(t: ^testing.T) {
+	// The right side runs between the read and the write and may change the array's length, so
+	// the write compares the index with the length again, where it may append.
+	result := lower_text(
+		t,
+		"function add(a: number[], i: number, f: () => number): void {\na[i] += f();\n}\n",
+	)
+	body, _ := func_named(result.output, "m1.add")
+	testing.expectf(t, len(instructions_of(body, ir.Bounds_Check)) == 2, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Length)) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(body, .Array_Push) == 1, "%s", result.text)
+}
+
+@(test)
 the_other_methods_are_runtime_calls :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,
@@ -251,4 +265,26 @@ sorting_with_a_comparator_hands_the_runtime_a_closure :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, found, "%s", result.text)
+}
+
+@(test)
+join_takes_the_comma_where_the_separator_is_undefined :: proc(t: ^testing.T) {
+	// Node joins with "," for a separator that is undefined when it runs, not only for one the call
+	// leaves out: the separator is tested for undefined before it is read as a string.
+	result := lower_text(
+		t,
+		"function glue(xs: number[], s: string | undefined): string {\nreturn xs.join(s);\n}\n",
+	)
+	body, _ := func_named(result.output, "m1.glue")
+	tests := instructions_of(body, ir.Tag_Test)
+	if testing.expectf(t, len(tests) == 2, "%s", result.text) {
+		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Undefined})
+		testing.expect_value(t, tests[1].tags, ir.Tag_Set{.String})
+	}
+	merged := 0
+	for instruction in body.values {
+		_, is_phi := instruction.variant.(ir.Phi)
+		merged += 1 if is_phi && instruction.type == ir.STR else 0
+	}
+	testing.expectf(t, merged == 1, "%s", result.text)
 }

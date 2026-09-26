@@ -37,7 +37,7 @@ of its parameters and its result. A function accepted where another function typ
 the same closure after the flow, so the two types need one signature, or a call through the second
 would pass arguments the first does not take. Signature classes are built the way the widening
 classes are, over the whole program: a parameter every member agrees on keeps its type, one they
-differ on is Tagged, and so is the result, which a member that returns nothing leaves to the others.
+differ on is Tagged, and so is the result, where a member that returns nothing answers undefined.
 A function then takes the arguments of its class and unboxes each into its own type (coerce), and a
 call gives the class what it wants and unboxes the answer.
 */
@@ -81,6 +81,22 @@ ir_type :: proc(
 		memo.known = true
 	}
 	return memo.type, memo.ok
+}
+
+// binding_type is the IR type of a variable of this type. One of type void holds undefined, as a
+// call typed void evaluates to it; only a variable of type never holds nothing.
+binding_type :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+) -> (
+	type: ir.Type,
+	ok: bool,
+) {
+	if id == check.VOID {
+		return ir.TAGGED, true
+	}
+	return ir_type(low, types, id)
 }
 
 @(private)
@@ -492,8 +508,9 @@ signature_node :: proc(
 	return class_node(&low.signatures, signature_key(signature), signature), true
 }
 
-// join_signatures gives a parameter only one member has that member's type, and lets a result of
-// void take the other's: nobody reads what a function typed void gives back.
+// join_signatures gives a parameter only one member has that member's type. A result of void joined
+// with another is tagged like any two results that differ: a call through the class may print
+// what it gets back, which is undefined from the member that returns nothing (leave_function).
 @(private)
 join_signatures :: proc(a, b: Signature) -> Signature {
 	join :: proc(x, y: ir.Type) -> ir.Type {
@@ -510,13 +527,7 @@ join_signatures :: proc(a, b: Signature) -> Signature {
 			param = join(a.params[i], b.params[i])
 		}
 	}
-	result := join(a.result, b.result)
-	if a.result == ir.VOID {
-		result = b.result
-	} else if b.result == ir.VOID {
-		result = a.result
-	}
-	return {params = params, result = result}
+	return {params = params, result = join(a.result, b.result)}
 }
 
 @(private)

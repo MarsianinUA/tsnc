@@ -49,6 +49,7 @@ Variant :: union #no_nil {
 	Element_Store,
 	Element_Store_Ref,
 	Layout_Test,
+	Null_Test,
 
 	// Tagged values.
 	Tag_Test,
@@ -95,9 +96,9 @@ Const_Bool :: struct {
 // Const_Undefined is Tagged: it has no type of its own to live in.
 Const_Undefined :: struct {}
 
-// Const_Null is Tagged, or a reference type other than Str: typed as a Ref or a Closure it is the
-// null reference, the zero of a binding that holds an object or a function. A string never holds
-// it, since the zero of a string is the empty cell.
+// Const_Null is Tagged, or a reference type: typed as a Ref or a Closure it is the null reference,
+// the zero of a binding that holds an object or a function. A string binding holds it only as the
+// mark of a declaration that has not run (Null_Test); the zero of a string is the empty cell.
 Const_Null :: struct {}
 
 // Const_String is a Str pointing at a cell codegen puts in read-only data.
@@ -208,6 +209,13 @@ Element_Store_Ref :: struct {
 Layout_Test :: struct {
 	cell:   Value_ID,
 	layout: Layout_ID,
+}
+
+// Null_Test answers Bool: whether a reference is null. No value a program makes is, so only a
+// binding holds null, as the mark that its declaration has not run yet where a read may come first
+// (the read check of lower).
+Null_Test :: struct {
+	value: Value_ID,
 }
 
 // Tag_Test answers whether the tag of a Tagged value is in the set. It is what narrowing compiles
@@ -322,7 +330,7 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Alloc, New_Array, Field_Load, Field_Store, Field_Store_Ref, Length:
 		return false
-	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test:
+	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
 		return false
 	case Tag_Test, Box, Unbox, Global_Load, Global_Store:
 		return false

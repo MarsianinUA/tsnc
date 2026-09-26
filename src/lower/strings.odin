@@ -168,7 +168,7 @@ lower_string_includes :: proc(
 	search := runtime_argument(s, node.args[0], .Ptr)
 	position: ir.Value_ID
 	if len(node.args) > 1 {
-		position = optional_number(s, node.args[1], 0, span)
+		position = optional_argument(s, node.args[1], ir.Const_Number{value = 0}, ir.F64, span)
 	} else {
 		position = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	}

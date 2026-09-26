@@ -95,4 +95,5 @@ NAMES := [abi.Runtime_Error]string {
 	.Field_Holds_Other_Kind       = "a field holds a value its declared type does not allow",
 	.Value_Of_Other_Kind          = "a function was given or returned a value its declared type does not allow",
 	.Tagged_Holds_Other_Kind      = "a value holds a kind its type does not allow",
+	.Read_Before_Initialization   = "cannot access a variable before its initialization",
 }

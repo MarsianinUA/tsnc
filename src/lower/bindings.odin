@@ -237,7 +237,7 @@ begin_function :: proc(
 		for symbol, i in low.closures[file].env[node] {
 			type := local_type(&s, symbol)
 			if low.closures[file].boxed[symbol] {
-				type = box_type(&s, type)
+				type = local_box_type(&s, symbol)
 			}
 			load := ir.Field_Load {
 				cell  = cell,
@@ -294,7 +294,7 @@ is_refused :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> bool {
 zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 	for symbol in s.low.locals[s.file].zeroed[scope] {
 		declared := s.bound.symbols[symbol]
-		type, ok := ir_type(s.low, s.types, s.typed.node_types[declared.declaration])
+		type, ok := binding_type(s.low, s.types, s.typed.node_types[declared.declaration])
 		if !ok {
 			node := s.tree.nodes[declared.declaration]
 			text := construct_text(s.types, s.typed.node_types[declared.declaration])
@@ -325,8 +325,14 @@ enter_scope :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 		if !is_variable || !facts.boxed[symbol] || is_refused(s, symbol) {
 			continue
 		}
-		type := local_type(s, symbol)
-		bind_local(s, symbol, zero_value(s, type, span), span)
+		if facts.checked[symbol] {
+			// The cell comes zero filled: null, or a zero with its ready flag false.
+			type := local_box_type(s, symbol)
+			box := ir.emit(&s.fb, type, ir.Alloc{layout = type.layout}, span)
+			s.locals[local_at(s, symbol)] = box
+		} else {
+			bind_local(s, symbol, zero_value(s, local_type(s, symbol), span), span)
+		}
 	}
 	for symbol in s.bound.scopes[scope].symbols {
 		entry := s.bound.symbols[symbol]
@@ -351,6 +357,18 @@ local_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
 @(private)
 box_type :: proc(s: ^Func_State, type: ir.Type) -> ir.Type {
 	slots := [1]abi.Slot_Kind{slot_of(type.kind)}
+	return ir.ref(ir.environment_layout(&s.low.builder, slots[:]))
+}
+
+// local_box_type is the box of a local. Where a read may come before the declaration ran and the
+// local is no reference, a second slot holds its ready flag (check_ready).
+@(private)
+local_box_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
+	type := local_type(s, symbol)
+	if !s.low.closures[s.file].checked[symbol] || holds_null(type) {
+		return box_type(s, type)
+	}
+	slots := [2]abi.Slot_Kind{slot_of(type.kind), .Boolean}
 	return ir.ref(ir.environment_layout(&s.low.builder, slots[:]))
 }
 
@@ -400,10 +418,77 @@ bind_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, value: ir.Value_ID, s
 		s.locals[local_at(s, symbol)] = value
 		return
 	}
-	type := box_type(s, local_type(s, symbol))
+	type := local_box_type(s, symbol)
 	box := ir.emit(&s.fb, type, ir.Alloc{layout = type.layout}, span)
 	store_slot(s, box, 0, value, span)
 	s.locals[local_at(s, symbol)] = box
+	mark_ready(s, symbol, span)
+}
+
+// check_ready fails the program where a `let` or `const` read before its declaration ran
+// (early_use) finds it has not. A reference binding holds null until then, any other a ready flag
+// beside it: a global of its own for a global, the second slot of the box for a local. A local no
+// closure shares, which no box holds, is read early only by an arrow inlined before its
+// declaration, and that read always comes first.
+@(private)
+check_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
+	declaration := s.bound.symbols[symbol].declaration
+	not_yet := ir.NO_VALUE
+	if global, is_global := s.low.globals[{s.file, declaration}]; is_global {
+		type := s.low.builder.globals[global].type
+		if flag, has_flag := s.low.ready[{s.file, declaration}]; has_flag {
+			ready := ir.emit(&s.fb, ir.BOOL, ir.Global_Load{global = flag}, span)
+			not_yet = negated(s, ready, span)
+		} else {
+			value := ir.emit(&s.fb, type, ir.Global_Load{global = global}, span)
+			not_yet = ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+		}
+	} else if !s.low.closures[s.file].boxed[symbol] {
+		not_yet = ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
+	} else {
+		box := local_value(s, symbol)
+		if box == ir.NO_VALUE {
+			return // refused where it is declared
+		}
+		type := local_type(s, symbol)
+		if holds_null(type) {
+			value := ir.emit(&s.fb, type, ir.Field_Load{cell = box, field = 0}, span)
+			not_yet = ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+		} else {
+			ready := ir.emit(&s.fb, ir.BOOL, ir.Field_Load{cell = box, field = 1}, span)
+			not_yet = negated(s, ready, span)
+		}
+	}
+	fail_if(s, not_yet, .Read_Before_Initialization, span)
+}
+
+// mark_ready is the other half of check_ready: the declaration of a binding that a read may reach
+// early has run. A reference binding needs no mark, since the value it now holds is not null.
+@(private)
+mark_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
+	if !s.low.closures[s.file].checked[symbol] || holds_null(local_type(s, symbol)) {
+		return
+	}
+	ready := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
+	declaration := s.bound.symbols[symbol].declaration
+	if flag, has_flag := s.low.ready[{s.file, declaration}]; has_flag {
+		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = flag, value = ready}, span)
+	} else if s.low.closures[s.file].boxed[symbol] {
+		if box := local_value(s, symbol); box != ir.NO_VALUE {
+			store_slot(s, box, 1, ready, span)
+		}
+	}
+}
+
+// holds_null says whether a binding of this type is a reference, which is null before anything was
+// stored in it.
+@(private)
+holds_null :: proc(type: ir.Type) -> bool {
+	#partial switch type.kind {
+	case .Str, .Ref, .Closure:
+		return true
+	}
+	return false
 }
 
 // store_slot writes a slot of a cell, through the store that ends in _Ref where the collector
@@ -435,9 +520,9 @@ store_slot :: proc(
 }
 
 // zero_value gives a string the empty cell rather than a null pointer, so no reader and no
-// collector has to know about one. An object or an array has no empty value to take, so its
-// binding starts as the null reference, which the collector skips and check never lets a program
-// read before a value is stored.
+// collector has to know about one. An object, an array or a function has no empty value to take,
+// so its binding starts as the null reference, which the collector skips; a read that may come
+// before a value is stored tests for it (check_ready).
 @(private)
 zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value_ID {
 	switch type.kind {
@@ -453,7 +538,7 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 	case .Ref, .Closure:
 		return ir.emit(&s.fb, type, ir.Const_Null{}, span)
 	case .Void:
-		// The declaration that named one was reported already.
+		// A binding typed never holds nothing.
 		return ir.NO_VALUE
 	}
 	return ir.NO_VALUE

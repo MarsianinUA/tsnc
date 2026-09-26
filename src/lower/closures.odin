@@ -38,6 +38,9 @@ File_Closures :: struct {
 	names:      []string, // by ast.Node_ID of a closure: the name its value prints with
 	value_used: []bool, // by bind.Symbol_ID of a nested declaration: read as a value
 	boxed:      []bool, // by bind.Symbol_ID: the variable lives in a box
+	// By bind.Symbol_ID: a `let` or `const` some use may reach before its declaration ran
+	// (early_use), so its binding marks whether it has (check_ready).
+	checked:    []bool,
 }
 
 // analyze_closures reads the file's check facts, so it runs on a file that runs.
@@ -53,6 +56,7 @@ analyze_closures :: proc(low: ^Lowering, file: source.File_ID) -> File_Closures 
 		names      = make([]string, nodes, context.temp_allocator),
 		value_used = make([]bool, len(bound.symbols), context.temp_allocator),
 		boxed      = make([]bool, len(bound.symbols), context.temp_allocator),
+		checked    = make([]bool, len(bound.symbols), context.temp_allocator),
 	}
 	find_uses(low, file, &out)
 
@@ -102,6 +106,11 @@ analyze_closures :: proc(low: ^Lowering, file: source.File_ID) -> File_Closures 
 		out.env[id] = env[:]
 		for symbol in env {
 			out.boxed[symbol] ||= needs_box(tree, bound, id, symbol)
+		}
+	}
+	for i in 0 ..< len(tree.nodes) {
+		if early_use(tree, bound, ast.Node_ID(i)) {
+			out.checked[bound.node_symbols[i]] = true
 		}
 	}
 	return out
@@ -250,6 +259,24 @@ needs_box :: proc(
 		return tree.nodes[entry.declaration].span.end > made
 	}
 	return false
+}
+
+// early_use says whether a use of a `let` or `const` may run before its declaration has: it stands
+// in a function (bind's node_deferred) made before the declaration ends, which a call may run at
+// any time after. One that runs where it stands check reports instead (Used_Before_Declaration).
+@(private)
+early_use :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_ID) -> bool {
+	outer := bound.node_deferred[id]
+	symbol := bound.node_symbols[id]
+	if outer == bind.MODULE_SCOPE || symbol == bind.NO_SYMBOL {
+		return false
+	}
+	entry := bound.symbols[symbol]
+	if entry.kind != .Let && entry.kind != .Const {
+		return false
+	}
+	made := creation_point(tree, bound, bound.scopes[outer].node)
+	return tree.nodes[entry.declaration].span.end > made
 }
 
 // creation_point is where a closure is made: an arrow where it stands, a declaration where the

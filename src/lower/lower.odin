@@ -26,10 +26,13 @@ either. lower walks the value edges from the entry file itself and keeps the ord
 Zero before use. Each module init opens by storing the zero of its type into every global of the
 module, and each function opens by giving every local of its body the zero of its type. The data
 segment is zero already; the stores are what make the rule visible and what gives a string binding a
-real empty cell instead of a null pointer the collector would have to know about. A read that
-happens before the declaration ran therefore answers the zero value, where Node throws a
-ReferenceError. check does not catch that case, and requirements 3.8 keeps such a program out of the
-differential tests.
+real empty cell instead of a null pointer the collector would have to know about.
+
+Read before initialization. A `let` or `const` read before its declaration ran fails the program
+with Node's ReferenceError. check reports such a read where it runs as it stands (T3028); one inside
+a function made before the declaration may run on either side of it, so the binding marks whether
+its declaration has run and the read tests the mark (check_ready, bindings.odin). A reference
+binding holds null until then, any other a ready flag beside it, as V8 holds its hole.
 
 Memory: everything in the answer comes from the allocator, which is meant to be an arena. Names are
 built with it, because ir borrows them and they outlive the call; the tables lower needs only while
@@ -75,6 +78,9 @@ Lowering :: struct {
 	builder:       ir.Program_Builder,
 	funcs:         map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
 	globals:       map[Decl_Key]ir.Global_ID, // by ast.Declarator
+	// By ast.Declarator: the flag a global other than a reference has beside it when a read may
+	// come before its declaration (check_ready).
+	ready:         map[Decl_Key]ir.Global_ID,
 	// Indexed by source.File_ID, and filled for a file that runs only.
 	closures:      []File_Closures,
 	locals:        []File_Locals,
@@ -114,6 +120,7 @@ lower :: proc(
 		builder       = ir.make_builder(allocator),
 		funcs         = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
 		globals       = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
+		ready         = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
 		closures      = make([]File_Closures, len(prog.files), context.temp_allocator),
 		locals        = make([]File_Locals, len(prog.files), context.temp_allocator),
 		objects       = make_classes([]ir.Slot),
@@ -332,7 +339,7 @@ symbol_type :: proc(
 	if entry.kind == .Function {
 		return ir.CLOSURE, true
 	}
-	return ir_type(
+	return binding_type(
 		low,
 		low.facts[file].result.types,
 		low.facts[file].typed.node_types[entry.declaration],
@@ -405,7 +412,7 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 			continue
 		}
 		declared := typed.node_types[entry.declaration]
-		type, ok := ir_type(low, types, declared)
+		type, ok := binding_type(low, types, declared)
 		if !ok {
 			span := tree.nodes[entry.declaration].span
 			report(low, .Not_Lowered, span, construct_text(types, declared))
@@ -413,6 +420,10 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 		}
 		name := fmt.aprintf("m%d.%s", file, entry.name.text, allocator = low.allocator)
 		low.globals[{file, entry.declaration}] = ir.add_global(&low.builder, name, type)
+		if low.closures[file].checked[symbol] && !holds_null(type) {
+			flag := fmt.aprintf("m%d.%s$ready", file, entry.name.text, allocator = low.allocator)
+			low.ready[{file, entry.declaration}] = ir.add_global(&low.builder, flag, ir.BOOL)
+		}
 	}
 }
 

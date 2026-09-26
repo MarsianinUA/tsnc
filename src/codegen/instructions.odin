@@ -102,6 +102,10 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Layout_Test:
 		body.values[value] = build_layout_test(m, body.values[v.cell], v.layout)
 
+	case ir.Null_Test:
+		reference, null := body.values[v.value], llvm.LLVMConstNull(m.types.ptr)
+		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, reference, null, "")
+
 	case ir.Tag_Test:
 		body.values[value] = build_tag_test(m, body.values[v.value], v.tags)
 

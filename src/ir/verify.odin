@@ -37,7 +37,7 @@ Violation_Kind :: enum u8 {
 	Result_Type, // a result type that does not suit the instruction
 	Argument_Count, // a call or an intrinsic with the wrong number of arguments
 	Store_Kind, // a store that does not match the slot it writes
-	Unchecked_Index, // an element access whose index is not the answer of a bounds check
+	Unchecked_Index, // an element access whose index is not the answer of a bounds check of its array
 	Unknown_Id, // a layout, global, string, fail site or function that is not in the program
 	Entry_Signature, // an entry point that does not take nothing and return void
 	// An environment that does not match the function: an Env in a function without one, an env
@@ -393,7 +393,7 @@ verify_instruction :: proc(c: ^Checker) {
 			if _, known := layout_of(c, type.layout); !known {
 				report(c, .Unknown_Id)
 			}
-		} else if type != TAGGED && type != CLOSURE {
+		} else if type != TAGGED && type != CLOSURE && type != STR {
 			report(c, .Result_Type)
 		}
 
@@ -509,14 +509,14 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Element_Load:
 		element, known := array_element(c, v.array)
-		expect_checked_index(c, v.index)
+		expect_checked_index(c, v.index, v.array)
 		if known && !slot_fits(element, instruction.type) {
 			report(c, .Result_Type)
 		}
 
 	case Element_Store:
 		element, known := array_element(c, v.array)
-		expect_checked_index(c, v.index)
+		expect_checked_index(c, v.index, v.array)
 		if known {
 			if traced(element) {
 				report(c, .Store_Kind)
@@ -527,7 +527,7 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Element_Store_Ref:
 		element, known := array_element(c, v.array)
-		expect_checked_index(c, v.index)
+		expect_checked_index(c, v.index, v.array)
 		if known {
 			if !traced(element) {
 				report(c, .Store_Kind)
@@ -543,6 +543,12 @@ verify_instruction :: proc(c: ^Checker) {
 		if _, known := layout_of(c, v.layout); !known {
 			report(c, .Unknown_Id)
 		} else if !is_base(c, v.layout) {
+			report(c, .Operand_Type)
+		}
+		expect_result(c, BOOL)
+
+	case Null_Test:
+		if type, known := operand(c, v.value); known && !is_reference(type) {
 			report(c, .Operand_Type)
 		}
 		expect_result(c, BOOL)
@@ -835,10 +841,10 @@ expect_slot :: proc(c: ^Checker, id: Value_ID, kind: abi.Slot_Kind) {
 	}
 }
 
-// expect_checked_index requires the index of an element access to be the answer of a bounds check,
-// so the check cannot drift away from the access it guards.
+// expect_checked_index requires the index of an element access to be the answer of a bounds check
+// of the same array, so the check cannot drift away from the access it guards.
 @(private)
-expect_checked_index :: proc(c: ^Checker, id: Value_ID) {
+expect_checked_index :: proc(c: ^Checker, id: Value_ID, array: Value_ID) {
 	type, known := operand(c, id)
 	if !known {
 		return
@@ -846,7 +852,8 @@ expect_checked_index :: proc(c: ^Checker, id: Value_ID) {
 	if type != F64 {
 		report(c, .Operand_Type)
 	}
-	if _, checked := c.body.values[id].variant.(Bounds_Check); !checked {
+	bounds, checked := c.body.values[id].variant.(Bounds_Check)
+	if !checked || bounds.array != array {
 		report(c, .Unchecked_Index)
 	}
 }

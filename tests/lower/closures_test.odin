@@ -238,7 +238,9 @@ a_boxed_for_of_variable_and_a_boxed_callback_parameter_are_bound_per_pass :: pro
 }
 
 @(test)
-a_callback_through_a_closure_gets_only_what_it_takes :: proc(t: ^testing.T) {
+a_callback_through_a_closure_gets_the_index_only_where_its_class_can_hold_it :: proc(
+	t: ^testing.T,
+) {
 	// `narrow` flows into a type that takes a label as well, so its class does; map passes the
 	// element and pads the label with the empty string rather than handing it the index.
 	result := lower_text(
@@ -325,8 +327,10 @@ a_widened_parameter_is_unboxed_with_a_check_on_the_way_in :: proc(t: ^testing.T)
 }
 
 @(test)
-a_void_result_takes_the_result_of_its_class :: proc(t: ^testing.T) {
-	// `() => void` is one type wherever it is written, and `five` flows into it.
+a_void_result_joined_with_a_value_is_tagged_and_gives_undefined :: proc(t: ^testing.T) {
+	// `() => void` is one type wherever it is written, and `five` flows into it, so the class
+	// result is tagged: five boxes its number, and quiet, which returns nothing, answers undefined
+	// rather than the zero of a number, or the null of an object that a print would follow.
 	result := lower_text(
 		t,
 		`
@@ -341,11 +345,11 @@ a_void_result_takes_the_result_of_its_class :: proc(t: ^testing.T) {
 	if !testing.expectf(t, found, "%s", result.text) {
 		return
 	}
-	testing.expect(t, quiet.result == ir.F64 && five.result == ir.F64)
+	testing.expect(t, quiet.result == ir.TAGGED && five.result == ir.TAGGED)
 	returns := instructions_of(quiet, ir.Return)
 	if testing.expectf(t, len(returns) == 1, "%s", result.text) {
-		zero, is_number := number_at(quiet, returns[0].value)
-		testing.expectf(t, is_number && zero == 0, "%s", result.text)
+		_, is_undefined := quiet.values[returns[0].value].variant.(ir.Const_Undefined)
+		testing.expectf(t, is_undefined, "%s", result.text)
 	}
 }
 
@@ -388,4 +392,53 @@ number_boxes :: proc(result: Lowered, body: ir.Func) -> int {
 		total += 1 if table.kind == .Environment && one_number else 0
 	}
 	return total
+}
+
+@(test)
+a_value_of_type_void_is_undefined :: proc(t: ^testing.T) {
+	// A variable of type void holds undefined, and forEach and console.log answer it: the line
+	// that prints them is written, where it used to vanish.
+	result := lower_text(
+		t,
+		`
+		function nothing(): void {}
+		const q = nothing();
+		console.log([1].forEach(x => x), q, console.log("x"));
+	`,
+	)
+	testing.expect(t, result.output.globals[0].type == ir.TAGGED)
+	init, _ := func_named(result.output, "init$m1")
+	testing.expectf(t, calls_to(init, .Console_Log) == 2, "%s", result.text)
+}
+
+@(test)
+a_callback_through_a_closure_gets_what_node_passes_where_its_class_takes_it :: proc(
+	t: ^testing.T,
+) {
+	// `one` holds `two`, which takes an optional second number: Node passes it the index in map
+	// and the second element in sort, and so does tsnc, boxed into the tagged slot of the class.
+	result := lower_text(
+		t,
+		`
+		const two = (a: number, b?: number): number => (b === undefined ? a : a - b);
+		const one: (a: number) => number = two;
+		function run(f: (a: number) => number): number[] {
+			return [5, 6].map(f);
+		}
+		console.log(run(one), [3, 1].sort(one));
+	`,
+	)
+	run, _ := func_named(result.output, "m1.run")
+	calls := instructions_of(run, ir.Call_Closure)
+	if !testing.expectf(t, len(calls) == 1 && len(calls[0].args) == 2, "%s", result.text) {
+		return
+	}
+	_, boxed := run.values[calls[0].args[1]].variant.(ir.Box)
+	testing.expectf(t, boxed, "the index is not passed:\n%s", result.text)
+	adapter, _ := func_prefixed(result.output, "m1.sort$")
+	adapted := instructions_of(adapter, ir.Call_Closure)
+	if testing.expectf(t, len(adapted) == 1, "%s", result.text) {
+		_, second := adapter.values[adapted[0].args[1]].variant.(ir.Box)
+		testing.expectf(t, second, "the second element is not passed:\n%s", result.text)
+	}
 }

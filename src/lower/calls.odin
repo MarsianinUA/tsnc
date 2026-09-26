@@ -246,9 +246,12 @@ callback_of :: proc(s: ^Func_State, id: ast.Node_ID) -> (callback: Callback, ok:
 	return callback, true
 }
 
-// call_callback passes the callback as many of the arguments as its own type takes: the index must
-// not land in a position where another member of its signature class takes a string. given holds
-// the check type of each argument.
+// call_callback passes the callback what Node passes it, as far as its signature class reaches: a
+// member of the class that takes more than the callback's own type sees the index and the array,
+// as in Node (lib_argument). given holds the check type of each argument.
+//
+// A callback typed void answers what its class gives back, as Node keeps what the function
+// returned, and undefined where nothing comes back at all.
 @(private)
 call_callback :: proc(
 	s: ^Func_State,
@@ -257,17 +260,45 @@ call_callback :: proc(
 	given: []check.Type_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
+	answer: ir.Value_ID
 	if callback.arrow != ast.NO_NODE {
-		return inline_arrow(s, callback, args, given, span)
+		answer = inline_arrow(s, callback, args, given, span)
+	} else {
+		params, class := callback.function.params, callback.callee.signature.params
+		count := min(len(args), len(class))
+		passed := make([]ir.Value_ID, count, context.temp_allocator)
+		for i in 0 ..< count {
+			if i < len(params) {
+				passed[i] = flow_into(s, args[i], given[i], params[i].type, class[i], span)
+			} else {
+				passed[i] = lib_argument(s, args[i], class[i], span)
+			}
+		}
+		answer = emit_class_call(s, callback.callee, passed, count, callback.result, span)
 	}
-	params := callback.function.params
-	count := min(len(args), len(params))
-	flowed := make([]ir.Value_ID, count, context.temp_allocator)
-	for i in 0 ..< count {
-		target := callback.callee.signature.params[i]
-		flowed[i] = flow_into(s, args[i], given[i], params[i].type, target, span)
+	no_answer := answer == ir.NO_VALUE || value_type(s, answer) == ir.VOID
+	if callback.result == ir.VOID && no_answer {
+		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
 	}
-	return emit_class_call(s, callback.callee, flowed, count, callback.result, span)
+	return answer
+}
+
+// lib_argument passes a value of the lib to a callback at a position its own type leaves out, which
+// only another member of its signature class takes: boxed where the class slot is tagged, and the
+// class zero where the slot holds something else, such as a string where the lib passes the index,
+// which is what a position the lib passes nothing to gets as well.
+@(private)
+lib_argument :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	param: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	type := value_type(s, value)
+	if type == param || param == ir.TAGGED && boxable(type) {
+		return coerce(s, value, param, span)
+	}
+	return zero_value(s, param, span)
 }
 
 // called_as_it_stands says whether a signature takes what the runtime passes a comparator: two
@@ -281,9 +312,9 @@ called_as_it_stands :: proc(signature: Signature, element: ir.Type) -> bool {
 }
 
 // sort_adapter answers a function of the runtime's comparator shape that calls the closure its
-// environment holds through the closure's class signature: the first `takes` elements boxed into
-// the class, the other positions of the class at their zero, and the answer unboxed into a number.
-// One adapter serves every comparator of one class, element kind and count. It is built on the
+// environment holds through the closure's class signature: the two elements in the first two
+// positions of the class (lib_argument), the other positions at their zero, and the answer unboxed
+// into a number. One adapter serves every comparator of one class and element kind. It is built on the
 // spot, in the middle of the function that needs it: declare_func appends a row and end_func
 // writes it back by index, so the function being built is not disturbed.
 @(private)
@@ -293,10 +324,9 @@ sort_adapter :: proc(
 	call: ast.Node_ID,
 	signature: Signature,
 	element: ir.Type,
-	takes: int,
 	span: source.Span,
 ) -> ir.Func_ID {
-	key := fmt.tprintf("%s/%d/%d", signature_key(signature), element.kind, takes)
+	key := fmt.tprintf("%s/%d", signature_key(signature), element.kind)
 	if func, built := low.sort_adapters[key]; built {
 		return func
 	}
@@ -321,8 +351,12 @@ sort_adapter :: proc(
 		closure   = ir.emit(&a.fb, ir.CLOSURE, ir.Field_Load{cell = cell, field = 0}, span),
 		signature = signature,
 	}
-	given := [2]ir.Value_ID{ir.Value_ID(0), ir.Value_ID(1)}
-	answer := emit_class_call(&a, callee, given[:], takes, ir.F64, span)
+	count := min(len(signature.params), 2)
+	given: [2]ir.Value_ID
+	for i in 0 ..< count {
+		given[i] = lib_argument(&a, ir.Value_ID(i), signature.params[i], span)
+	}
+	answer := emit_class_call(&a, callee, given[:count], count, ir.F64, span)
 	if answer == ir.NO_VALUE {
 		ir.emit(&a.fb, ir.VOID, ir.Unreachable{}, span) // reported where it was found
 	} else {
@@ -440,19 +474,21 @@ runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) ->
 	return operand_not_lowered(s, value, span)
 }
 
-// optional_number hands over a number argument that may be undefined at run time as the number the
-// specification treats exactly as undefined there (abi.MISSING_END and its kin), which is what the
-// runtime takes for an argument the call leaves out.
+// optional_argument hands over an argument that may be undefined at run time as what the runtime
+// takes for an argument the call leaves out: for a number, the one the specification treats exactly
+// as undefined there (abi.MISSING_END and its kin), for join's separator the string ",". missing is
+// that constant, emitted only where the argument turns out undefined.
 @(private)
-optional_number :: proc(
+optional_argument :: proc(
 	s: ^Func_State,
 	arg: ast.Node_ID,
-	missing: f64,
+	missing: ir.Variant,
+	want: ir.Type,
 	span: source.Span,
 ) -> ir.Value_ID {
 	value := lower_expression(s, arg)
 	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED {
-		return coerce(s, value, ir.F64, s.tree.nodes[arg].span)
+		return coerce(s, value, want, s.tree.nodes[arg].span)
 	}
 	absent := ir.add_block(&s.fb)
 	given := ir.add_block(&s.fb)
@@ -465,16 +501,16 @@ optional_number :: proc(
 	ir.emit(&s.fb, ir.VOID, branch, span)
 
 	ir.use_block(&s.fb, absent)
-	stand_in := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = missing}, span)
+	stand_in := ir.emit(&s.fb, want, missing, span)
 	left_out := here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 
 	ir.use_block(&s.fb, given)
-	number := unbox_checked(s, value, ir.F64, .Tagged_Holds_Other_Kind, s.tree.nodes[arg].span)
+	given_value := unbox_checked(s, value, want, .Tagged_Holds_Other_Kind, s.tree.nodes[arg].span)
 	passed := here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 
-	return join_values(s, join, {left_out, passed}, {stand_in, number}, ir.F64, span)
+	return join_values(s, join, {left_out, passed}, {stand_in, given_value}, want, span)
 }
 
 // lower_runtime stays quiet about a call with the wrong count: check already reported it.
@@ -522,7 +558,10 @@ lower_method :: proc(
 	for param, i in params[1:] {
 		switch {
 		case i < len(node.args) && param == .Number:
-			args[i + 1] = optional_number(s, node.args[i], method.missing[i], span)
+			missing := ir.Const_Number {
+				value = method.missing[i],
+			}
+			args[i + 1] = optional_argument(s, node.args[i], missing, ir.F64, span)
 		case i < len(node.args):
 			args[i + 1] = runtime_argument(s, node.args[i], param)
 		case param == .Number:
@@ -579,7 +618,7 @@ lower_fold :: proc(s: ^Func_State, node: ast.Call, fold: Fold, span: source.Span
 	return total
 }
 
-// lower_console has no value to answer, as the lib declares.
+// lower_console answers undefined, the value of a call the lib types void.
 @(private)
 lower_console :: proc(
 	s: ^Func_State,
@@ -598,26 +637,34 @@ lower_console :: proc(
 	}
 	// An argument this build cannot compile does not stop the others from being lowered: one pass
 	// names every construct a program would have to change, which is what requirements 2.3 asks of
-	// the compiler. The call goes only when every argument has a value; one that never comes back,
-	// as process.exit() does, leaves no line to write.
+	// the compiler. The call goes only when every argument has a value, which leaves out one that
+	// never comes back, as process.exit() does, and a construct already reported.
 	if complete {
 		ir.emit(&s.fb, ir.VOID, ir.Call_Runtime{export = .Console_Log, args = args}, span)
 	}
-	return ir.NO_VALUE
+	return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
 }
 
-// console_argument boxes the argument into the tagged value the runtime takes, so a narrowed read
-// stays as it is (lower_raw). An argument typed undefined or null is that constant whatever
-// lowering it answered.
+// console_argument boxes the argument into the tagged value the runtime takes. A tagged value is
+// printed as it is now (lower_raw), whatever check narrowed it to, since a call may have written
+// the variable after the test. Any other argument typed undefined or null is that constant, and
+// one typed void that answered nothing, as a ternary of two void calls, is undefined.
 @(private)
 console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	value := lower_raw(s, id)
+	if value != ir.NO_VALUE && value_type(s, value) == ir.TAGGED {
+		return value
+	}
 	switch s.typed.node_types[id] {
 	case check.UNDEFINED:
 		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
 	case check.NULL:
 		return ir.emit(&s.fb, ir.TAGGED, ir.Const_Null{}, span)
+	case check.VOID:
+		if value == ir.NO_VALUE {
+			return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
+		}
 	}
 	return coerce(s, value, ir.TAGGED, span)
 }
@@ -628,7 +675,7 @@ console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 lower_process_exit :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	code := ir.NO_VALUE
 	if len(node.args) > 0 {
-		code = optional_number(s, node.args[0], 0, span)
+		code = optional_argument(s, node.args[0], ir.Const_Number{value = 0}, ir.F64, span)
 		if code == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}

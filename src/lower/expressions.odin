@@ -188,13 +188,15 @@ coerce :: proc(
 // take, which LLVM may fold into unreachable once it sees both sides. A difference is a checker bug,
 // reported rather than compiled.
 //
-// It also refuses a value of type `any` flowing into a type that may hold a function anywhere
-// (unions.odin), since only the tag of a function out of `any` could be checked: without that,
-// `let f: F | undefined = a; if (f) f(1)` would call a closure of any signature through F.
+// It also refuses a flow that brings an `any` to a position that may hold a function, at the top
+// or nested in a field, a parameter, a result or an element (any_to_function), since only the tag
+// of a function out of `any` could be checked: without that, `let f: F | undefined = a; if (f)
+// f(1)` would call a closure of any signature through F.
 @(private)
 flow_intact :: proc(s: ^Func_State, given, wanted: check.Type_ID, span: source.Span) -> bool {
-	if given == check.ANY && holds_function(s.types, wanted) {
-		report(s.low, .Any_Operation, span, "become a function", "any")
+	if found := any_to_function(s.types, given, wanted); found != check.ERROR {
+		what := "any" if found == check.ANY else "unknown"
+		report(s.low, .Any_Operation, span, "become a function", what)
 		return false
 	}
 	_, given_is_function := s.types[given].(check.Function)
@@ -228,6 +230,10 @@ flow_into :: proc(
 
 // flow_checked is flow_into without the conversion, for a flow whose conversion comes later: the
 // arguments of a call are all evaluated before class_arguments converts the first one.
+//
+// An `any` or `unknown` given to a union is checked against the members here, as one given to a
+// static type is by coerce: the union stays tagged, so no conversion would look at it
+// (requirements 3.8).
 @(private)
 flow_checked :: proc(
 	s: ^Func_State,
@@ -238,7 +244,20 @@ flow_checked :: proc(
 	if value == ir.NO_VALUE || !flow_intact(s, given, wanted, span) {
 		return ir.NO_VALUE
 	}
+	from_any := given == check.ANY || given == check.UNKNOWN
+	into_union := wanted != check.ANY && wanted != check.UNKNOWN && is_tagged_type(s, wanted)
+	if from_any && into_union && value_type(s, value) == ir.TAGGED {
+		check_members(s, value, wanted, .Tagged_Holds_Other_Kind, span)
+	}
 	return value
+}
+
+// is_tagged_type says whether values of the type are tagged: a union of several representations,
+// `undefined`, `null`, `any` or `unknown`.
+@(private)
+is_tagged_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
+	kind, ok := representation(s.types, type)
+	return ok && kind == .Tagged
 }
 
 @(private)
@@ -309,6 +328,9 @@ lower_ident :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Ident) -> ir.Valu
 			return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
 		}
 		return ir.NO_VALUE
+	}
+	if early_use(s.tree, s.bound, id) {
+		check_ready(s, s.bound.node_symbols[id], span)
 	}
 	return lower_symbol(s, ref, span)
 }
@@ -556,8 +578,7 @@ lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Va
 	}
 
 	if op, is_compare := compare_op(node.op); is_compare {
-		types := [2]check.Type_ID{s.typed.node_types[node.left], s.typed.node_types[node.right]}
-		return lower_compare(s, op, {left, right}, types, span)
+		return lower_compare(s, op, {left, right}, span)
 	}
 	op, is_arithmetic := binary_op(node.op)
 	if !is_arithmetic {
@@ -585,14 +606,13 @@ arithmetic :: proc(
 
 // lower_compare lets the IR compare two numbers, two booleans or two references itself; a string
 // holds its contents and goes through the runtime, and so does a tagged value, unless the other
-// side is null or undefined (compare_tagged). types are the check types of the two sides. Two
-// objects check lets `===` compare share one layout, so their references compare as they are.
+// side is null or undefined (compare_tagged). Two objects check lets `===` compare share one layout,
+// so their references compare as they are.
 @(private)
 lower_compare :: proc(
 	s: ^Func_State,
 	op: ir.Compare_Op,
 	values: [2]ir.Value_ID,
-	types: [2]check.Type_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
 	left, right := values[0], values[1]
@@ -602,7 +622,7 @@ lower_compare :: proc(
 			// check orders two numbers or two strings, and `any` not at all.
 			return later(s, span, "ordering a tagged value")
 		}
-		return compare_tagged(s, op, values, types, span)
+		return compare_tagged(s, op, values, span)
 	}
 	type := value_type(s, left)
 	if type != value_type(s, right) {
@@ -670,21 +690,22 @@ lower_logical :: proc(
 ) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	wanted := joined_type(s, id, result)
+	// `??` reads the left side as it is (lower_raw), not as check narrowed it: a call may have
+	// written the variable since. Only its value decides a side that never runs.
+	left: ir.Value_ID
 	if node.op == .Coalesce {
-		switch s.typed.node_types[node.left] {
-		case check.UNDEFINED, check.NULL:
-			lower_expression(s, node.left)
+		left = lower_raw(s, node.left)
+		switch {
+		case is_nullish_constant(s, left):
 			right := lower_expression(s, node.right)
 			return flow_into(s, right, s.typed.node_types[node.right], wanted, result, span)
-		}
-		if !is_tagged(s, node.left) {
+		case left != ir.NO_VALUE && value_type(s, left) != ir.TAGGED:
 			// Never nullish, so the right side never runs.
-			left := lower_expression(s, node.left)
 			return flow_into(s, left, s.typed.node_types[node.left], wanted, result, span)
 		}
+	} else {
+		left = lower_expression(s, node.left)
 	}
-
-	left := lower_expression(s, node.left)
 	if left == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
@@ -913,13 +934,18 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 // Places: where an assignment, an update or a read of a field or an element goes.
 
 @(private)
+// Local_Place and Global_Place are early where the name may be used before its declaration ran
+// (early_use): the first load or store tests that it has (check_ready).
 Local_Place :: struct {
 	symbol: bind.Symbol_ID,
+	early:  bool,
 }
 
 @(private)
 Global_Place :: struct {
 	global: ir.Global_ID,
+	symbol: bind.Symbol_ID,
+	early:  bool,
 }
 
 // Field_Place names a slot of the cell's layout. type is what a read answers, the field's declared
@@ -931,13 +957,13 @@ Field_Place :: struct {
 	type:  ir.Type,
 }
 
-// Element_Place holds the index as the program wrote it until a read checks it; a write to an
-// unchecked index may append (arrays.odin).
+// Element_Place holds the index as the program wrote it until a read checks it, and a write checks
+// it again, where it may append (arrays.odin).
 @(private)
 Element_Place :: struct {
 	array:   ir.Value_ID, // an array Ref, or a Str, which only a read may take
 	index:   ir.Value_ID,
-	checked: bool, // index is the answer of a Bounds_Check
+	checked: bool, // index is the answer of the Bounds_Check of a read
 	type:    ir.Type, // the element's declared type
 }
 
@@ -958,7 +984,8 @@ lower_place :: proc(s: ^Func_State, target: ast.Node_ID) -> (place: Place, ok: b
 	span := s.tree.nodes[target].span
 	#partial switch v in s.tree.nodes[target].variant {
 	case ast.Ident:
-		return symbol_place(s, s.typed.node_symbols[target])
+		early := early_use(s.tree, s.bound, target)
+		return symbol_place(s, s.typed.node_symbols[target], early)
 	case ast.Member:
 		if ref := s.typed.node_symbols[target]; ref.symbol != bind.NO_SYMBOL {
 			return symbol_place(s, ref)
@@ -986,18 +1013,25 @@ lower_place :: proc(s: ^Func_State, target: ast.Node_ID) -> (place: Place, ok: b
 }
 
 @(private)
-symbol_place :: proc(s: ^Func_State, ref: check.Symbol_Ref) -> (place: Place, ok: bool) {
+symbol_place :: proc(
+	s: ^Func_State,
+	ref: check.Symbol_Ref,
+	early := false,
+) -> (
+	place: Place,
+	ok: bool,
+) {
 	if ref.symbol == bind.NO_SYMBOL {
 		return nil, false
 	}
 	declaration := s.low.prog.bound[ref.file].symbols[ref.symbol].declaration
 	if global, is_global := s.low.globals[{ref.file, declaration}]; is_global {
-		return Global_Place{global = global}, true
+		return Global_Place{global = global, symbol = ref.symbol, early = early}, true
 	}
 	if ref.file != s.file || is_refused(s, ref.symbol) {
 		return nil, false
 	}
-	return Local_Place{symbol = ref.symbol}, true
+	return Local_Place{symbol = ref.symbol, early = early}, true
 }
 
 // load_place may check the index of an element, and the place keeps the answer, so a write after
@@ -1006,8 +1040,16 @@ symbol_place :: proc(s: ^Func_State, ref: check.Symbol_Ref) -> (place: Place, ok
 load_place :: proc(s: ^Func_State, place: ^Place, span: source.Span) -> ir.Value_ID {
 	switch &p in place {
 	case Local_Place:
+		if p.early {
+			check_ready(s, p.symbol, span)
+			p.early = false
+		}
 		return read_local(s, p.symbol, span)
 	case Global_Place:
+		if p.early {
+			check_ready(s, p.symbol, span)
+			p.early = false
+		}
 		type := s.low.builder.globals[p.global].type
 		return ir.emit(&s.fb, type, ir.Global_Load{global = p.global}, span)
 	case Field_Place:
@@ -1049,6 +1091,9 @@ store_place :: proc(
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
+		if p.early {
+			check_ready(s, p.symbol, span)
+		}
 		write_local(s, p.symbol, stored, span)
 	case Global_Place:
 		type := s.low.builder.globals[p.global].type
@@ -1058,6 +1103,9 @@ store_place :: proc(
 		stored := flow_into(s, value, given, wanted, type, span)
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
+		}
+		if p.early {
+			check_ready(s, p.symbol, span)
 		}
 		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = p.global, value = stored}, span)
 	case Field_Place:

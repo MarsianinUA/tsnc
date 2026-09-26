@@ -367,6 +367,10 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_byte(w, ' ') or_return
 		io.write_int(w, int(v.layout)) or_return
 
+	case Null_Test:
+		io.write_string(w, "null_test ") or_return
+		write_value(w, v.value) or_return
+
 	case Tag_Test:
 		io.write_string(w, "tag_test ") or_return
 		write_value(w, v.value) or_return
@@ -751,6 +755,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Field_Holds_Other_Kind       = "field_holds_other_kind",
 	.Value_Of_Other_Kind          = "value_of_other_kind",
 	.Tagged_Holds_Other_Kind      = "tagged_holds_other_kind",
+	.Read_Before_Initialization   = "read_before_initialization",
 }
 
 @(private, rodata)
@@ -767,7 +772,7 @@ VIOLATION_TEXT := [Violation_Kind]string {
 	.Result_Type           = "a result type that does not suit this instruction",
 	.Argument_Count        = "the wrong number of arguments",
 	.Store_Kind            = "a store that does not match the slot it writes",
-	.Unchecked_Index       = "an index that is not the answer of a bounds check",
+	.Unchecked_Index       = "an index that is not the answer of a bounds check of its array",
 	.Unknown_Id            = "a layout, global, string, fail site or function that is not there",
 	.Entry_Signature       = "an entry point that does not take nothing and return void",
 	.Environment           = "an environment that does not match its function",

@@ -1,7 +1,9 @@
 package lower_tests
 
+import "core:slice"
 import "core:testing"
 
+import "../../src/abi"
 import "../../src/ir"
 
 // Bindings: where a name lives, and what it holds before anything is written to it. The zero before
@@ -99,28 +101,104 @@ a_local_without_an_initializer_starts_at_its_zero :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_hoisted_function_may_read_a_binding_before_its_declaration :: proc(t: ^testing.T) {
-	// Node throws a ReferenceError here and tsnc answers the zero of the binding, which the package
-	// doc records. What matters is that it compiles and that the read is a plain load.
+a_hoisted_function_checks_a_global_it_may_read_before_its_declaration :: proc(t: ^testing.T) {
+	// read is hoisted, so the call runs before `later` and `box` have their values, and Node throws
+	// a ReferenceError. The number keeps a ready flag beside it, which the declaration sets; the
+	// object is null until then.
 	result := lower_text(
 		t,
 		`
 		function read(): number {
-			return later;
+			return later + box.n;
 		}
 		console.log(read());
 		let later = 3;
+		const box = { n: 1 };
 	`,
 	)
-	body, found := func_named(result.output, "m1.read")
-	testing.expect(t, found, "the function was not lowered")
-	loads := 0
-	for instruction in body.values {
-		if _, is_load := instruction.variant.(ir.Global_Load); is_load {
-			loads += 1
+	names := make([]string, len(result.output.globals), context.temp_allocator)
+	for global, i in result.output.globals {
+		names[i] = global.name
+	}
+	testing.expectf(
+		t,
+		slice.equal(names, []string{"m1.later", "m1.later$ready", "m1.box"}),
+		"globals %v",
+		names,
+	)
+	body, _ := func_named(result.output, "m1.read")
+	testing.expectf(t, len(instructions_of(body, ir.Null_Test)) == 1, "%s", result.text)
+	fails := instructions_of(body, ir.Fail)
+	if testing.expectf(t, len(fails) == 2, "%s", result.text) {
+		for fail in fails {
+			error := result.output.fail_sites[fail.site].error
+			testing.expect_value(t, error, abi.Runtime_Error.Read_Before_Initialization)
 		}
 	}
-	testing.expectf(t, loads == 1, "%s", result.text)
+	// The module init clears the flag first and sets it where `let later = 3` runs.
+	init, _ := func_named(result.output, "init$m1")
+	flags: [dynamic]bool
+	flags.allocator = context.temp_allocator
+	for store in instructions_of(init, ir.Global_Store) {
+		if store.global == 1 {
+			append(&flags, init.values[store.value].variant.(ir.Const_Bool).value)
+		}
+	}
+	testing.expectf(t, slice.equal(flags[:], []bool{false, true}), "%s", result.text)
+}
+
+@(test)
+a_local_read_early_through_a_closure_is_checked_in_its_box :: proc(t: ^testing.T) {
+	// get is made before `a` and `k` have their values, so both live in a box and get tests them:
+	// the array for null, the number by the ready flag in the box's second slot. The arrow inlined
+	// into forEach runs where it stands, before `m` is declared, so its read simply fails.
+	result := lower_text(
+		t,
+		`
+		function outer(): number {
+			const get = (): number => a.length + k;
+			[1].forEach(x => console.log(x + m));
+			const a = [1];
+			const k = 2;
+			const m = 3;
+			return get() + m;
+		}
+		console.log(outer());
+	`,
+	)
+	get, _ := func_prefixed(result.output, "m1.get$")
+	testing.expectf(t, len(instructions_of(get, ir.Null_Test)) == 1, "%s", result.text)
+	testing.expectf(t, len(instructions_of(get, ir.Fail)) == 2, "%s", result.text)
+	outer, _ := func_named(result.output, "m1.outer")
+	boxes := 0
+	for alloc in instructions_of(outer, ir.Alloc) {
+		fields := result.output.layouts[alloc.layout].fields
+		is_number_box := len(fields) == 2 && fields[0].kind == .Number
+		boxes += 1 if is_number_box && fields[1].kind == .Boolean else 0
+	}
+	testing.expectf(t, boxes == 1, "%s", result.text)
+	always := 0
+	for fail in instructions_of(outer, ir.Fail) {
+		error := result.output.fail_sites[fail.site].error
+		always += 1 if error == .Read_Before_Initialization else 0
+	}
+	testing.expectf(t, always == 1, "%s", result.text)
+}
+
+@(test)
+a_read_made_after_the_declaration_needs_no_check :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		const scale = 2;
+		const twice = (n: number): number => n * scale;
+		console.log(twice(3));
+	`,
+	)
+	for body in result.output.funcs {
+		testing.expectf(t, len(instructions_of(body, ir.Fail)) == 0, "%s", result.text)
+	}
+	testing.expect_value(t, len(result.output.globals), 2)
 }
 
 @(test)
