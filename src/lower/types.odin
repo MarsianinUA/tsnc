@@ -38,7 +38,7 @@ the same closure after the flow, so the two types need one signature, or a call 
 would pass arguments the first does not take. Signature classes are built the way the widening
 classes are, over the whole program: a parameter every member agrees on keeps its type, one they
 differ on is Tagged, and so is the result, which a member that returns nothing leaves to the others.
-A function then takes the arguments of its class and unboxes each into its own type (unwrap), and a
+A function then takes the arguments of its class and unboxes each into its own type (coerce), and a
 call gives the class what it wants and unboxes the answer.
 */
 
@@ -65,7 +65,26 @@ representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type
 	return shallow_kind(types, id)
 }
 
+// ir_type answers from the memo of the check result after the first call for a type.
 ir_type :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+) -> (
+	type: ir.Type,
+	ok: bool,
+) {
+	ensure(low.objects.joined, "an object type is mapped before its widening class is complete")
+	memo := &memo_of(low, types).types[id]
+	if !memo.known {
+		memo.type, memo.ok = map_type(low, types, id)
+		memo.known = true
+	}
+	return memo.type, memo.ok
+}
+
+@(private)
+map_type :: proc(
 	low: ^Lowering,
 	types: []check.Type,
 	id: check.Type_ID,
@@ -239,41 +258,113 @@ object_slots :: proc(types: []check.Type, object: check.Object) -> (slots: []ir.
 @(private)
 object_layout :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -> ir.Layout_ID {
 	slots, _ := object_slots(types, object)
-	if node, found := low.classes[slots_key(slots)]; found {
-		slots = low.class_slots[class_root(low.class_links[:], node)]
+	if joined, found := class_value(&low.objects, slots_key(slots)); found {
+		slots = joined
 	}
 	return ir.object_layout(&low.builder, slots)
 }
 
-// Widening classes.
+// Classes.
 
-// build_classes joins the shallow keys of every widening of every result, then gives each class
-// root the join of its members' slots. The keys are strings, so the Type_IDs of two checkers never
-// meet.
+// Classes is a union-find over string keys, each node holding a value. join_classes gives every
+// root the join of its class, and class_value answers it for any key of the class. The keys are
+// strings, so the Type_IDs of two checkers never meet.
+Classes :: struct($V: typeid) {
+	nodes:  map[string]int,
+	links:  [dynamic]int,
+	values: [dynamic]V,
+	joined: bool, // join_classes ran, so what class_value answers is final
+}
+
+@(private)
+make_classes :: proc($V: typeid) -> Classes(V) {
+	return {
+		nodes = make(map[string]int, context.temp_allocator),
+		links = make([dynamic]int, context.temp_allocator),
+		values = make([dynamic]V, context.temp_allocator),
+	}
+}
+
+// class_node answers the node of a key, making one that holds value for a key seen first.
+@(private)
+class_node :: proc(classes: ^Classes($V), key: string, value: V) -> int {
+	if node, known := classes.nodes[key]; known {
+		return node
+	}
+	node := len(classes.links)
+	append(&classes.links, node)
+	append(&classes.values, value)
+	classes.nodes[key] = node
+	return node
+}
+
+@(private)
+class_union :: proc(classes: ^Classes($V), a, b: int) {
+	classes.links[class_root(classes, a)] = class_root(classes, b)
+}
+
+// class_root halves the path as it walks, so a long chain of joins stays cheap to climb.
+@(private)
+class_root :: proc(classes: ^Classes($V), node: int) -> int {
+	node := node
+	for classes.links[node] != node {
+		classes.links[node] = classes.links[classes.links[node]]
+		node = classes.links[node]
+	}
+	return node
+}
+
+@(private)
+join_classes :: proc(classes: ^Classes($V), join: proc(a, b: V) -> V) {
+	for node in 0 ..< len(classes.links) {
+		root := class_root(classes, node)
+		if root != node {
+			classes.values[root] = join(classes.values[root], classes.values[node])
+		}
+	}
+	classes.joined = true
+}
+
+// class_value answers false for a key that takes part in no class.
+@(private)
+class_value :: proc(classes: ^Classes($V), key: string) -> (value: V, found: bool) {
+	node := classes.nodes[key] or_return
+	return classes.values[class_root(classes, node)], true
+}
+
+// build_classes joins the shallow keys of every widening of every result, then the signatures of
+// every pair of function types a flow recorded. The signatures come second: their key is the full
+// IR types of a signature, layouts included, and those are final only once every widening class
+// is.
 @(private)
 build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
 	for result in results {
 		for widening in result.widenings {
-			source, source_ok := class_node(low, result.types, widening.source)
-			target, target_ok := class_node(low, result.types, widening.target)
+			source, source_ok := object_node(low, result.types, widening.source)
+			target, target_ok := object_node(low, result.types, widening.target)
 			if source_ok && target_ok {
-				links := low.class_links[:]
-				links[class_root(links, source)] = class_root(links, target)
+				class_union(&low.objects, source, target)
 			}
 		}
 	}
-	for node in 0 ..< len(low.class_links) {
-		root := class_root(low.class_links[:], node)
-		if root != node {
-			low.class_slots[root] = join_slots(low.class_slots[root], low.class_slots[node])
+	join_classes(&low.objects, join_slots)
+
+	for result in results {
+		for widening in result.widenings {
+			source, source_ok := signature_node(low, result.types, widening.source)
+			target, target_ok := signature_node(low, result.types, widening.target)
+			if source_ok && target_ok {
+				class_union(&low.signatures, source, target)
+			}
 		}
 	}
+	join_classes(&low.signatures, join_signatures)
 }
 
-// class_node answers the node of an object type's key, making one for a key seen first. A type
-// with no representation takes part in nothing: it is reported where it is used.
+// object_node answers the node of an object type's key. A type with no representation takes part
+// in nothing: it is reported where it is used.
 @(private)
-class_node :: proc(
+object_node :: proc(
 	low: ^Lowering,
 	types: []check.Type,
 	id: check.Type_ID,
@@ -283,27 +374,7 @@ class_node :: proc(
 ) {
 	object := types[id].(check.Object) or_return
 	slots := object_slots(types, object) or_return
-	key := slots_key(slots)
-	if found, known := low.classes[key]; known {
-		return found, true
-	}
-	node = len(low.class_links)
-	append(&low.class_links, node)
-	append(&low.class_slots, slots)
-	low.classes[key] = node
-	return node, true
-}
-
-// class_root halves the path as it walks, so a long chain of joins stays cheap to climb. It serves
-// the widening classes and the signature classes alike.
-@(private)
-class_root :: proc(links: []int, node: int) -> int {
-	node := node
-	for links[node] != node {
-		links[node] = links[links[node]]
-		node = links[node]
-	}
-	return node
+	return class_node(&low.objects, slots_key(slots), slots), true
 }
 
 // join_slots keeps a kind two members agree on and takes Tagged where they differ. Every member of
@@ -333,7 +404,7 @@ slots_key :: proc(slots: []ir.Slot) -> string {
 	return strings.to_string(b)
 }
 
-// Signature classes.
+// Signatures.
 
 // Signature is what a call of a function passes and gets back, in IR types.
 Signature :: struct {
@@ -376,10 +447,28 @@ signature_of :: proc(
 	signature: Signature,
 	ok: bool,
 ) {
+	ensure(low.signatures.joined, "a function type is mapped before its class is complete")
+	memo := &memo_of(low, types).signatures[id]
+	if !memo.known {
+		memo.signature, memo.ok = class_signature(low, types, id)
+		memo.known = true
+	}
+	return memo.signature, memo.ok
+}
+
+@(private)
+class_signature :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+) -> (
+	signature: Signature,
+	ok: bool,
+) {
 	function := types[id].(check.Function) or_return
 	signature = own_signature(low, types, function) or_return
-	if node, found := low.signatures[signature_key(signature)]; found {
-		return low.signature_joins[class_root(low.signature_links[:], node)], true
+	if joined, found := class_value(&low.signatures, signature_key(signature)); found {
+		return joined, true
 	}
 	return signature, true
 }
@@ -388,33 +477,7 @@ signature_equal :: proc(a, b: Signature) -> bool {
 	return a.result == b.result && slice.equal(a.params, b.params)
 }
 
-// build_signature_classes joins the signatures of every pair of function types a flow recorded, the
-// way build_classes joins objects, and runs after it: a key is the full IR types of a signature,
-// layouts included, and those are final only once every widening class is.
-@(private)
-build_signature_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
-	for result in results {
-		for widening in result.widenings {
-			source, source_ok := signature_node(low, result.types, widening.source)
-			target, target_ok := signature_node(low, result.types, widening.target)
-			if source_ok && target_ok {
-				links := low.signature_links[:]
-				links[class_root(links, source)] = class_root(links, target)
-			}
-		}
-	}
-	for node in 0 ..< len(low.signature_links) {
-		root := class_root(low.signature_links[:], node)
-		if root != node {
-			low.signature_joins[root] = join_signatures(
-				low.signature_joins[root],
-				low.signature_joins[node],
-			)
-		}
-	}
-}
-
-// signature_node answers the node of a function type's signature, making one for a key seen first.
+// signature_node answers the node of a function type's signature.
 @(private)
 signature_node :: proc(
 	low: ^Lowering,
@@ -426,15 +489,7 @@ signature_node :: proc(
 ) {
 	function := types[id].(check.Function) or_return
 	signature := own_signature(low, types, function) or_return
-	key := signature_key(signature)
-	if found, known := low.signatures[key]; known {
-		return found, true
-	}
-	node = len(low.signature_links)
-	append(&low.signature_links, node)
-	append(&low.signature_joins, signature)
-	low.signatures[key] = node
-	return node, true
+	return class_node(&low.signatures, signature_key(signature), signature), true
 }
 
 // join_signatures gives a parameter only one member has that member's type, and lets a result of
@@ -481,4 +536,51 @@ write_type_key :: proc(b: ^strings.Builder, type: ir.Type) {
 	strings.write_int(b, int(type.kind))
 	strings.write_byte(b, ':')
 	strings.write_int(b, int(type.layout))
+}
+
+// Memos.
+
+// Type_Memo holds what ir_type and signature_of answered for the types of one check result, by
+// Type_ID: each would build slots, keys and signatures again on every call.
+Type_Memo :: struct {
+	of:         []check.Type, // the table the Type_IDs index
+	types:      []Memo_Type,
+	signatures: []Memo_Signature,
+}
+
+Memo_Type :: struct {
+	known: bool,
+	ok:    bool,
+	type:  ir.Type,
+}
+
+Memo_Signature :: struct {
+	known:     bool,
+	ok:        bool,
+	signature: Signature,
+}
+
+@(private)
+make_memos :: proc(results: []check.Check_Result) -> []Type_Memo {
+	memos := make([]Type_Memo, len(results), context.temp_allocator)
+	for result, i in results {
+		memos[i] = {
+			of         = result.types,
+			types      = make([]Memo_Type, len(result.types), context.temp_allocator),
+			signatures = make([]Memo_Signature, len(result.types), context.temp_allocator),
+		}
+	}
+	return memos
+}
+
+// memo_of finds the memo by the table itself: every types slice lower is given is the table of one
+// check result, and there is one result per partition.
+@(private)
+memo_of :: proc(low: ^Lowering, types: []check.Type) -> ^Type_Memo {
+	for &memo in low.memos {
+		if raw_data(memo.of) == raw_data(types) {
+			return &memo
+		}
+	}
+	panic("a type table that belongs to no check result")
 }

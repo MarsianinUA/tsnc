@@ -139,7 +139,7 @@ compare_strings :: proc(
 	}
 	answer := ir.emit(&s.fb, ir.BOOL, call, span)
 	if negate {
-		answer = ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = answer}, span)
+		answer = negated(s, answer, span)
 	}
 	return answer
 }

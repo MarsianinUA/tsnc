@@ -13,11 +13,15 @@ import "../source"
 Bindings and joins. The IR has no stack slot, so a local variable is an SSA value and a place where
 control comes together needs a phi.
 
-One array holds the current value of every local, indexed by bind.Symbol_ID: bind gives each
-declaration a symbol of its own, so two blocks that both declare `x` never collide and the array
-needs no scope stack. Every local of a function is given the zero of its type in the entry block,
-which is the rule of the package doc and also what makes the array total: a read always finds a
-value, and a join can compare the two sides symbol by symbol.
+One array holds the current value of every local of the function being built: its own variables
+and parameters, those of the arrows inlined into it, and what its environment holds (File_Locals).
+bind gives each declaration a symbol of its own, so two blocks that both declare `x` never collide
+and the array needs no scope stack. It is dense and in symbol order, numbered through a table the
+size of the file's symbols that holds the numbers of one function at a time: a join copies and
+compares only what the function has, which keeps a file of many small functions linear. Every local
+of a function is given the zero of its type in the entry block, which is the rule of the package doc
+and also what makes the array total: a read always finds a value, and a join can compare the two
+sides local by local.
 
 A variable a closure shares (closures.odin) lives in a box instead, and its entry in the array is
 the box, made when its scope is entered (enter_scope) or when it is bound. Every read and write of a
@@ -49,7 +53,6 @@ Loop_Frame :: struct {
 // `return` is a jump to join rather than a Return of the function around it.
 Inline_Frame :: struct {
 	join:   ir.Block_ID,
-	result: ir.Type, // what the arrow's `return` produces; VOID when nothing reads it
 	edges:  [dynamic]Edge,
 	values: [dynamic]ir.Value_ID, // one per edge
 }
@@ -63,16 +66,129 @@ Func_State :: struct {
 	typed:    ^check.Typed_File,
 	types:    []check.Type,
 	// What a `return` produces: the result of the function's signature class, and its own
-	// declared result, which the class may hold boxed (types.odin).
+	// declared result, which the class may hold boxed (types.odin). Inside an inlined arrow,
+	// declared and returns are the arrow's (inline_arrow).
 	result:   ir.Type,
 	declared: ir.Type,
 	returns:  check.Type_ID, // the declared result as check typed it; ERROR outside a function
-	// By bind.Symbol_ID: the value of a local, or its box. NO_VALUE outside this function, for a
-	// box whose scope has not been entered, and for a variable refused.
+	// The symbols of the function's locals (File_Locals.locals), and by the position of each there
+	// (local_at): its value, or its box, and whether zero_locals reported it. The value is NO_VALUE
+	// for a box whose scope has not been entered and for a variable refused.
+	symbols:  []bind.Symbol_ID,
 	locals:   []ir.Value_ID,
-	refused:  []bool, // by bind.Symbol_ID: a local zero_locals reported
+	refused:  []bool,
 	loops:    [dynamic]Loop_Frame,
 	inlines:  [dynamic]Inline_Frame, // the innermost last
+}
+
+// File_Locals groups the locals of a file by the function that holds them, once per file.
+File_Locals :: struct {
+	// By the Scope_ID of a function scope, an inlined arrow's too, and MODULE_SCOPE: the variables
+	// and parameters of the scopes it is the nearest function of, in the order zero_locals gives
+	// them their zero, which is scope order.
+	zeroed: [][]bind.Symbol_ID,
+	// By the Scope_ID of a function lower builds, and MODULE_SCOPE for the module init: every
+	// symbol its body holds as a local, in symbol order.
+	locals: [][]bind.Symbol_ID,
+	// By bind.Symbol_ID: the position of a local among the locals of the function being built, and
+	// -1 for any other symbol. begin_function fills it and end_function clears it again.
+	index:  []i32,
+}
+
+// group_locals finds each function of the file its scopes: the nearest one, and the one lower
+// builds, which for an inlined arrow is the function it is inlined into. Two passes of counting
+// place every list in one flat array.
+@(private)
+group_locals :: proc(low: ^Lowering, file: source.File_ID) -> File_Locals {
+	bound := &low.prog.bound[file]
+	closures := &low.closures[file]
+	scope_count := len(bound.scopes)
+	nearest := make([]bind.Scope_ID, scope_count, context.temp_allocator)
+	home := make([]bind.Scope_ID, scope_count, context.temp_allocator)
+	for scope, i in bound.scopes[1:] {
+		id := bind.Scope_ID(i + 1)
+		ensure(scope.parent < id, "bind opens a scope after the scope around it")
+		is_function := scope.kind == .Function
+		nearest[id] = id if is_function else nearest[scope.parent]
+		home[id] = id if is_function && !closures.inlined[scope.node] else home[scope.parent]
+	}
+
+	zeroed_counts := make([]int, scope_count, context.temp_allocator)
+	local_counts := make([]int, scope_count, context.temp_allocator)
+	for scope, i in bound.scopes[1:] {
+		for symbol in scope.symbols {
+			#partial switch bound.symbols[symbol].kind {
+			case .Let, .Const, .Param:
+				zeroed_counts[nearest[i + 1]] += 1
+			}
+		}
+	}
+	for entry in bound.symbols[1:] {
+		#partial switch entry.kind {
+		case .Let, .Const, .Param, .Function:
+			if entry.scope != bind.MODULE_SCOPE {
+				local_counts[home[entry.scope]] += 1
+			}
+		}
+	}
+	for id in closures.functions {
+		local_counts[bound.node_scopes[id]] += len(closures.env[id])
+	}
+
+	out := File_Locals {
+		zeroed = flat_lists(zeroed_counts),
+		locals = flat_lists(local_counts),
+		index  = make([]i32, len(bound.symbols), context.temp_allocator),
+	}
+	slice.fill(out.index, -1)
+	slice.fill(zeroed_counts, 0)
+	slice.fill(local_counts, 0)
+	for scope, i in bound.scopes[1:] {
+		for symbol in scope.symbols {
+			#partial switch bound.symbols[symbol].kind {
+			case .Let, .Const, .Param:
+				key := nearest[i + 1]
+				out.zeroed[key][zeroed_counts[key]] = symbol
+				zeroed_counts[key] += 1
+			}
+		}
+	}
+	for entry, symbol in bound.symbols[1:] {
+		#partial switch entry.kind {
+		case .Let, .Const, .Param, .Function:
+			if entry.scope == bind.MODULE_SCOPE {
+				continue
+			}
+			key := home[entry.scope]
+			out.locals[key][local_counts[key]] = bind.Symbol_ID(symbol + 1)
+			local_counts[key] += 1
+		}
+	}
+	for id in closures.functions {
+		if env := closures.env[id]; len(env) > 0 {
+			key := bound.node_scopes[id]
+			copy(out.locals[key][local_counts[key]:], env)
+			slice.sort(out.locals[key])
+		}
+	}
+	return out
+}
+
+// flat_lists cuts one array into a list per key, of the length its count gives.
+@(private)
+flat_lists :: proc(counts: []int) -> [][]bind.Symbol_ID {
+	total := 0
+	for count in counts {
+		total += count
+	}
+	flat := make([]bind.Symbol_ID, total, context.temp_allocator)
+	lists := make([][]bind.Symbol_ID, len(counts), context.temp_allocator)
+	start := 0
+	for count, key in counts {
+		lists[key] = flat[start:][:count]
+		start += count
+	}
+	return lists
 }
 
 // begin_function opens the body of a function: node is its declaration or arrow, ast.ROOT for a
@@ -102,9 +218,13 @@ begin_function :: proc(
 		loops    = make([dynamic]Loop_Frame, context.temp_allocator),
 		inlines  = make([dynamic]Inline_Frame, context.temp_allocator),
 	}
-	s.locals = make([]ir.Value_ID, len(s.bound.symbols), context.temp_allocator)
+	s.symbols = low.locals[file].locals[scope]
+	for symbol, i in s.symbols {
+		low.locals[file].index[symbol] = i32(i)
+	}
+	s.locals = make([]ir.Value_ID, len(s.symbols), context.temp_allocator)
 	slice.fill(s.locals, ir.NO_VALUE)
-	s.refused = make([]bool, len(s.bound.symbols), context.temp_allocator)
+	s.refused = make([]bool, len(s.symbols), context.temp_allocator)
 	if node != ast.ROOT {
 		function := s.types[s.typed.node_types[node]].(check.Function)
 		s.returns = function.result
@@ -123,18 +243,48 @@ begin_function :: proc(
 				cell  = cell,
 				field = i32(i),
 			}
-			s.locals[symbol] = ir.emit(&s.fb, type, load, span)
+			s.locals[local_at(&s, symbol)] = ir.emit(&s.fb, type, load, span)
 		}
 	}
 	for param, i in params {
 		symbol := s.bound.node_symbols[param]
-		if symbol == bind.NO_SYMBOL || s.refused[symbol] {
+		if symbol == bind.NO_SYMBOL || is_refused(&s, symbol) {
 			continue
 		}
-		value := unwrap(&s, ir.Value_ID(i), local_type(&s, symbol), span)
+		value := coerce(&s, ir.Value_ID(i), local_type(&s, symbol), span, .Value_Of_Other_Kind)
 		bind_local(&s, symbol, value, span)
 	}
 	return s
+}
+
+// end_function closes the body and gives the numbers of its locals back, so the next function of
+// the file numbers its own.
+@(private)
+end_function :: proc(s: ^Func_State) {
+	for symbol in s.symbols {
+		s.low.locals[s.file].index[symbol] = -1
+	}
+	ir.end_func(&s.fb)
+}
+
+// local_at is the position of a symbol among the locals of the function being built, and -1 for a
+// symbol of another function.
+@(private)
+local_at :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> int {
+	return int(s.low.locals[s.file].index[symbol])
+}
+
+// local_value answers NO_VALUE for a symbol of another function.
+@(private)
+local_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Value_ID {
+	at := local_at(s, symbol)
+	return s.locals[at] if at >= 0 else ir.NO_VALUE
+}
+
+@(private)
+is_refused :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> bool {
+	at := local_at(s, symbol)
+	return at >= 0 && s.refused[at]
 }
 
 // zero_locals takes a body to be the scopes whose nearest enclosing function is this one; the
@@ -142,31 +292,19 @@ begin_function :: proc(
 // not values of a function.
 @(private)
 zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
-	for entry, i in s.bound.scopes {
-		inner := bind.Scope_ID(i)
-		if owning_function(s.bound, inner) != scope {
+	for symbol in s.low.locals[s.file].zeroed[scope] {
+		declared := s.bound.symbols[symbol]
+		type, ok := ir_type(s.low, s.types, s.typed.node_types[declared.declaration])
+		if !ok {
+			node := s.tree.nodes[declared.declaration]
+			text := construct_text(s.types, s.typed.node_types[declared.declaration])
+			report(s.low, .Not_Lowered, node.span, text)
+			s.refused[local_at(s, symbol)] = true
 			continue
 		}
-		if scope == bind.MODULE_SCOPE && inner == bind.MODULE_SCOPE {
-			continue
-		}
-		for symbol in entry.symbols {
-			declared := s.bound.symbols[symbol]
-			if declared.kind != .Let && declared.kind != .Const && declared.kind != .Param {
-				continue
-			}
-			type, ok := ir_type(s.low, s.types, s.typed.node_types[declared.declaration])
-			if !ok {
-				node := s.tree.nodes[declared.declaration]
-				text := construct_text(s.types, s.typed.node_types[declared.declaration])
-				report(s.low, .Not_Lowered, node.span, text)
-				s.refused[symbol] = true
-				continue
-			}
-			// A box is made where its scope is entered, or where its variable is bound.
-			if !s.low.closures[s.file].boxed[symbol] {
-				s.locals[symbol] = zero_value(s, type, span)
-			}
+		// A box is made where its scope is entered, or where its variable is bound.
+		if !s.low.closures[s.file].boxed[symbol] {
+			s.locals[local_at(s, symbol)] = zero_value(s, type, span)
 		}
 	}
 }
@@ -184,7 +322,7 @@ enter_scope :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 	for symbol in s.bound.scopes[scope].symbols {
 		entry := s.bound.symbols[symbol]
 		is_variable := entry.kind == .Let || entry.kind == .Const || entry.kind == .Function
-		if !is_variable || !facts.boxed[symbol] || s.refused[symbol] {
+		if !is_variable || !facts.boxed[symbol] || is_refused(s, symbol) {
 			continue
 		}
 		type := local_type(s, symbol)
@@ -195,8 +333,8 @@ enter_scope :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 		if entry.kind != .Function {
 			continue
 		}
-		if facts.env_free[entry.declaration] && !facts.value_used[symbol] {
-			continue // every call of it is direct
+		if called_directly(s.bound, facts, symbol) {
+			continue
 		}
 		write_local(s, symbol, make_closure(s, entry.declaration, span), span)
 	}
@@ -219,7 +357,7 @@ box_type :: proc(s: ^Func_State, type: ir.Type) -> ir.Type {
 // read_local answers NO_VALUE for a local that was refused, or that holds nothing yet.
 @(private)
 read_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -> ir.Value_ID {
-	value := s.locals[symbol]
+	value := local_value(s, symbol)
 	if value == ir.NO_VALUE || !s.low.closures[s.file].boxed[symbol] {
 		return value
 	}
@@ -243,10 +381,10 @@ write_local :: proc(
 		return
 	}
 	if !s.low.closures[s.file].boxed[symbol] {
-		s.locals[symbol] = value
+		s.locals[local_at(s, symbol)] = value
 		return
 	}
-	if box := s.locals[symbol]; box != ir.NO_VALUE {
+	if box := local_value(s, symbol); box != ir.NO_VALUE {
 		store_slot(s, box, 0, value, span)
 	}
 }
@@ -259,13 +397,13 @@ bind_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, value: ir.Value_ID, s
 		return
 	}
 	if !s.low.closures[s.file].boxed[symbol] {
-		s.locals[symbol] = value
+		s.locals[local_at(s, symbol)] = value
 		return
 	}
 	type := box_type(s, local_type(s, symbol))
 	box := ir.emit(&s.fb, type, ir.Alloc{layout = type.layout}, span)
 	store_slot(s, box, 0, value, span)
-	s.locals[symbol] = box
+	s.locals[local_at(s, symbol)] = box
 }
 
 // store_slot writes a slot of a cell, through the store that ends in _Ref where the collector
@@ -294,17 +432,6 @@ store_slot :: proc(
 		value = value,
 	}
 	ir.emit(&s.fb, ir.VOID, store, span)
-}
-
-// owning_function answers MODULE_SCOPE for a scope that no function encloses. MODULE_SCOPE is its
-// own parent, so the walk always ends.
-@(private)
-owning_function :: proc(bound: ^bind.Bound_File, scope: bind.Scope_ID) -> bind.Scope_ID {
-	current := scope
-	for bound.scopes[current].kind != .Function && current != bind.MODULE_SCOPE {
-		current = bound.scopes[current].parent
-	}
-	return current
 }
 
 // zero_value gives a string the empty cell rather than a null pointer, so no reader and no
@@ -349,10 +476,55 @@ value_type :: proc(s: ^Func_State, value: ir.Value_ID) -> ir.Type {
 	return s.fb.values[value].type
 }
 
+@(private)
+tag_test :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	tags: ir.Tag_Set,
+	span: source.Span,
+) -> ir.Value_ID {
+	return ir.emit(&s.fb, ir.BOOL, ir.Tag_Test{value = value, tags = tags}, span)
+}
+
+@(private)
+fail_if :: proc(
+	s: ^Func_State,
+	condition: ir.Value_ID,
+	error: abi.Runtime_Error,
+	span: source.Span,
+) {
+	passed := ir.add_block(&s.fb)
+	failed := ir.add_block(&s.fb)
+	branch := ir.Branch {
+		condition  = condition,
+		then_block = failed,
+		else_block = passed,
+	}
+	ir.emit(&s.fb, ir.VOID, branch, span)
+	fail_block(s, failed, error, span)
+	ir.use_block(&s.fb, passed)
+}
+
+@(private)
+fail_block :: proc(
+	s: ^Func_State,
+	block: ir.Block_ID,
+	error: abi.Runtime_Error,
+	span: source.Span,
+) {
+	ir.use_block(&s.fb, block)
+	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, error)}, span)
+}
+
+@(private)
+negated :: proc(s: ^Func_State, test: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+	return ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = test}, span)
+}
+
 // open_join answers false for a block no edge reaches. Such a block cannot be entered, and takes an
 // inert terminator so that the statements written after it still have a block to land in.
 //
-// A symbol one edge has no value for is left without one: it is a local of an inlined arrow, which
+// A local one edge has no value for is left without one: it is a local of an inlined arrow, which
 // has a value only inside the loop that holds the arrow, and nothing after the join reads it.
 @(private)
 open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: source.Span) -> bool {
@@ -367,15 +539,15 @@ open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: sourc
 	}
 
 	copy(s.locals, edges[0].values)
-	for symbol in 0 ..< len(s.locals) {
-		first := edges[0].values[symbol]
+	for at in 0 ..< len(s.locals) {
+		first := edges[0].values[at]
 		same, missing := true, first == ir.NO_VALUE
 		for edge in edges[1:] {
-			same &&= edge.values[symbol] == first
-			missing ||= edge.values[symbol] == ir.NO_VALUE
+			same &&= edge.values[at] == first
+			missing ||= edge.values[at] == ir.NO_VALUE
 		}
 		if missing {
-			s.locals[symbol] = ir.NO_VALUE
+			s.locals[at] = ir.NO_VALUE
 			continue
 		}
 		if same {
@@ -383,20 +555,20 @@ open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: sourc
 		}
 		merged := ir.phi(&s.fb, value_type(s, first), span)
 		for edge in edges {
-			ir.phi_incoming(&s.fb, merged, edge.block, edge.values[symbol])
+			ir.phi_incoming(&s.fb, merged, edge.block, edge.values[at])
 		}
-		s.locals[symbol] = merged
+		s.locals[at] = merged
 	}
 	return true
 }
 
-// open_header cannot see its back edge yet, so it takes a phi for every symbol the loop assigns and
+// open_header cannot see its back edge yet, so it takes a phi for every local the loop assigns and
 // the phis learn their edges through patch_header.
 @(private)
 open_header :: proc(
 	s: ^Func_State,
 	block: ir.Block_ID,
-	assigned: []bind.Symbol_ID,
+	assigned: []int,
 	from: Edge,
 	span: source.Span,
 ) -> (
@@ -406,38 +578,37 @@ open_header :: proc(
 	copy(s.locals, from.values)
 
 	phis = make([]ir.Value_ID, len(assigned), context.temp_allocator)
-	for symbol, i in assigned {
-		entering := from.values[symbol]
+	for at, i in assigned {
+		entering := from.values[at]
 		if entering == ir.NO_VALUE {
 			phis[i] = ir.NO_VALUE
 			continue
 		}
 		phis[i] = ir.phi(&s.fb, value_type(s, entering), span)
 		ir.phi_incoming(&s.fb, phis[i], from.block, entering)
-		s.locals[symbol] = phis[i]
+		s.locals[at] = phis[i]
 	}
 	return
 }
 
 @(private)
-patch_header :: proc(s: ^Func_State, phis: []ir.Value_ID, assigned: []bind.Symbol_ID, back: Edge) {
-	for symbol, i in assigned {
+patch_header :: proc(s: ^Func_State, phis: []ir.Value_ID, assigned: []int, back: Edge) {
+	for at, i in assigned {
 		if phis[i] != ir.NO_VALUE {
-			ir.phi_incoming(&s.fb, phis[i], back.block, back.values[symbol])
+			ir.phi_incoming(&s.fb, phis[i], back.block, back.values[at])
 		}
 	}
 }
 
-// assigned_symbols lists the locals a subtree writes to, and `also`, in symbol order. It is the set a
-// loop header needs a phi for; a symbol it names that the loop leaves alone only costs a dead phi.
+// assigned_locals lists the positions of the locals a subtree writes to, and of `also`, in order.
+// It is the set a loop header needs a phi for; a local it names that the loop leaves alone only
+// costs a dead phi.
 @(private)
-assigned_symbols :: proc(
-	s: ^Func_State,
-	root: ast.Node_ID,
-	also: []bind.Symbol_ID = nil,
-) -> []bind.Symbol_ID {
-	found := make([dynamic]bind.Symbol_ID, 0, 8, context.temp_allocator)
-	append(&found, ..also)
+assigned_locals :: proc(s: ^Func_State, root: ast.Node_ID, also: []bind.Symbol_ID = nil) -> []int {
+	found := make([dynamic]int, 0, 8, context.temp_allocator)
+	for symbol in also {
+		append(&found, local_at(s, symbol))
+	}
 	stack := make([dynamic]ast.Node_ID, 0, 32, context.temp_allocator)
 	append(&stack, root)
 	for id in ast.walk(s.tree.nodes, &stack) {
@@ -454,12 +625,12 @@ assigned_symbols :: proc(
 		if _, is_ident := s.tree.nodes[target].variant.(ast.Ident); !is_ident {
 			continue
 		}
-		symbol := s.bound.node_symbols[target]
-		if symbol == bind.NO_SYMBOL || s.locals[symbol] == ir.NO_VALUE {
+		at := local_at(s, s.bound.node_symbols[target])
+		if at < 0 || s.locals[at] == ir.NO_VALUE {
 			continue
 		}
-		if !slice.contains(found[:], symbol) {
-			append(&found, symbol)
+		if !slice.contains(found[:], at) {
+			append(&found, at)
 		}
 	}
 	slice.sort(found[:])

@@ -2,6 +2,7 @@ package lower
 
 import "core:slice"
 
+import "../abi"
 import "../ast"
 import "../bind"
 import "../check"
@@ -141,16 +142,21 @@ node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
 }
 
 // coerce boxes a statically typed value into a tagged one, and reads one back after a check that
-// fails with Tagged_Holds_Other_Kind: that is an `any` going into a static type, or a union of
-// objects going into one object type that covers every member, whose classes share the layout. Two
-// objects check lets meet share one layout, and two functions one signature, so neither ever needs
-// converting into the other.
+// fails with mismatch: that is an `any` going into a static type, or a union of objects going into
+// one object type that covers every member, whose classes share the layout. Two objects check lets
+// meet share one layout, and two functions one signature, so neither ever needs converting into the
+// other.
+//
+// A value of a signature class read as the type a function or a call declares fails with
+// Value_Of_Other_Kind instead: the class joined it with a wider one, and a flow through `any`, or
+// through a function field written by a narrower object type, brought something else.
 @(private)
 coerce :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
 	target: ir.Type,
 	span: source.Span,
+	mismatch := abi.Runtime_Error.Tagged_Holds_Other_Kind,
 ) -> ir.Value_ID {
 	if value == ir.NO_VALUE || target == ir.VOID {
 		return value
@@ -172,27 +178,7 @@ coerce :: proc(
 		return ir.NO_VALUE
 	}
 	if have == ir.TAGGED {
-		return unbox_checked(s, value, target, .Tagged_Holds_Other_Kind, span)
-	}
-	return later(s, span, "this conversion")
-}
-
-// unwrap reads a value of a signature class as the type a function or a call declares, which is
-// narrower where the class joined it with another: a tagged value is unboxed, after a check that
-// fails the program where a flow through `any`, or through a function field written by a narrower
-// object type, brought something else.
-@(private)
-unwrap :: proc(
-	s: ^Func_State,
-	value: ir.Value_ID,
-	want: ir.Type,
-	span: source.Span,
-) -> ir.Value_ID {
-	if value == ir.NO_VALUE || want == ir.VOID || value_type(s, value) == want {
-		return value
-	}
-	if value_type(s, value) == ir.TAGGED {
-		return unbox_checked(s, value, want, .Value_Of_Other_Kind, span)
+		return unbox_checked(s, value, target, mismatch, span)
 	}
 	return later(s, span, "this conversion")
 }
@@ -223,6 +209,36 @@ flow_intact :: proc(s: ^Func_State, given, wanted: check.Type_ID, span: source.S
 	}
 	later(s, span, "a function whose signature this flow changes")
 	return false
+}
+
+// flow_into moves a value of check type given into a place of check type wanted that holds it as
+// target: the checks of flow_checked, then coerce. Every flow check recorded goes through here.
+// ERROR on either side stands for a move check recorded nothing about, such as an operator's
+// result going back into its place, which needs no check.
+@(private)
+flow_into :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	given, wanted: check.Type_ID,
+	target: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	return coerce(s, flow_checked(s, value, given, wanted, span), target, span)
+}
+
+// flow_checked is flow_into without the conversion, for a flow whose conversion comes later: the
+// arguments of a call are all evaluated before class_arguments converts the first one.
+@(private)
+flow_checked :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	given, wanted: check.Type_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value == ir.NO_VALUE || !flow_intact(s, given, wanted, span) {
+		return ir.NO_VALUE
+	}
+	return value
 }
 
 @(private)
@@ -526,67 +542,6 @@ unary_number :: proc(
 	return ir.emit(&s.fb, ir.F64, ir.Unary{op = op, operand = operand}, span)
 }
 
-// lower_typeof answers the word for the type the operand already has, and asks the runtime for the
-// word of a tagged value. `typeof x === "number"` never gets here: it is a tag test
-// (lower_typeof_test).
-@(private)
-lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
-	if is_tagged(s, operand) {
-		value := lower_expression(s, operand)
-		if value == ir.NO_VALUE {
-			return ir.NO_VALUE
-		}
-		call := ir.Call_Runtime {
-			export = .Value_Typeof,
-			args   = {value},
-		}
-		return ir.emit(&s.fb, ir.STR, call, span)
-	}
-	word := typeof_word(s, operand)
-	if word == "" {
-		type := s.typed.node_types[operand]
-		return later(s, span, construct_text(s.types, type))
-	}
-	evaluate_typeof_operand(s, operand)
-	return ir.emit(
-		&s.fb,
-		ir.STR,
-		ir.Const_String{text = ir.intern_string(&s.low.builder, word)},
-		span,
-	)
-}
-
-// typeof_word is the word `typeof` answers for the static type of its operand, or "" when only the
-// tag of a tagged value could tell.
-@(private)
-typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
-	type := s.typed.node_types[operand]
-	switch type {
-	case check.UNDEFINED, check.VOID:
-		return "undefined"
-	case check.NULL:
-		return "object"
-	}
-	#partial switch _ in s.types[type] {
-	case check.Function, check.Overload:
-		return "function"
-	}
-	kind, _ := representation(s.types, type)
-	#partial switch kind {
-	case .F64:
-		return "number"
-	case .Bool:
-		return "boolean"
-	case .Str:
-		return "string"
-	case .Ref:
-		return "object"
-	case .Closure:
-		return "function" // a union of function types
-	}
-	return ""
-}
-
 // lower_binary never sees `&&`, `||` and `??`: they branch, and are lower_logical.
 @(private)
 lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Value_ID {
@@ -714,15 +669,18 @@ lower_logical :: proc(
 	result: ir.Type,
 ) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
+	wanted := joined_type(s, id, result)
 	if node.op == .Coalesce {
 		switch s.typed.node_types[node.left] {
 		case check.UNDEFINED, check.NULL:
 			lower_expression(s, node.left)
-			return coerce(s, lower_expression(s, node.right), result, span)
+			right := lower_expression(s, node.right)
+			return flow_into(s, right, s.typed.node_types[node.right], wanted, result, span)
 		}
 		if !is_tagged(s, node.left) {
 			// Never nullish, so the right side never runs.
-			return coerce(s, lower_expression(s, node.left), result, span)
+			left := lower_expression(s, node.left)
+			return flow_into(s, left, s.typed.node_types[node.left], wanted, result, span)
 		}
 	}
 
@@ -739,7 +697,7 @@ lower_logical :: proc(
 	unboxing := value_type(s, left) == ir.TAGGED && result != ir.VOID && result != ir.TAGGED
 	kept := left
 	if !unboxing {
-		kept = coerce(s, left, result, span)
+		kept = flow_into(s, left, s.typed.node_types[node.left], wanted, result, span)
 	}
 	if test == ir.NO_VALUE || kept == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -774,7 +732,8 @@ lower_logical :: proc(
 
 	ir.use_block(&s.fb, other)
 	copy(s.locals, entering.values)
-	if edge, value, comes_back := lower_arm(s, node.right, join, result, span); comes_back {
+	edge, value, comes_back := lower_arm(s, node.right, join, result, wanted, span)
+	if comes_back {
 		append(&edges, edge)
 		append(&values, value)
 	}
@@ -791,6 +750,7 @@ lower_conditional :: proc(
 	result: ir.Type,
 ) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
+	wanted := joined_type(s, id, result)
 	test := lower_condition(s, node.condition)
 	if test == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -810,20 +770,25 @@ lower_conditional :: proc(
 	edges := make([dynamic]Edge, 0, 2, context.temp_allocator)
 	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
 
-	ir.use_block(&s.fb, then_block)
-	copy(s.locals, entering.values)
-	if edge, value, comes_back := lower_arm(s, node.then_value, join, result, span); comes_back {
-		append(&edges, edge)
-		append(&values, value)
-	}
-
-	ir.use_block(&s.fb, else_block)
-	copy(s.locals, entering.values)
-	if edge, value, comes_back := lower_arm(s, node.else_value, join, result, span); comes_back {
-		append(&edges, edge)
-		append(&values, value)
+	arms := [2]ast.Node_ID{node.then_value, node.else_value}
+	blocks := [2]ir.Block_ID{then_block, else_block}
+	for arm, i in arms {
+		ir.use_block(&s.fb, blocks[i])
+		copy(s.locals, entering.values)
+		edge, value, comes_back := lower_arm(s, arm, join, result, wanted, span)
+		if comes_back {
+			append(&edges, edge)
+			append(&values, value)
+		}
 	}
 	return join_values(s, join, edges[:], values[:], result, span)
+}
+
+// joined_type is the check type the sides of a ternary, or of `&&`, `||` and `??`, flow into: the
+// whole expression's, and none where nobody reads the value.
+@(private)
+joined_type :: proc(s: ^Func_State, id: ast.Node_ID, result: ir.Type) -> check.Type_ID {
+	return s.typed.node_types[id] if result != ir.VOID else check.ERROR
 }
 
 // lower_arm builds one side of a ternary, or the right side of `&&` and `||`, in the block already
@@ -836,6 +801,7 @@ lower_arm :: proc(
 	arm: ast.Node_ID,
 	join: ir.Block_ID,
 	result: ir.Type,
+	wanted: check.Type_ID,
 	span: source.Span,
 ) -> (
 	edge: Edge,
@@ -847,7 +813,7 @@ lower_arm :: proc(
 		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 		return {}, ir.NO_VALUE, false
 	}
-	value = coerce(s, value, result, span)
+	value = flow_into(s, value, s.typed.node_types[arm], wanted, result, span)
 	edge = here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 	return edge, value, true
@@ -925,11 +891,11 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 	place, ok := lower_place(s, node.target)
 	if node.op == .Assign {
 		value := lower_expression(s, node.value)
-		given, wanted := s.typed.node_types[node.value], s.typed.node_types[node.target]
-		if !ok || !flow_intact(s, given, wanted, span) {
+		if !ok {
 			return ir.NO_VALUE
 		}
-		return store_place(s, &place, value, span)
+		given, wanted := s.typed.node_types[node.value], s.typed.node_types[node.target]
+		return store_place(s, &place, value, span, given, wanted)
 	}
 
 	before := narrowed(s, load_place(s, &place, span), node.target, span) if ok else ir.NO_VALUE
@@ -1028,7 +994,7 @@ symbol_place :: proc(s: ^Func_State, ref: check.Symbol_Ref) -> (place: Place, ok
 	if global, is_global := s.low.globals[{ref.file, declaration}]; is_global {
 		return Global_Place{global = global}, true
 	}
-	if ref.file != s.file || s.refused[ref.symbol] {
+	if ref.file != s.file || is_refused(s, ref.symbol) {
 		return nil, false
 	}
 	return Local_Place{symbol = ref.symbol}, true
@@ -1058,12 +1024,17 @@ load_place :: proc(s: ^Func_State, place: ^Place, span: source.Span) -> ir.Value
 // it was declared with, and answers the value as it came, which is the value of the assignment. A
 // binding typed `never`, as in `const n: never = s` after a switch that covered every member, holds
 // nothing: the value is not written, or a join would meet a value where it expects none.
+//
+// given and wanted are the check types of the flow (flow_into). A field of a union of objects takes
+// only the net here: each member converts the value into its own slot.
 @(private)
 store_place :: proc(
 	s: ^Func_State,
 	place: ^Place,
 	value: ir.Value_ID,
 	span: source.Span,
+	given := check.ERROR,
+	wanted := check.ERROR,
 ) -> ir.Value_ID {
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -1074,7 +1045,7 @@ store_place :: proc(
 		if type == ir.VOID {
 			return value
 		}
-		stored := coerce(s, value, type, span)
+		stored := flow_into(s, value, given, wanted, type, span)
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
@@ -1084,21 +1055,23 @@ store_place :: proc(
 		if type == ir.VOID {
 			return value
 		}
-		stored := coerce(s, value, type, span)
+		stored := flow_into(s, value, given, wanted, type, span)
 		if stored == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
 		ir.emit(&s.fb, ir.VOID, ir.Global_Store{global = p.global, value = stored}, span)
 	case Field_Place:
-		if !store_field(s, p, value, span) {
+		stored := flow_into(s, value, given, wanted, p.type, span)
+		if !store_field(s, p, stored, span) {
 			return ir.NO_VALUE
 		}
 	case Element_Place:
-		if !store_element(s, p, value, span) {
+		stored := flow_into(s, value, given, wanted, p.type, span)
+		if !store_element(s, p, stored, span) {
 			return ir.NO_VALUE
 		}
 	case Union_Field_Place:
-		if !store_union_field(s, p, value, span) {
+		if !flow_intact(s, given, wanted, span) || !store_union_field(s, p, value, span) {
 			return ir.NO_VALUE
 		}
 	}

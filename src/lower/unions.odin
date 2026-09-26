@@ -119,16 +119,6 @@ narrowed :: proc(
 	return unbox_checked(s, value, node_type(s, id), .Tagged_Holds_Other_Kind, span)
 }
 
-@(private)
-tag_test :: proc(
-	s: ^Func_State,
-	value: ir.Value_ID,
-	tags: ir.Tag_Set,
-	span: source.Span,
-) -> ir.Value_ID {
-	return ir.emit(&s.fb, ir.BOOL, ir.Tag_Test{value = value, tags = tags}, span)
-}
-
 // typeof_tags is the set of tags whose values `typeof` answers the word for. "bigint" and "symbol"
 // name no value of v1, and `==` still lets a program compare with them.
 @(private)
@@ -150,41 +140,6 @@ typeof_tags :: proc(word: string) -> (ir.Tag_Set, bool) {
 	return {}, false
 }
 
-@(private)
-fail_if :: proc(
-	s: ^Func_State,
-	condition: ir.Value_ID,
-	error: abi.Runtime_Error,
-	span: source.Span,
-) {
-	passed := ir.add_block(&s.fb)
-	failed := ir.add_block(&s.fb)
-	branch := ir.Branch {
-		condition  = condition,
-		then_block = failed,
-		else_block = passed,
-	}
-	ir.emit(&s.fb, ir.VOID, branch, span)
-	fail_block(s, failed, error, span)
-	ir.use_block(&s.fb, passed)
-}
-
-@(private)
-fail_block :: proc(
-	s: ^Func_State,
-	block: ir.Block_ID,
-	error: abi.Runtime_Error,
-	span: source.Span,
-) {
-	ir.use_block(&s.fb, block)
-	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, error)}, span)
-}
-
-@(private)
-negated :: proc(s: ^Func_State, test: ir.Value_ID, span: source.Span) -> ir.Value_ID {
-	return ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = test}, span)
-}
-
 // members_of lists the members of a union, or the type itself for any other.
 @(private)
 members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
@@ -197,6 +152,67 @@ members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
 }
 
 // `typeof`.
+
+// lower_typeof answers the word for the type the operand already has, and asks the runtime for the
+// word of a tagged value. `typeof x === "number"` never gets here: it is a tag test
+// (lower_typeof_test).
+@(private)
+lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
+	if is_tagged(s, operand) {
+		value := lower_expression(s, operand)
+		if value == ir.NO_VALUE {
+			return ir.NO_VALUE
+		}
+		call := ir.Call_Runtime {
+			export = .Value_Typeof,
+			args   = {value},
+		}
+		return ir.emit(&s.fb, ir.STR, call, span)
+	}
+	word := typeof_word(s, operand)
+	if word == "" {
+		type := s.typed.node_types[operand]
+		return later(s, span, construct_text(s.types, type))
+	}
+	evaluate_typeof_operand(s, operand)
+	return ir.emit(
+		&s.fb,
+		ir.STR,
+		ir.Const_String{text = ir.intern_string(&s.low.builder, word)},
+		span,
+	)
+}
+
+// typeof_word is the word `typeof` answers for the static type of its operand, or "" when only the
+// tag of a tagged value could tell.
+@(private)
+typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
+	type := s.typed.node_types[operand]
+	switch type {
+	case check.UNDEFINED, check.VOID:
+		return "undefined"
+	case check.NULL:
+		return "object"
+	}
+	#partial switch _ in s.types[type] {
+	case check.Function, check.Overload:
+		return "function"
+	}
+	kind, _ := representation(s.types, type)
+	#partial switch kind {
+	case .F64:
+		return "number"
+	case .Bool:
+		return "boolean"
+	case .Str:
+		return "string"
+	case .Ref:
+		return "object"
+	case .Closure:
+		return "function" // a union of function types
+	}
+	return ""
+}
 
 // lower_typeof_test is `typeof E` compared with a string literal by `===`, `!==`, `==` or `!=`,
 // which needs no word at run time: a statically typed E answers a constant, a tagged one a test of

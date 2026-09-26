@@ -69,31 +69,27 @@ Facts :: struct {
 }
 
 Lowering :: struct {
-	prog:            ^program.Program,
-	facts:           []Facts, // indexed by source.File_ID
-	reachable:       []bool, // indexed by source.File_ID: reached from ENTRY over value imports
-	builder:         ir.Program_Builder,
-	funcs:           map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
-	globals:         map[Decl_Key]ir.Global_ID, // by ast.Declarator
-	closures:        []File_Closures, // indexed by source.File_ID; a file that runs only
+	prog:          ^program.Program,
+	facts:         []Facts, // indexed by source.File_ID
+	reachable:     []bool, // indexed by source.File_ID: reached from ENTRY over value imports
+	builder:       ir.Program_Builder,
+	funcs:         map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
+	globals:       map[Decl_Key]ir.Global_ID, // by ast.Declarator
+	// Indexed by source.File_ID, and filled for a file that runs only.
+	closures:      []File_Closures,
+	locals:        []File_Locals,
 	// argv holds process.argv, made the first time the program reads it and filled once by main.
-	argv:            Maybe(ir.Global_ID),
-	// The widening classes (types.odin), built before any body: the node of each shallow key that
-	// takes part in a widening, the union-find link of each node, and each node's slots, which a
-	// class root holds joined over the whole class.
-	classes:         map[string]int,
-	class_links:     [dynamic]int,
-	class_slots:     [dynamic][]ir.Slot,
-	// The signature classes (types.odin), built the same way over the signature of each function
-	// type that takes part in a flow.
-	signatures:      map[string]int,
-	signature_links: [dynamic]int,
-	signature_joins: [dynamic]Signature,
+	argv:          Maybe(ir.Global_ID),
+	// The widening classes over the shallow keys of object types, and the signature classes over
+	// the signatures of function types (types.odin), both built before any body.
+	objects:       Classes([]ir.Slot),
+	signatures:    Classes(Signature),
+	memos:         []Type_Memo, // one per check result
 	// The comparators that adapt a closure to what the array sort calls (arrays.odin), by the class
 	// signature, the element kind and the number of arguments the closure takes.
-	sort_adapters:   map[string]ir.Func_ID,
-	diagnostics:     [dynamic]diag.Diagnostic,
-	allocator:       runtime.Allocator,
+	sort_adapters: map[string]ir.Func_ID,
+	diagnostics:   [dynamic]diag.Diagnostic,
+	allocator:     runtime.Allocator,
 }
 
 // lower borrows the program and the check results, which must outlive the answer, and reports every
@@ -112,33 +108,31 @@ lower :: proc(
 	// Only the builder and the diagnostics outlive the call; the tables that answer "where does
 	// this name live" are scratch, and ir.finish copies the initialization order it is given.
 	low := Lowering {
-		prog            = prog,
-		facts           = make([]Facts, len(prog.files), context.temp_allocator),
-		reachable       = make([]bool, len(prog.files), context.temp_allocator),
-		builder         = ir.make_builder(allocator),
-		funcs           = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
-		globals         = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
-		closures        = make([]File_Closures, len(prog.files), context.temp_allocator),
-		classes         = make(map[string]int, context.temp_allocator),
-		class_links     = make([dynamic]int, context.temp_allocator),
-		class_slots     = make([dynamic][]ir.Slot, context.temp_allocator),
-		signatures      = make(map[string]int, context.temp_allocator),
-		signature_links = make([dynamic]int, context.temp_allocator),
-		signature_joins = make([dynamic]Signature, context.temp_allocator),
-		sort_adapters   = make(map[string]ir.Func_ID, context.temp_allocator),
-		diagnostics     = make([dynamic]diag.Diagnostic, allocator),
-		allocator       = allocator,
+		prog          = prog,
+		facts         = make([]Facts, len(prog.files), context.temp_allocator),
+		reachable     = make([]bool, len(prog.files), context.temp_allocator),
+		builder       = ir.make_builder(allocator),
+		funcs         = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
+		globals       = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
+		closures      = make([]File_Closures, len(prog.files), context.temp_allocator),
+		locals        = make([]File_Locals, len(prog.files), context.temp_allocator),
+		objects       = make_classes([]ir.Slot),
+		signatures    = make_classes(Signature),
+		memos         = make_memos(results),
+		sort_adapters = make(map[string]ir.Func_ID, context.temp_allocator),
+		diagnostics   = make([dynamic]diag.Diagnostic, allocator),
+		allocator     = allocator,
 	}
 	index_facts(&low, results)
 	// Every layout an object type ends up in is known before the first one is interned, and every
 	// signature a function type ends up with before the first function is declared.
 	build_classes(&low, results)
-	build_signature_classes(&low, results)
 	mark_reachable(&low)
 	order := module_order(&low)
 	for file in order {
 		ensure(low.facts[file].typed != nil, "a module that runs was never typed by any checker")
 		low.closures[file] = analyze_closures(&low, file)
+		low.locals[file] = group_locals(&low, file)
 	}
 
 	// Declare before defining: a call may name a function whose body is built later, and a module

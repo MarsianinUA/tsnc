@@ -130,6 +130,49 @@ the_four_callback_methods_are_loops_with_the_callback_inlined :: proc(t: ^testin
 }
 
 @(test)
+an_arrow_whose_switch_covers_every_case_runs_off_no_end :: proc(t: ^testing.T) {
+	// check proves the end of each arrow unreachable (T3024). map used to refuse the arrow for the
+	// value its end lacked, and reduce to keep its initial value on every pass.
+	result := lower_text(
+		t,
+		`
+		type K = "a" | "b";
+		function score(ks: K[]): number {
+			const scores = ks.map((k): number => {
+				switch (k) {
+					case "a":
+						return 1;
+					case "b":
+						return 2;
+				}
+			});
+			return scores.length + ks.reduce((total: number, k: K): number => {
+				switch (k) {
+					case "a":
+						return total + 1;
+					case "b":
+						return total + 2;
+				}
+			}, 0);
+		}
+		console.log(score(["a", "b"]));
+	`,
+	)
+	body, _ := func_named(result.output, "m1.score")
+	// No callback assigns a local, so the only loop phis are the index and the accumulator, and
+	// neither may take itself back.
+	for instruction, id in body.values {
+		phi, is_phi := instruction.variant.(ir.Phi)
+		if !is_phi {
+			continue
+		}
+		for incoming in phi.incoming {
+			testing.expectf(t, incoming.value != ir.Value_ID(id), "%%%d:\n%s", id, result.text)
+		}
+	}
+}
+
+@(test)
 a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,

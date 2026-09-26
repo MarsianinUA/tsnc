@@ -163,7 +163,7 @@ find_uses :: proc(low: ^Lowering, file: source.File_ID, out: ^File_Closures) {
 }
 
 // is_inlined_call is the condition lower_strategy reaches map, filter, forEach and reduce by: a
-// method of the lib named on an array.
+// method of the lib named on an array, whose row is one of the four loops lower builds.
 @(private)
 is_inlined_call :: proc(low: ^Lowering, file: source.File_ID, call: ast.Call) -> bool {
 	tree := &low.prog.trees[file]
@@ -176,8 +176,13 @@ is_inlined_call :: proc(low: ^Lowering, file: source.File_ID, call: ast.Call) ->
 	   !is_array {
 		return false
 	}
-	switch member.name.text {
-	case "map", "filter", "forEach", "reduce":
+	strategy, _ := lib_strategy(.Instance, "Array", member.name.text)
+	builtin, is_builtin := strategy.(Builtin)
+	if !is_builtin {
+		return false
+	}
+	#partial switch builtin {
+	case .Array_Map, .Array_Filter, .Array_For_Each, .Array_Reduce:
 		return true
 	}
 	return false
@@ -276,13 +281,13 @@ make_closure :: proc(s: ^Func_State, node: ast.Node_ID, span: source.Span) -> ir
 	}
 	symbols := s.low.closures[s.file].env[node]
 	for symbol in symbols {
-		if s.locals[symbol] == ir.NO_VALUE {
+		if local_value(s, symbol) == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
 	}
 	env := ir.emit(&s.fb, ir.ref(layout), ir.Alloc{layout = layout}, span)
 	for symbol, i in symbols {
-		store_slot(s, env, i32(i), s.locals[symbol], span)
+		store_slot(s, env, i32(i), local_value(s, symbol), span)
 	}
 	return ir.emit(&s.fb, ir.CLOSURE, ir.Make_Closure{func = func, env = env}, span)
 }
