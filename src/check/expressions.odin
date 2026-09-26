@@ -737,10 +737,21 @@ check_non_null :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Non_Null) -> Type
 // a value to a type that covers it, and narrowing a union to a part of it, which lower turns into a
 // tag check. Neither `any` nor `unknown` may be the target at all, and that one rule is what makes
 // `as any` and `as unknown as T` impossible, rather than a rule that looks for the pair.
+//
+// The operand is checked with the target as its context first, as an initializer is with the type
+// its declaration writes (declarator_type), so `["a", "b"] as K[]` is a `K[]` as in tsc. Where that
+// reports anything, the attempt is undone, the flows it recorded too, and the operand is checked on
+// its own, which leaves a mismatch to T3020.
 @(private)
 check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
-	value := check_expression(c, node.expr)
 	target := resolve_type(c, node.type)
+	reported, widened := len(c.diagnostics), len(c.widenings)
+	value := check_expression(c, node.expr, target)
+	if len(c.diagnostics) > reported {
+		resize(&c.diagnostics, reported)
+		resize(&c.widenings, widened)
+		value = check_expression(c, node.expr)
+	}
 
 	if target == ANY || target == UNKNOWN {
 		report(c, .Unsafe_Assertion, span_of(c, node.type), text_of(c, target))
