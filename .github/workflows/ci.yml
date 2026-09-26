@@ -158,7 +158,7 @@ jobs:
         if: runner.os != 'macOS'
         env:
           ASAN_OPTIONS: detect_stack_use_after_return=0
-        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+        run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address -define:TSNC_EXPECT_ASAN=true
 
       # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
       - name: Diff under ASan

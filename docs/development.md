@@ -120,11 +120,11 @@ In that build the collector tells ASan which bytes of its heap a program may tou
 ASan's fake stack is off. With it, every local whose address is taken moves to memory of ASan's own, the stack base the runtime hands the collector among them, and the stack scan would read past the real stack. The runtime answers `detect_stack_use_after_return=0` from `__asan_default_options`; `ASAN_OPTIONS` still overrides it. The gc unit tests have no runtime around them, so they need the variable:
 
 ```sh
-ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address
+ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address -define:TSNC_EXPECT_ASAN=true
 TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address
 ```
 
-The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both.
+The define makes the first command fail if the build lost the sanitizer, where every ASan test would pass with nothing checked. The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both.
 
 `-sanitize:address` works on Windows and Linux. On macOS tsnc refuses it before linking anything, since the link would fail: `cc` is Xcode's clang, whose ASan runtime names its version check after Apple's clang, while the runtime object is instrumented by LLVM 20 and asks for `___asan_version_mismatch_check_v8`. Linking through the clang of Homebrew's `llvm@20` instead was tried in CI: the program died with SIGILL on the Intel image and hung on arm64 macOS 26, as [llvm-project issue 200447](https://github.com/llvm/llvm-project/issues/200447) reports for a one-line C program. So CI builds and runs ASan on Windows and Linux only, the way CPython runs ASan on Linux only and `go build -asan` exists only on Linux. The poisoning is the same code on every OS.
 
