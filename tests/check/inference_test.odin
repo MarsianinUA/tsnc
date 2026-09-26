@@ -172,8 +172,9 @@ a_recursive_arrow_without_a_return_type_needs_an_annotation :: proc(t: ^testing.
 
 @(test)
 a_variable_whose_initializer_names_itself_is_reported :: proc(t: ^testing.T) {
-	// The words are about the initializer and not about a return type: a variable has neither.
-	expect_errors(t, `let step: number = step + 1;`, []Error{{.Circular_Initializer, 1, 5}})
+	// The words are about the initializer and not about a return type: a variable has neither. With
+	// an annotation the type is known, and the read is a use before the declaration instead.
+	expect_errors(t, `let step = step + 1;`, []Error{{.Circular_Initializer, 1, 5}})
 }
 
 @(test)

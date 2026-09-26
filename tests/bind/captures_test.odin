@@ -3,6 +3,7 @@ package bind_tests
 import "core:slice"
 import "core:testing"
 
+import "../../src/ast"
 import "../../src/bind"
 
 @(test)
@@ -163,4 +164,46 @@ expect_flags :: proc(
 ) {
 	flags := symbol_of(b, name).flags
 	testing.expectf(t, flags == expected, "%s is %v, want %v", name, flags, expected, loc = loc)
+}
+
+@(test)
+a_use_knows_the_outermost_function_between_it_and_its_declaration :: proc(t: ^testing.T) {
+	b := expect_bound(
+		t,
+		lines(
+			"console.log(early);", //
+			"function outer() {",
+			"\tconst inner = () => early + local;",
+			"\tconst local = 1;",
+			"\treturn local;",
+			"}",
+			"const early = 2;",
+		),
+	)
+	Use :: struct {
+		name:       string,
+		occurrence: int,
+		deferred:   bind.Scope_ID,
+	}
+	uses := [?]Use {
+		// Run where they stand: the read at the top, and a function's read of its own variable.
+		{"early", 0, bind.MODULE_SCOPE},
+		{"local", 1, bind.MODULE_SCOPE},
+		// Run later: outer, not the arrow, for the module's name, and the arrow for outer's own.
+		{"early", 1, function_scope_of(b, "outer")},
+		{"local", 0, function_scope_of(b, "inner")},
+	}
+	for use in uses {
+		node := use_node(b, use.name, use.occurrence)
+		testing.expectf(t, node != ast.NO_NODE, "no use %d of %s", use.occurrence, use.name)
+		testing.expectf(
+			t,
+			b.bound.node_deferred[node] == use.deferred,
+			"use %d of %s is deferred by %v, want %v",
+			use.occurrence,
+			use.name,
+			b.bound.node_deferred[node],
+			use.deferred,
+		)
+	}
 }

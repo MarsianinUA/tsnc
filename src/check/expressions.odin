@@ -148,7 +148,31 @@ check_ident :: proc(
 	}
 	set_symbol(c, id, ref)
 	declared = type_of_symbol(c, ref)
+	check_declared(c, id, declared)
 	return declared, narrow_reference(c, id, declared)
+}
+
+// check_declared reports a use of a `let` or `const` that runs before its declaration has, the
+// rule tsc writes TS2448: one with no function between it and the declaration (bind's
+// node_deferred), standing before the declaration ends. A use inside a function may run before
+// the declaration or after it, which only the run can tell, so lower checks it there. A name
+// whose type is already an error, as a circular initializer's, was reported.
+@(private)
+check_declared :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) {
+	symbol := c.at.bound.node_symbols[id]
+	if symbol == bind.NO_SYMBOL || declared == ERROR {
+		return
+	}
+	if c.at.bound.node_deferred[id] != bind.MODULE_SCOPE {
+		return
+	}
+	entry := c.at.bound.symbols[symbol]
+	if entry.kind != .Let && entry.kind != .Const {
+		return
+	}
+	if span_of(c, id).start < span_of(c, entry.declaration).end {
+		report(c, .Used_Before_Declaration, span_of(c, id), entry.name.text)
+	}
 }
 
 // check_assigned reports a read of a `let` that no path leading here has given a value. It is the
@@ -386,18 +410,81 @@ order_result :: proc(
 }
 
 // equality_result is the rule of requirements 3.7: `==` and `!=` are allowed only where both sides
-// already have one type, and there they mean `===`. Anywhere else one side would be converted, and
-// requirements 2.2 lists a converting comparison among the things tsnc never supports.
+// already have one type, and that type holds one kind of value, where they mean `===`. Anywhere
+// else one side may be converted, and requirements 2.2 lists a converting comparison among the
+// things tsnc never supports.
 @(private)
 equality_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) -> Type_ID {
 	if left == ERROR || right == ERROR {
 		return BOOLEAN
 	}
-	if widen(&c.table, left) == widen(&c.table, right) {
+	type := widen(&c.table, left)
+	if type == widen(&c.table, right) && one_kind(c, type) {
 		return BOOLEAN
 	}
 	report_types(c, .Loose_Equality, span, left, right)
 	return ERROR
+}
+
+// one_kind says whether `==` on two values of the type is `===`. It is not for `any` and `unknown`,
+// which may hold anything; for a type that holds both null and undefined, which `==` takes for
+// equal; or for one that mixes numbers, strings, booleans and references, which `==` converts
+// into each other.
+@(private)
+one_kind :: proc(c: ^Checker, type: Type_ID) -> bool {
+	Kind :: enum u8 {
+		None,
+		Number,
+		String,
+		Boolean,
+		Reference,
+	}
+	members := []Type_ID{type}
+	if union_type, is_union := c.table.types[type].(Union); is_union {
+		members = union_type.members
+	}
+	has_null, has_undefined := false, false
+	seen := Kind.None
+	for member in members {
+		kind := Kind.None
+		switch v in c.table.types[member] {
+		case Basic_Kind:
+			#partial switch v {
+			case .Any, .Unknown:
+				return false
+			case .Null:
+				has_null = true
+			case .Undefined, .Void:
+				has_undefined = true
+			case .Number:
+				kind = .Number
+			case .String:
+				kind = .String
+			case .Boolean:
+				kind = .Boolean
+			}
+		case Literal:
+			switch _ in v.value {
+			case f64:
+				kind = .Number
+			case string:
+				kind = .String
+			case bool:
+				kind = .Boolean
+			}
+		case Object, Array, Function, Overload:
+			kind = .Reference
+		case Union, Type_Var:
+		}
+		if kind == .None {
+			continue
+		}
+		if seen != .None && kind != seen {
+			return false
+		}
+		seen = kind
+	}
+	return !(has_null && has_undefined)
 }
 
 // typeof_type leaves out two of the answers TypeScript declares for `typeof`: v1 has neither

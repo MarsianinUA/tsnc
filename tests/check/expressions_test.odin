@@ -108,6 +108,39 @@ comparing_different_types_with_double_equals_asks_for_triple_equals :: proc(t: ^
 double_equals_between_one_type_is_allowed :: proc(t: ^testing.T) {
 	c := expect_checked(t, `const same = 1 == 2;`)
 	testing.expect_value(t, declared_text(c, "same"), "boolean")
+	// One kind of value, with null or undefined beside it, is still `===`.
+	expect_checked(
+		t,
+		lines(
+			`function f(a: string | undefined, b: string | undefined): boolean {`, //
+			`return a == b;`,
+			`}`,
+		),
+	)
+}
+
+@(test)
+double_equals_on_a_type_of_several_kinds_asks_for_triple_equals :: proc(t: ^testing.T) {
+	// One type on both sides is not enough where `==` still converts: an `any` may hold anything,
+	// `null == undefined` holds, and so does `1 == "1"` or `1 == true`.
+	expect_errors(
+		t,
+		lines(
+			`function f(a: any, b: any, n: null | undefined, m: null | undefined): void {`, //
+			`const x = a == b;`,
+			`const y = n != m;`,
+			`}`,
+			`function g(p: number | string, q: number | string, r: number | boolean): boolean {`,
+			`return p == q || r == r;`,
+			`}`,
+		),
+		[]Error {
+			{.Loose_Equality, 2, 11},
+			{.Loose_Equality, 3, 11},
+			{.Loose_Equality, 6, 8},
+			{.Loose_Equality, 6, 18},
+		},
+	)
 }
 
 @(test)

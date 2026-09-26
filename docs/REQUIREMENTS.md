@@ -107,7 +107,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 
 ### 3.7 Equality
 - `===` / `!==`: primitives by value, strings by content, objects by reference.
-- `==` / `!=`: only if the types of both sides match statically; then it is `===`. Otherwise a compile error with a hint.
+- `==` / `!=`: only if the types of both sides match statically and that type holds one kind of value, so `==` cannot convert: not `any` or `unknown`, not a type holding both `null` and `undefined`, and not one mixing numbers, strings, booleans and references. Then it is `===`. Otherwise a compile error with a hint.
 
 ### 3.8 Checks where tsc is unsafe
 
