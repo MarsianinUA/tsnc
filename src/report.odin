@@ -95,7 +95,7 @@ CROSS_LINK :: "v1 builds a program for this machine only\n  hint: -emit-llvm and
 // RUNTIME_BUILD is the command that puts the runtime object where link looks for it. It is the one
 // failure of a fresh clone that a user fixes by running one line, so the line is in the message.
 @(private = "file")
-RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
+RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
 @(private = "file")
-SANITIZED_RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style"
+SANITIZED_RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:speed -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style"

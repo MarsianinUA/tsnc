@@ -21,7 +21,7 @@ init_llvm :: proc "contextless" () {
 
 // link finds the runtime object next to the test executable, in dist/, so it has to be built
 // before these tests run.
-RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
+RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
 // HELLO is printed by IR built by hand rather than compiled from a source: these tests say nothing
 // about the front end.

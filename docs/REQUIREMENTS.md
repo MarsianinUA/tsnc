@@ -150,7 +150,7 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 - The `-emit-llvm` flag outputs textual LLVM IR for debugging.
 
 ### 4.3 Runtime
-- Written in Odin, built ahead of time for each platform into an object file (`odin build runtime -build-mode:obj`) and linked with the program.
+- Written in Odin, built ahead of time for each platform into an object file (`odin build runtime -build-mode:obj -o:speed`) and linked with the program.
 - The runtime owns the entry point: Odin initializes its context and allocators, then calls the generated symbol `tsnc_main`. Manual initialization of the Odin runtime is not needed.
 - Exports functions for generated code as `proc "c"` under the symbol names of `abi`: allocation, GC, strings, arrays, tagged values, console, runtime errors. They are external symbols kept with `@(require)` and strong linkage, not `@(export)`: on Windows that is dllexport, and the executable would carry an export table with the temporary output name in it. Each exported function sets the Odin context first.
 - Contents: the garbage collector (section 6), UTF-16 strings and their methods, arrays, number formatting, console output, error handling. Section 4.5 defines what comes from the Odin standard library and what the project writes itself. `Math` is not part of the runtime: the code generator emits LLVM intrinsics directly (4.5).

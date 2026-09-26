@@ -141,7 +141,7 @@ Embedded lib file: `src/lib/lib.d.ts`. `driver` includes it with `#load`, and it
 
 ## Package boundaries: runtime
 
-Directory `src/runtime/`, root package `rt` (the name `runtime` is taken by `base:runtime`). It builds separately: `odin build src/runtime -build-mode:obj`. The subpackages are plain Odin, tested with `odin test`; `proc "c"` procedures live only in the root.
+Directory `src/runtime/`, root package `rt` (the name `runtime` is taken by `base:runtime`). It builds separately: `odin build src/runtime -build-mode:obj -o:speed`. The subpackages are plain Odin, tested with `odin test`; `proc "c"` procedures live only in the root.
 
 | Package | Purpose | Entry point | Owns | Hides | Depends on | Deletion test |
 | --- | --- | --- | --- | --- | --- | --- |

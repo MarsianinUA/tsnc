@@ -24,10 +24,10 @@ odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style
 odin test tests/runtime/<package> -out:dist/runtime-<package>-tests.exe -vet -strict-style
 
 # runtime object; without -use-single-module Odin writes one .obj per package
-odin build src/runtime -build-mode:obj -use-single-module -out:dist/tsnc_rt-<target>.obj -vet -strict-style
+odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style
 
 # the same runtime with AddressSanitizer, for `tsnc build -sanitize:address`
-odin build src/runtime -build-mode:obj -use-single-module -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style
+odin build src/runtime -build-mode:obj -use-single-module -o:speed -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style
 
 # test runs (smoke from T1.8, negative from T2.9, diff from T4.7); smoke links against the
 # runtime object in dist/ and the other two run dist/tsnc.exe, so build both first
