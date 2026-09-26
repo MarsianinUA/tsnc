@@ -38,7 +38,11 @@ COLORS_16M :: 24
 
 should_colorize :: proc(stream: Stream) -> bool {
 	colors := false
-	if force, forced := os.lookup_env("FORCE_COLOR", context.allocator); forced {
+	force, forced := os.lookup_env("FORCE_COLOR", context.allocator)
+	when ODIN_OS == .Windows {
+		forced ||= force_color_set()
+	}
+	if forced {
 		colors = forced_depth(force) > COLORS_2
 	} else if is_terminal(stream) {
 		environment, _ := os.environ(context.allocator)

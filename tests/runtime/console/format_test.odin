@@ -1,5 +1,7 @@
 package console_tests
 
+import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 import "../../../src/abi"
@@ -137,6 +139,11 @@ percent_j_is_json :: proc(t: ^testing.T) {
 	set_field(self.payload.ref, TABLES[int(SELF) - len(abi.Builtin_Table)].fields[0], self)
 	circular := [?]abi.Tagged{text(&heap, "%j"), self}
 	expect_line(t, &heap, circular[:], "[Circular]")
+
+	// The key of an object that holds nothing there is taken back out, and a nested array is null.
+	nested := object(&heap, JSON, values(&heap, values(&heap, {})), {}, number(NAN), number(2))
+	inner := [?]abi.Tagged{text(&heap, "%j"), nested}
+	expect_line(t, &heap, inner[:], "{\"c\":[[null]],\"e\":null,\"f\":2}")
 
 	// JSON.stringify of a control character, a lone surrogate and a pair.
 	units := [?]u16{'"', '\\', 8, 12, '\n', '\r', '\t', 1, 0x1f, 0xdc00, 0xd83d, 0xde00}
@@ -348,4 +355,37 @@ percent_o_groups_its_length_as_node_does :: proc(t: ^testing.T) {
 		"  [length]: 101\n" +
 		"]",
 	)
+}
+
+// %j of a list thousands deep, which Node writes out whole where a walk by native recursion runs
+// out of stack:
+//
+//	node -e 'let o = null; for (let i = 3999; i >= 0; i--) o = { self: o, n: i };
+//		console.log(require("util").format("%j", o).length)'
+//
+// prints 70894, the length the loop below spells out.
+@(test)
+percent_j_of_a_deep_list_needs_no_deep_stack :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	DEPTH :: 4000
+	list := abi.Tagged {
+		tag = .Null,
+	}
+	for i := DEPTH - 1; i >= 0; i -= 1 {
+		list = object(&heap, SELF, list, number(f64(i)))
+	}
+	want := strings.builder_make(context.temp_allocator)
+	for _ in 0 ..< DEPTH {
+		strings.write_string(&want, "{\"self\":")
+	}
+	strings.write_string(&want, "null")
+	for i := DEPTH - 1; i >= 0; i -= 1 {
+		fmt.sbprintf(&want, ",\"n\":%d}", i)
+	}
+	testing.expect_value(t, strings.builder_len(want), 70894)
+	args := [?]abi.Tagged{text(&heap, "%j"), list}
+	expect_line(t, &heap, args[:], strings.to_string(want))
 }

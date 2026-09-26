@@ -26,3 +26,11 @@ enable_console_escapes :: proc(stream: Stream) {
 		win.SetConsoleMode(handle, mode | win.ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 	}
 }
+
+// force_color_set says whether FORCE_COLOR is set, the empty string included, which forces colors
+// in Node. core:os's lookup_env answers an empty variable as missing on Windows, as its second call
+// to GetEnvironmentVariableW returns 0 for the length of an empty value.
+@(private)
+force_color_set :: proc() -> bool {
+	return win.GetEnvironmentVariableW(win.L("FORCE_COLOR"), nil, 0) != 0
+}
