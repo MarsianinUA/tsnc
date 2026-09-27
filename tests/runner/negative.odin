@@ -32,6 +32,9 @@ covered as well as the diagnostics themselves. A build stops before lower when c
 anything, so a program that pins a code of lower has to pass check. The corpus holds a program for
 every code of the diag registry. The modules under tests/negative/modules/ are there to be imported
 and are never run as programs of their own.
+
+Every program is built at -j:1 and -j:8, which must print the same bytes; the header is compared
+with the first.
 */
 package main
 
@@ -126,11 +129,20 @@ negative_program :: proc(compiler, dist, name: string) -> (printed: int, ok: boo
 		fmt.eprintfln("negative: %s: path of %s: %v", path, artifact, join_err)
 		return 0, false
 	}
-	command := []string{compiler, "build", path, fmt.tprintf("-out:%s", output)}
-	built := execute(.negative, path, "tsnc build", command) or_return
+	out := fmt.tprintf("-out:%s", output)
+	one := []string{compiler, "build", path, out, "-j:1"}
+	eight := []string{compiler, "build", path, out, "-j:8"}
+	built := execute(.negative, path, "tsnc build", one) or_return
+	split := execute(.negative, path, "tsnc build", eight) or_return
 	got, got_ok := diagnostics_of(path, built.stderr)
 
 	ok = want_ok && got_ok
+	if split.stderr != built.stderr || split.stdout != built.stdout || split.code != built.code {
+		fmt.eprintfln("negative: %s: -j:8 prints otherwise than -j:1", path)
+		fmt.eprintfln("-j:1 answered %d:\n%s", built.code, built.stderr)
+		fmt.eprintfln("-j:8 answered %d:\n%s", split.code, split.stderr)
+		ok = false
+	}
 	if built.code != 1 {
 		// `tsnc build` answers 1 for a program with any diagnostic and 0 for one it built, so a
 		// negative test always expects 1. A crash lands here too, with whatever the OS reports.

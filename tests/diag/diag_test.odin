@@ -1,5 +1,6 @@
 package diag_tests
 
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
@@ -104,23 +105,26 @@ sort_orders_by_file_then_offset_then_code :: proc(t: ^testing.T) {
 }
 
 @(test)
-sort_keeps_the_input_order_of_equal_keys :: proc(t: ^testing.T) {
-	// Four keys, eight diagnostics each. The key ignores span.end, so end records the input order.
-	diagnostics: [32]diag.Diagnostic
-	for &d, i in diagnostics {
-		d = {
-			code = .Eval,
-			span = {start = i32(i % 4), end = i32(i)},
-		}
+sort_gives_one_order_for_any_input_order :: proc(t: ^testing.T) {
+	diagnostics := [?]diag.Diagnostic {
+		{code = .Type_Mismatch, span = {start = 4, end = 9}, args = {"string", "number"}},
+		{code = .Type_Mismatch, span = {start = 4, end = 7}, args = {"string", "number"}},
+		{code = .Type_Mismatch, span = {start = 4, end = 9}, args = {"boolean", "number"}},
+		{code = .Type_Mismatch, span = {start = 4, end = 9}, args = {"boolean", "string"}},
 	}
+	reversed := diagnostics
+	slice.reverse(reversed[:])
 	diag.sort(diagnostics[:])
+	diag.sort(reversed[:])
 
-	for i in 1 ..< len(diagnostics) {
-		before, after := diagnostics[i - 1].span, diagnostics[i].span
-		same_key := before.start == after.start
-		in_order := before.start < after.start || same_key && before.end < after.end
-		testing.expectf(t, in_order, "%v comes before %v", before, after)
+	expected := [?]diag.Diagnostic {
+		{code = .Type_Mismatch, span = {start = 4, end = 7}, args = {"string", "number"}},
+		{code = .Type_Mismatch, span = {start = 4, end = 9}, args = {"boolean", "number"}},
+		{code = .Type_Mismatch, span = {start = 4, end = 9}, args = {"boolean", "string"}},
+		{code = .Type_Mismatch, span = {start = 4, end = 9}, args = {"string", "number"}},
 	}
+	testing.expect_value(t, diagnostics, expected)
+	testing.expect_value(t, reversed, expected)
 }
 
 render_code :: proc(code: diag.Code) -> (number, text, hint: string) {

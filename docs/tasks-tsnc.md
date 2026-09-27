@@ -390,14 +390,14 @@ Done: the text of `src/` with comments stripped is the same before and after; od
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 6.
 
-### [ ] T6.1 `driver`: thread pool for parsing
+### [x] T6.1 `driver`: thread pool for parsing
 
 What: `core:thread.Pool`; a task per file with its own arena (`pool_add_task` with the task allocator); the import closure loop in waves (all known files in parallel, then the new ones); `File_ID` in breadth-first order regardless of the order in which tasks finish; `-j:N`, defaulting to the number of cores; `codegen.init_global_options` before the pool. Two leftovers of T2.8 belong here. A task arena commits 1 MiB for every file, the default of `core:mem/virtual`, which is 1 GiB for a thousand files: size it by the file instead. And an import whose spelling differs from the file name on disk only by case resolves on Windows and macOS but not on Linux: report it, as tsc does under `forceConsistentCasingInFileNames`, so that a program which passes on one OS passes on all of them.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `driver`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rules 4 and 5; [Interaction map](architecture-plan-tsnc.md#interaction-map), the "Determinism" paragraph; requirements §8.
 After: T5.16, T5.17.
 Done: a test: the same project at `-j:1` and `-j:8` gives the same `File_ID` values and the same diagnostic order.
 
-### [ ] T6.2 `driver`: N checkers over partitions
+### [x] T6.2 `driver`: N checkers over partitions
 
 What: split into contiguous `File_ID` ranges balanced by size; a task per partition with arenas; `lower` reads each file's facts from its checker's table; diagnostic sorting; determinism test: byte-identical `-emit-ir`, `-emit-llvm` and executable at `-j:1` and `-j:8`. One leftover of the milestone 3 review belongs here: `context.temp_allocator` is never reset in `check` or in `driver`, and every checker thread needs one of its own.
 Where: [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Parallel checkers"; [Contracts → Check_Result and Typed_File](architecture-plan-tsnc.md#check_result-and-typed_file-package-check), invariants; requirements §8, §11.

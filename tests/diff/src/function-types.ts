@@ -73,3 +73,19 @@ button.onClick(2);
 const other: Button = { label: "no", onClick: (t: number) => console.log("clicked", t) };
 other.onClick(3);
 console.log(button, other.onClick === button.onClick);
+
+// Signatures that differ only in parameter names.
+const doubled = (a: number): number => a * 2;
+const tripled = (b: number): number => b * 3;
+const both = [tripled, doubled];
+console.log(both[0](4), both.map((f) => f(1)));
+function sum(fs: ((x: number) => number)[]): number {
+  let total = 0;
+  for (const f of fs) {
+    total += f(10);
+  }
+  return total;
+}
+console.log(sum(both));
+const chosen = both.length > 1 ? tripled : doubled;
+console.log(chosen(5), chosen == tripled, doubled != tripled);

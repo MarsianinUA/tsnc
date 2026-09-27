@@ -11,10 +11,8 @@ it: requirements 9 lists an object file as an artifact only on request, and no f
 Errors. codegen and link each answer with an enum of their own, and build turns them into a
 Driver_Error whose detail is a sentence a user can act on.
 
-Memory. The IR goes into Build_Memory.lowering, paths and error texts into the driver arena. The
-scratch in context.temp_allocator is never rewound here, although lower and ir.verify leave that to
-whoever owns the frame: one build then exits, so nothing accumulates, and the test runner frees the
-scratch between tests.
+Memory. The IR goes into Build_Memory.lowering, paths and error texts into the driver arena. build
+rewinds the scratch lower, ir.verify, codegen and link leave in context.temp_allocator.
 */
 package driver
 
@@ -67,6 +65,7 @@ build :: proc(
 	if has_errors(report.check) {
 		return report, {}
 	}
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
 
 	memory := report.check.memory
 	arena := virtual.arena_allocator(&memory.arena)

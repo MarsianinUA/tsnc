@@ -3,10 +3,10 @@ The compiler's one imperative layer, by rules 1, 4 and 5 of
 docs/architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers.
 
 check_only is the `tsnc check` stage: the import closure from the entry file, parse and bind of
-every file in it, the module graph, and the types of one partition of every source file. build
-carries on through lower, codegen and link, and run starts what build wrote; both live in
-build.odin. has_errors is the policy between the stages. driver never prints and never sets the
-exit code; main does both.
+every file in it, the module graph, and the types of every source file, a checker per partition
+(checking.odin). build carries on through lower, codegen and link, and run starts what build wrote;
+both live in build.odin. has_errors is the policy between the stages. driver never prints and never
+sets the exit code; main does both.
 
 File_ID order. The lib file is 0, the entry file is 1, and an imported file takes the next number
 as the breadth-first walk first reaches it, as the "Determinism" paragraph of
@@ -15,10 +15,10 @@ file known so far at once, and only when all of them are done does this thread f
 imports, in File_ID order. So the numbers never depend on which task finished first, and -j:1 and
 -j:32 number a program alike.
 
-Memory. One arena per file task, holding that file's tokens, AST and Bound_File, plus one driver
-arena for the file table, the path strings, the file texts and the merged diagnostics. Everything
-lives until destroy, because each layer borrows from the one under it: the AST points into the file
-text and the Bound_File points into the AST.
+Memory. One arena per file task, holding that file's tokens, AST and Bound_File, one per check task,
+plus one driver arena for the file table, the path strings, the file texts and the merged
+diagnostics. Everything lives until destroy, because each layer borrows from the one under it: the
+AST points into the file text and the Bound_File points into the AST.
 
 Errors. A file that cannot be read is an infrastructure failure, and it has two forms. The entry
 file has no span to point at, so it comes back as a Driver_Error. Anything reached through an
@@ -121,7 +121,7 @@ Check_Report :: struct {
 	// Files, trees, names and the module graph, all indexed by File_ID with the lib at zero. It is
 	// empty when err says the build never started.
 	program:     program.Program,
-	// What the checkers learned, one entry per partition; v1 makes a single partition.
+	// What the checkers learned, one entry per partition, in File_ID order.
 	results:     []check.Check_Result,
 	diagnostics: []diag.Diagnostic, // every phase's and driver's own, in print order
 	memory:      ^Build_Memory, // owns the arenas the program lives in
@@ -158,6 +158,8 @@ check_only :: proc(
 	report: Check_Report,
 	err: Driver_Error,
 ) {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
+
 	memory := new(Build_Memory, allocator)
 	memory.allocator = allocator
 	if virtual.arena_init_growing(&memory.arena) != nil {
@@ -226,7 +228,10 @@ check_only :: proc(
 	append(&c.diagnostics, ..cycle_errors)
 
 	// check reports in the order it reads declarations, which is not print order.
-	results := run_checkers(&c, &built)
+	results, check_err := run_checkers(&c, &built, &pool, options.jobs)
+	if check_err != nil {
+		return {memory = memory}, {kind = .Out_Of_Memory}
+	}
 
 	diagnostics := c.diagnostics[:]
 	diag.sort(diagnostics)
