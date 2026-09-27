@@ -372,7 +372,7 @@ Where: `test-corpus-map.md`, section "Diff moves: runtime and the rest"; [Risks 
 After: T5.11.
 Done: the corpus is green in all passes; the replaced tests and the helpers they leave unused are gone.
 
-### [ ] T5.16 `lower` tests pin the decision, not the count
+### [x] T5.16 `lower` tests pin the decision, not the count
 
 What: the lower tests the map marks KEEP-STRATEGY guard a lowering decision no program shows: map, filter, forEach and reduce inlined, a box per pass for a `let` of a `for` header, a union of one representation left untagged, a direct call with no environment, and the rest in the map. Today they assert `len(...) == N` and emission order, so a refactor that keeps the decision still breaks them. Each one gets rewritten to assert the decision itself: no runtime call, one box per pass, a tag test and no call. `lower_helpers.odin` keeps what they use. The `@(private)` above the doc comment of `Local_Place` in `src/lower/expressions.odin` moves between the comment and the declaration. `test-corpus-map.md` is deleted.
 Where: `test-corpus-map.md`, section "Lower decisions"; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`.

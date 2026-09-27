@@ -1,5 +1,6 @@
 package lower_tests
 
+import "core:strings"
 import "core:testing"
 
 import "../../src/ir"
@@ -18,11 +19,9 @@ module_bindings_are_globals :: proc(t: ^testing.T) {
 		console.log(name);
 	`,
 	)
-	testing.expectf(t, len(result.output.globals) == 2, "%v", result.output.globals)
-	testing.expect(t, result.output.globals[0].name == "m1.count")
-	testing.expect(t, result.output.globals[0].type == ir.F64)
-	testing.expect(t, result.output.globals[1].name == "m1.name")
-	testing.expect(t, result.output.globals[1].type == ir.STR)
+	count, _ := global_named(result.output, "m1.count")
+	name, _ := global_named(result.output, "m1.name")
+	testing.expectf(t, count.type == ir.F64 && name.type == ir.STR, "%s", result.text)
 }
 
 @(test)
@@ -39,17 +38,13 @@ every_global_is_zeroed_before_the_module_runs :: proc(t: ^testing.T) {
 	init, found := func_named(result.output, "init$m1")
 	testing.expect(t, found, "the module has no init function")
 
-	// The first three stores are the zeroes, one per global, before any statement of the module.
-	stores := make([dynamic]ir.Global_ID, context.temp_allocator)
-	for instruction in init.values {
-		if store, is_store := instruction.variant.(ir.Global_Store); is_store {
-			append(&stores, store.global)
-		}
-	}
-	testing.expectf(t, len(stores) == 4, "%s", result.text)
-	testing.expect(t, stores[0] == 0 && stores[1] == 1 && stores[2] == 2, result.text)
+	count, is_number := first_store(result.output, init, "m1.count").(ir.Const_Number)
+	testing.expectf(t, is_number && count.value == 0, "%s", result.text)
+	flag, is_bool := first_store(result.output, init, "m1.flag").(ir.Const_Bool)
+	testing.expectf(t, is_bool && !flag.value, "%s", result.text)
 	// A string binding takes the empty cell rather than a null pointer.
-	testing.expect(t, len(result.output.strings) > 0 && len(result.output.strings[0]) == 0)
+	empty, is_string := first_store(result.output, init, "m1.text").(ir.Const_String)
+	testing.expectf(t, is_string && len(result.output.strings[empty.text]) == 0, "%s", result.text)
 }
 
 @(test)
@@ -67,15 +62,15 @@ a_union_of_one_representation_needs_no_tag :: proc(t: ^testing.T) {
 		pick(true);
 	`,
 	)
-	testing.expect(t, result.output.globals[0].type == ir.F64)
-	testing.expect(t, result.output.globals[1].type == ir.TAGGED)
+	step, _ := global_named(result.output, "m1.step")
+	maybe, _ := global_named(result.output, "m1.maybe")
+	testing.expectf(t, step.type == ir.F64 && maybe.type == ir.TAGGED, "%s", result.text)
 
 	body, found := func_named(result.output, "m1.pick")
 	testing.expect(t, found, "the function was not lowered")
-	for instruction in body.values {
-		_, boxed := instruction.variant.(ir.Box)
-		testing.expectf(t, !boxed, "a union of numbers was boxed: %s", result.text)
-	}
+	testing.expect(t, body.result == ir.F64)
+	testing.expectf(t, len(instructions_of(body, ir.Box)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
 }
 
 @(test)
@@ -89,7 +84,23 @@ a_read_made_after_the_declaration_needs_no_check :: proc(t: ^testing.T) {
 	`,
 	)
 	for body in result.output.funcs {
+		testing.expectf(t, len(instructions_of(body, ir.Null_Test)) == 0, "%s", result.text)
 		testing.expectf(t, len(instructions_of(body, ir.Fail)) == 0, "%s", result.text)
 	}
-	testing.expect_value(t, len(result.output.globals), 2)
+	for global in result.output.globals {
+		testing.expectf(t, !strings.has_suffix(global.name, "$ready"), "%s", result.text)
+	}
+}
+
+// first_store is the value the entry block of init stores into the global first, which is before
+// any statement of the module runs.
+@(private = "file")
+first_store :: proc(output: ir.Program_IR, init: ir.Func, name: string) -> ir.Variant {
+	for id in init.blocks[ir.ENTRY].instructions {
+		store, is_store := init.values[id].variant.(ir.Global_Store)
+		if is_store && output.globals[store.global].name == name {
+			return init.values[store.value].variant
+		}
+	}
+	return ir.Unreachable{}
 }

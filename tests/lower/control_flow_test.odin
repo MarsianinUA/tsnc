@@ -27,8 +27,17 @@ a_local_written_in_a_loop_becomes_a_phi :: proc(t: ^testing.T) {
 	)
 	body, found := func_named(result.output, "m1.sum")
 	testing.expect(t, found, "the function was not lowered")
-	// One header phi for each of the two locals the loop writes, and none for the parameter.
-	testing.expectf(t, count_of(body, ir.Phi) == 2, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Alloc)) == 0, "%s", result.text)
+	// total and i each come back along the back edge as a sum; a phi of n alone would not.
+	sums := 0
+	for phi in instructions_of(body, ir.Phi) {
+		for edge in phi.incoming {
+			if binary, is_binary := body.values[edge.value].variant.(ir.Binary); is_binary {
+				sums += 1 if binary.op == .Add else 0
+			}
+		}
+	}
+	testing.expectf(t, sums == 2, "%s", result.text)
 }
 
 @(test)
@@ -73,17 +82,4 @@ the_dump_is_the_same_every_time :: proc(t: ^testing.T) {
 	first := lower_text(t, text)
 	second := lower_text(t, text)
 	testing.expect(t, first.text == second.text, "two runs of one program gave two dumps")
-}
-
-// count_of counts the IR rather than the dump, which keeps a test from breaking when the printer
-// changes a word.
-@(private = "file")
-count_of :: proc(body: ir.Func, $Variant: typeid) -> int {
-	total := 0
-	for instruction in body.values {
-		if _, is_kind := instruction.variant.(Variant); is_kind {
-			total += 1
-		}
-	}
-	return total
 }

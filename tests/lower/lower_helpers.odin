@@ -18,8 +18,8 @@ import "../../src/source"
 /*
 The harness builds a whole program the way driver does and hands it to lower: the real lib as module
 zero, each source as the next File_ID, then parse, bind, program, check over every source, and
-lower. It stops at the first layer that reports anything a test did not ask for, since a test of
-lower says nothing about a program the layers under it already refused.
+lower. Any diagnostic fails the test: what lower reports is the negative corpus's to pin, and a test
+of lower says nothing about a program the layers under it already refused.
 
 Nothing here imports driver, which links codegen and llvm and would make every run of these tests
 need LLVM-C.dll on PATH.
@@ -41,15 +41,10 @@ Error :: struct {
 }
 
 Lowered :: struct {
-	program: program.Program,
-	files:   []source.File,
-	output:  ir.Program_IR,
-	errors:  []Error, // what lower reported, in print order
-	text:    string, // the -emit-ir dump
+	output: ir.Program_IR,
+	text:   string, // the -emit-ir dump
 }
 
-// lower_sources fails the test when parse, bind or check said anything or the IR breaks its
-// contract; what lower itself reported is left for the test to read.
 lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Lowered {
 	texts := make([]string, len(sources) + 1, context.temp_allocator)
 	texts[0] = LIB_TEXT
@@ -116,6 +111,7 @@ lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location)
 	results[0] = result
 	output, diagnostics := lower.lower(&prog, results, context.temp_allocator)
 	diag.sort(diagnostics)
+	testing.expectf(t, len(diagnostics) == 0, "lower %v", errors_of(files, diagnostics), loc = loc)
 
 	violations := ir.verify(output, context.temp_allocator)
 	testing.expectf(
@@ -126,26 +122,38 @@ lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location)
 		loc = loc,
 	)
 
-	return {
-		program = prog,
-		files = files,
-		output = output,
-		errors = errors_of(files, diagnostics),
-		text = dump(files, output),
-	}
+	return {output = output, text = dump(files, output)}
 }
 
 lower_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Lowered {
 	one := [1]string{text}
-	result := lower_sources(t, one[:], loc)
-	testing.expectf(t, len(result.errors) == 0, "lower %v", result.errors, loc = loc)
-	return result
+	return lower_sources(t, one[:], loc)
 }
 
 func_named :: proc(output: ir.Program_IR, name: string) -> (ir.Func, bool) {
 	for body in output.funcs {
 		if body.name == name {
 			return body, true
+		}
+	}
+	return {}, false
+}
+
+// func_prefixed finds a function whose name starts with the prefix, for a nested function or an
+// arrow, whose name ends in a node number.
+func_prefixed :: proc(output: ir.Program_IR, prefix: string) -> (ir.Func, bool) {
+	for body in output.funcs {
+		if strings.has_prefix(body.name, prefix) {
+			return body, true
+		}
+	}
+	return {}, false
+}
+
+global_named :: proc(output: ir.Program_IR, name: string) -> (ir.Global, bool) {
+	for global in output.globals {
+		if global.name == name {
+			return global, true
 		}
 	}
 	return {}, false
@@ -169,6 +177,51 @@ calls_to :: proc(body: ir.Func, export: abi.Runtime_Proc) -> int {
 		total += 1 if call.export == export else 0
 	}
 	return total
+}
+
+// A Call is the whole check: the verifier holds its callee to no environment and to the parameter
+// count.
+calls_function :: proc(output: ir.Program_IR, body: ir.Func, prefix: string) -> bool {
+	for call in instructions_of(body, ir.Call) {
+		if strings.has_prefix(output.funcs[call.func].name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+tests_tags :: proc(body: ir.Func, tags: ir.Tag_Set) -> bool {
+	for test in instructions_of(body, ir.Tag_Test) {
+		if test.tags == tags {
+			return true
+		}
+	}
+	return false
+}
+
+// fails_unless answers the error the program fails with on one side of the branch on test: the
+// check that guards a read out of a tagged value.
+fails_unless :: proc(
+	output: ir.Program_IR,
+	body: ir.Func,
+	test: ir.Value_ID,
+) -> (
+	error: abi.Runtime_Error,
+	fails: bool,
+) {
+	for branch in instructions_of(body, ir.Branch) {
+		if branch.condition != test {
+			continue
+		}
+		for target in ([2]ir.Block_ID{branch.then_block, branch.else_block}) {
+			block := body.blocks[target].instructions
+			last := body.values[block[len(block) - 1]].variant
+			if fail, is_fail := last.(ir.Fail); is_fail {
+				return output.fail_sites[fail.site].error, true
+			}
+		}
+	}
+	return {}, false
 }
 
 dump :: proc(files: []source.File, output: ir.Program_IR) -> string {

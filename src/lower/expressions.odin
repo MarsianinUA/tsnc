@@ -936,9 +936,9 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 
 // Places: where an assignment, an update or a read of a field or an element goes.
 
-@(private)
 // Local_Place and Global_Place are early where the name may be used before its declaration ran
 // (early_use): the first load or store tests that it has (check_ready).
+@(private)
 Local_Place :: struct {
 	symbol: bind.Symbol_ID,
 	early:  bool,

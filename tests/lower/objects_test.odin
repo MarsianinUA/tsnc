@@ -18,7 +18,8 @@ two_interfaces_of_one_shape_share_a_layout :: proc(t: ^testing.T) {
 		console.log(p, v);
 	`,
 	)
-	p, v := result.output.globals[0], result.output.globals[1]
+	p, _ := global_named(result.output, "m1.p")
+	v, _ := global_named(result.output, "m1.v")
 	testing.expect_value(t, p.type.kind, ir.Type_Kind.Ref)
 	testing.expect_value(t, p.type, v.type)
 }
