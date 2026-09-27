@@ -59,10 +59,13 @@ units :: proc "contextless" (text: ^abi.String_Cell) -> string16 {
 	return string16(unit_slice(text))
 }
 
-// from_units copies `text`, which may be a view into another cell.
+// from_units copies `text`, which may be a view into another cell, or answers a static cell.
 from_units :: proc(heap: ^gc.Heap, text: string16) -> ^abi.String_Cell {
 	if len(text) == 0 {
 		return &EMPTY
+	}
+	if len(text) == 1 && int(text[0]) < len(ASCII) {
+		return &ASCII[text[0]].cell
 	}
 	cell, dst := new_cell(heap, len(text))
 	copy(dst, raw_data(text)[:len(text)])
@@ -162,9 +165,8 @@ compare_units :: proc "contextless" (x, y: string16) -> int {
 unit_at :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, index: f64) -> ^abi.String_Cell {
 	in_range := 0 <= index && index < f64(text.length)
 	ensure(in_range && index == math.trunc(index), "a string index out of range")
-	cell, dst := new_cell(heap, 1)
-	dst[0] = unit_slice(text)[int(index)]
-	return cell
+	at := int(index)
+	return from_units(heap, units(text)[at:at + 1])
 }
 
 // code_point_at is what the string iterator of `for...of` yields at `index`: a surrogate pair is one
@@ -175,9 +177,7 @@ code_point_at :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, index: f64) -> ^ab
 	ensure(in_range && index == math.trunc(index), "a string index out of range")
 	at := int(index)
 	_, width := rune_at(unit_slice(text), at)
-	cell, dst := new_cell(heap, width)
-	copy(dst, unit_slice(text)[at:at + width])
-	return cell
+	return from_units(heap, units(text)[at:at + width])
 }
 
 @(private)

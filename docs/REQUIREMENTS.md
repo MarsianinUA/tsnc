@@ -226,7 +226,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 
 ## 9. Platforms, CLI, artifacts
 
-- Target platforms: Windows x64, Linux x64, macOS arm64 and x64. The compiler and the runtime are portable and build natively on each OS; the target is a parameter (target triple, linker, runtime OS layer through `core:os`). v2 adds WebAssembly through WASI (`wasm32-wasi`, linking with `wasm-ld`).
+- Target platforms: Windows x64, Linux x64, macOS arm64 and x64. The compiler and the runtime are portable and build natively on each OS; the target is a parameter (target triple, linker, runtime OS layer through `core:os`). Generated x64 code assumes x86-64-v2 (SSE4.2 and POPCNT: every x64 CPU since 2009, and the baseline of RHEL 9), because below it truncating a double has no instruction: a bounds check or a bitwise operator on a value not known to be whole becomes a call into libm. v2 adds WebAssembly through WASI (`wasm32-wasi`, linking with `wasm-ld`).
 - Cross-compilation is out of scope for v1: Linux from Windows becomes reachable in v2 through `ld.lld` from the Odin distribution and a sysroot or static musl, without third-party tools; macOS requires the Apple SDK and signing, native build only.
 - Testing on three OSes through GitHub Actions: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64), `macos-26-intel` (x64).
 - CLI modeled on Odin:

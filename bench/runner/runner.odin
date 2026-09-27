@@ -1,112 +1,227 @@
 /*
-The benchmark starter (requirements 10): hello world built by tsnc against the same file under
-Node, measured by the size of the executable and the time from start to exit. T6.3 brings the real
-benchmarks and the comparison with Go.
+The benchmarks of requirements 10. docs/development.md#benchmarks says what each table measures and
+how a version's results reach bench/RESULTS.md.
 
-	odin run bench/runner -out:dist/bench.exe -vet -strict-style
+	odin run bench/runner -out:dist/bench.exe -vet -strict-style -- [names]
 
-Run it from the repository root once the compiler and the runtime object are built
-(docs/development.md). Every run is checked to print the greeting, so a program that fails early
-cannot pass for a fast one. CI only type-checks the runner: timings on a shared machine say little.
+The names pick programs of bench/ts, hello and compile; with no names, everything runs. A
+program runs under tsnc, Node and its Go twin in bench/go, and the three must print the same
+output before any run is timed, so a program that fails early cannot pass for a fast one.
 */
 package main
 
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
+import si "core:sys/info"
 import "core:time"
 
 import "../../src/target"
 
 COMPILER :: "dist/tsnc.exe"
-PROGRAM :: "bench/hello.ts"
-GREETING :: "Hello, world!\n"
-RUNS :: 20
+
+Setup :: struct {
+	// Absolute: on Windows os.process_start answers Not_Exist for the relative dist/tsnc.exe.
+	compiler: string,
+	dist:     string,
+	suffix:   string, // of an executable
+	only:     []string,
+}
+
+Output :: struct {
+	stdout, stderr: string,
+	code:           int,
+}
+
+// Sample is one run: from start to exit on the wall clock, and the process's CPU time on every core,
+// which Windows counts in ticks of 15.6 ms.
+Sample :: struct {
+	wall, cpu: time.Duration,
+}
 
 main :: proc() {
-	if !bench() {
+	setup, ok := prepare()
+	if !ok {
+		os.exit(1)
+	}
+	header()
+	if !comparison(setup) || !compile(setup) {
 		os.exit(1)
 	}
 }
 
-bench :: proc() -> (ok: bool) {
-	// Absolute paths: on Windows os.process_exec answers Not_Exist for the relative dist/tsnc.exe.
-	// The executable's is built from dist/, because on Linux and macOS get_absolute_path resolves
-	// only a path that exists.
-	compiler, compiler_err := os.get_absolute_path(COMPILER, context.temp_allocator)
-	dist, dist_err := os.get_absolute_path("dist", context.temp_allocator)
+prepare :: proc() -> (setup: Setup, ok: bool) {
+	setup.only = os.args[1:]
+	for name in setup.only {
+		if !slice.contains(PROGRAMS[:], name) && name != "hello" && name != "compile" {
+			fmt.eprintfln(
+				"bench: no benchmark %q; the names are %v, hello and compile",
+				name,
+				PROGRAMS,
+			)
+			return {}, false
+		}
+	}
+
+	// On Linux and macOS get_absolute_path resolves only a path that exists, so an output path is
+	// joined onto dist rather than resolved.
+	compiler, compiler_err := os.get_absolute_path(COMPILER, context.allocator)
+	dist, dist_err := os.get_absolute_path("dist", context.allocator)
 	if compiler_err != nil || dist_err != nil || !os.is_file(compiler) {
 		fmt.eprintfln(
 			"bench: %s is missing; run from the repository root after building it",
 			COMPILER,
 		)
-		return false
+		return {}, false
 	}
-	name := fmt.tprintf("bench-hello%s", target.SPECS[target.HOST].executable_suffix)
-	executable, _ := os.join_path({dist, name}, context.temp_allocator)
-
-	build := []string{compiler, "build", PROGRAM, "-o:speed", fmt.tprintf("-out:%s", executable)}
-	state, stdout, stderr, build_err := os.process_exec({command = build}, context.temp_allocator)
-	if build_err != nil {
-		fmt.eprintfln("bench: run %s: %v", COMPILER, build_err)
-		return false
-	}
-	if state.exit_code != 0 {
-		fmt.eprintfln("bench: %s build %s exited with %d", COMPILER, PROGRAM, state.exit_code)
-		fmt.eprint(string(stdout), string(stderr))
-		return false
-	}
-	info, stat_err := os.stat(executable, context.temp_allocator)
-	if stat_err != nil {
-		fmt.eprintfln("bench: stat %s: %v", executable, stat_err)
-		return false
-	}
-
-	compiled := measure({executable}) or_return
-	node := measure({"node", PROGRAM}) or_return
-	fmt.printfln("%s, %d runs each after one warm-up", PROGRAM, RUNS)
-	fmt.printfln("  tsnc executable  %d bytes", info.size)
-	report("tsnc", compiled)
-	report("node", node)
-	return true
+	setup.compiler = compiler
+	setup.dist = dist
+	setup.suffix = target.SPECS[target.HOST].executable_suffix
+	return setup, true
 }
 
-// measure answers the times sorted. The warm-up run loads the program and the libraries into the
-// file cache, and on Windows lets the virus scanner see a new executable, so neither lands in the
-// first timing.
-measure :: proc(command: []string) -> (times: []time.Duration, ok: bool) {
-	run(command) or_return
-	times = make([]time.Duration, RUNS, context.temp_allocator)
-	for &elapsed in times {
-		start := time.tick_now()
-		run(command) or_return
-		elapsed = time.tick_since(start)
-	}
-	slice.sort(times)
-	return times, true
+wanted :: proc(setup: Setup, name: string) -> bool {
+	return len(setup.only) == 0 || slice.contains(setup.only, name)
 }
 
-run :: proc(command: []string) -> (ok: bool) {
-	state, stdout, stderr, err := os.process_exec({command = command}, context.temp_allocator)
+// header is the first lines of a RESULTS.md section: the date, the machine and the other two tools.
+header :: proc() {
+	year, month, day := time.date(time.now())
+	fmt.printfln("bench, %04d-%02d-%02d UTC", year, int(month), day)
+	if version, ok := si.os_version(context.temp_allocator); ok {
+		fmt.printfln("  OS    %s", version.full)
+	}
+	physical, logical, _ := si.cpu_core_count()
+	fmt.printfln("  CPU   %s, %d cores, %d threads", si.cpu_name(), physical, logical)
+	for tool in ([][]string{{"node", "--version"}, {"go", "version"}}) {
+		output, ok := execute(tool)
+		version := strings.trim_space(output.stdout) if ok else "missing"
+		fmt.printfln("  %-5s %s", tool[0], version)
+	}
+	fmt.println()
+}
+
+path_in :: proc(directory, name: string) -> string {
+	path, _ := os.join_path({directory, name}, context.temp_allocator)
+	return path
+}
+
+// execute is for the untimed steps: builds and version queries.
+execute :: proc(command: []string, working_dir := "") -> (output: Output, ok: bool) {
+	description := os.Process_Desc {
+		command     = command,
+		working_dir = working_dir,
+	}
+	state, stdout, stderr, err := os.process_exec(description, context.temp_allocator)
 	if err != nil {
 		fmt.eprintfln("bench: run %s: %v", command[0], err)
-		return false
+		return {}, false
 	}
-	if state.exit_code != 0 || string(stdout) != GREETING || len(stderr) > 0 {
+	return {stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, true
+}
+
+build :: proc(command: []string, working_dir := "") -> (ok: bool) {
+	output := execute(command, working_dir) or_return
+	if output.code != 0 {
 		fmt.eprintfln(
-			"bench: %s exited with %d, printing %q and %q to stderr",
-			command[0],
-			state.exit_code,
-			string(stdout),
-			string(stderr),
+			"bench: %s exited with %d",
+			strings.join(command, " ", context.temp_allocator),
+			output.code,
 		)
+		fmt.eprint(output.stdout, output.stderr)
 		return false
 	}
 	return true
 }
 
-report :: proc(label: string, times: []time.Duration) {
-	fastest := time.duration_milliseconds(times[0])
-	median := time.duration_milliseconds(times[len(times) / 2])
-	fmt.printfln("  %s startup     min %.1f ms, median %.1f ms", label, fastest, median)
+// timed sends the output to files, not pipes: os.process_exec polls its pipes without pausing and
+// keeps a core busy for the whole run.
+timed :: proc(setup: Setup, command: []string) -> (output: Output, sample: Sample, ok: bool) {
+	out_path := path_in(setup.dist, "bench-stdout.txt")
+	err_path := path_in(setup.dist, "bench-stderr.txt")
+	flags := os.File_Flags{.Write, .Create, .Trunc, .Inheritable}
+	out, out_err := os.open(out_path, flags)
+	if out_err != nil {
+		fmt.eprintfln("bench: create %s: %v", out_path, out_err)
+		return {}, {}, false
+	}
+	defer os.close(out)
+	errors, errors_err := os.open(err_path, flags)
+	if errors_err != nil {
+		fmt.eprintfln("bench: create %s: %v", err_path, errors_err)
+		return {}, {}, false
+	}
+	defer os.close(errors)
+
+	start := time.tick_now()
+	process, start_err := os.process_start({command = command, stdout = out, stderr = errors})
+	if start_err != nil {
+		fmt.eprintfln("bench: run %s: %v", command[0], start_err)
+		return {}, {}, false
+	}
+	state, wait_err := os.process_wait(process)
+	sample.wall = time.tick_since(start)
+	if wait_err != nil {
+		fmt.eprintfln("bench: wait for %s: %v", command[0], wait_err)
+		return {}, {}, false
+	}
+	sample.cpu = state.user_time + state.system_time
+
+	stdout, stdout_err := os.read_entire_file(out_path, context.temp_allocator)
+	stderr, stderr_err := os.read_entire_file(err_path, context.temp_allocator)
+	if stdout_err != nil || stderr_err != nil {
+		fmt.eprintfln("bench: read the output of %s: %v, %v", command[0], stdout_err, stderr_err)
+		return {}, {}, false
+	}
+	return {stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, sample, true
+}
+
+// checked is one timed run that has to exit 0 and print `stdout` and nothing on stderr.
+checked :: proc(setup: Setup, command: []string, stdout: string) -> (sample: Sample, ok: bool) {
+	output: Output
+	output, sample = timed(setup, command) or_return
+	if output.code != 0 || output.stdout != stdout || output.stderr != "" {
+		fmt.eprintfln(
+			"bench: %s exited with %d, printing %q and %q to stderr",
+			strings.join(command, " ", context.temp_allocator),
+			output.code,
+			output.stdout,
+			output.stderr,
+		)
+		return {}, false
+	}
+	return sample, true
+}
+
+series :: proc(
+	setup: Setup,
+	command: []string,
+	stdout: string,
+	runs: int,
+) -> (
+	samples: []Sample,
+	ok: bool,
+) {
+	samples = make([]Sample, runs, context.temp_allocator)
+	for &sample in samples {
+		sample = checked(setup, command, stdout) or_return
+	}
+	return samples, true
+}
+
+// median sorts the wall and the CPU times apart, so the two medians may come from different runs.
+median :: proc(samples: []Sample) -> Sample {
+	walls := make([]time.Duration, len(samples), context.temp_allocator)
+	cpus := make([]time.Duration, len(samples), context.temp_allocator)
+	for sample, i in samples {
+		walls[i], cpus[i] = sample.wall, sample.cpu
+	}
+	slice.sort(walls)
+	slice.sort(cpus)
+	return {walls[len(walls) / 2], cpus[len(cpus) / 2]}
+}
+
+ms :: proc(d: time.Duration) -> f64 {
+	return time.duration_milliseconds(d)
 }

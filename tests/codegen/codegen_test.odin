@@ -115,6 +115,38 @@ every_supported_target_emits_its_object_format :: proc(t: ^testing.T) {
 	}
 }
 
+// A bounds check, a bitwise operator and Math.trunc all truncate a double, and every target's CPU
+// does that in an instruction rather than a call to libm's trunc.
+@(test)
+no_target_calls_libm_to_truncate :: proc(t: ^testing.T) {
+	output := compile_text(
+		t,
+		`const xs = [1, 2, 3];
+const i = process.argv.length;
+console.log(xs[i % 3], i | 1, Math.trunc(i / 2));`,
+	)
+	for id in target.Target {
+		if !target.supported(id) {
+			continue
+		}
+		path := fmt.tprintf("dist/codegen-trunc-%v.obj", id)
+		err := codegen.emit(&output, output.units[0], id, .speed, .Object, path)
+		if !testing.expectf(t, err == .None, "%v: %v", id, err) {
+			continue
+		}
+		object, read_err := os.read_entire_file(path, context.temp_allocator)
+		if !testing.expectf(t, read_err == nil, "read %s: %v", path, read_err) {
+			continue
+		}
+		testing.expectf(
+			t,
+			!strings.contains(string(object), "trunc"),
+			"%v: the object calls trunc",
+			id,
+		)
+	}
+}
+
 @(test)
 target_without_a_row_is_unsupported :: proc(t: ^testing.T) {
 	output := hello_program(HELLO)

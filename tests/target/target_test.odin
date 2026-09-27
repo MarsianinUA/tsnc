@@ -23,6 +23,8 @@ every_v1_target_has_a_complete_row :: proc(t: ^testing.T) {
 	for id in V1_TARGETS {
 		spec := target.SPECS[id]
 		testing.expectf(t, len(spec.triple) > 0, "%v: empty triple", id)
+		// LLVM copies the CPU into a std::string, which a nil pointer crashes.
+		testing.expectf(t, spec.cpu != nil, "%v: nil cpu; write \"\" for the generic one", id)
 		testing.expectf(t, len(spec.link_flags) > 0, "%v: no link flags", id)
 		// link passes each element as one argument, so a space means two flags were merged.
 		for flag in spec.link_flags {

@@ -94,12 +94,10 @@ emit :: proc(
 		log.errorf("codegen: no LLVM backend for %s: %s", triple, lookup_message)
 		return .Unsupported_Target
 	}
-	// direct: the generic CPU of the triple; a cpu column in target.SPECS when benchmarks ask for
-	// tuned code.
 	machine := llvm.LLVMCreateTargetMachine(
 		backend,
 		triple,
-		"",
+		target.SPECS[build_target].cpu,
 		"",
 		MACHINE_CODE_LEVELS[level],
 		.LLVMRelocDefault,
