@@ -12,12 +12,17 @@ Resolution is deliberately small, because requirements 7 and 12 keep it that way
 relative or it is an error. There is no node_modules lookup, no index.ts, no tsconfig paths and no
 extension list. `./m` and `./m.ts` both name `m.ts`, which is the one spelling Node runs and the
 one tsc accepts without a flag.
+
+Case. Windows and macOS open `./Util.ts` for util.ts and Linux does not, so a spelling is checked
+against the names in each directory the path passes through, and one that differs only in case is
+an error on every OS. A program that builds on one of them then builds on all three.
 */
 package driver
 
 import "base:runtime"
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 
 import "../ast"
@@ -55,6 +60,7 @@ Closure :: struct {
 	edges:       [dynamic][dynamic]program.Import_Edge,
 	by_key:      map[string]source.File_ID, // folded identity path to the file that owns it
 	failed:      map[string]Failure, // identity paths that could not be read
+	listings:    map[string][]string, // folded directory path to the names in it on disk
 	diagnostics: [dynamic]diag.Diagnostic, // driver's own, merged with the phases' in check_only
 }
 
@@ -167,6 +173,11 @@ resolve_request :: proc(c: ^Closure, request: Request) {
 
 	importer := c.absolute[request.file]
 	absolute := resolve_against(importer, name, c.arena)
+	// Before the key: on Windows and macOS the folded key would find the file this spelling missed.
+	if on_disk, differs := case_on_disk(c, importer, absolute); differs {
+		report(c, .Path_Case_Mismatch, request.span, specifier, on_disk)
+		return
+	}
 	key := key_of(absolute, c.arena)
 	if id, seen := c.by_key[key]; seen {
 		// A diamond, a cycle or the same module twice: one File_ID, read once, but an edge of its
@@ -206,6 +217,74 @@ resolve_request :: proc(c: ^Closure, request: Request) {
 	display := resolve_against(c.files[request.file].path, name, c.arena)
 	id := add_file(c, display, absolute, strip_bom(string(data)))
 	record_edge(c, request, id)
+}
+
+// case_on_disk answers the first name on disk that the path spells in another case. It checks only
+// what the specifier spells past the importer's directory: that directory was checked when the
+// importer was imported, or it came from the command line, which is not part of the program. A
+// name missing in every case is left to the read, which reports the module as not found.
+case_on_disk :: proc(c: ^Closure, importer, absolute: string) -> (on_disk: string, differs: bool) {
+	start := 0
+	base := display_of(os.dir(importer), c.arena)
+	for {
+		end := strings.index_byte(absolute[start:], '/')
+		if end < 0 {
+			break
+		}
+		base_name: string
+		base_name, base = cut_first(base)
+		if absolute[start:][:end] != base_name {
+			break
+		}
+		start += end + 1
+	}
+
+	for start < len(absolute) {
+		end := strings.index_byte(absolute[start:], '/')
+		if end < 0 {
+			end = len(absolute) - start
+		}
+		name := absolute[start:][:end]
+		names := listing(c, absolute[:start])
+		if !slice.contains(names, name) {
+			// The smallest match, because a directory on a case-sensitive file system may hold
+			// several and the order it lists them in is its own.
+			for entry in names {
+				if strings.equal_fold(entry, name) && (on_disk == "" || entry < on_disk) {
+					on_disk = entry
+				}
+			}
+			return on_disk, on_disk != ""
+		}
+		start += end + 1
+	}
+	return "", false
+}
+
+// cut_first splits a slashed path after its first name: "/p/q" gives "" and "p/q".
+cut_first :: proc(path: string) -> (first, rest: string) {
+	slash := strings.index_byte(path, '/')
+	if slash < 0 {
+		return path, ""
+	}
+	return path[:slash], path[slash + 1:]
+}
+
+// listing reads a directory once per build. One that cannot be read lists nothing, and the read of
+// the module says why.
+listing :: proc(c: ^Closure, directory: string) -> []string {
+	key := key_of(directory, c.arena)
+	if names, seen := c.listings[key]; seen {
+		return names
+	}
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	entries, _ := os.read_all_directory_by_path(directory, context.temp_allocator)
+	names := make([]string, len(entries), c.arena)
+	for entry, i in entries {
+		names[i] = strings.clone(entry.name, c.arena)
+	}
+	c.listings[key] = names
+	return names
 }
 
 // record_edge is never called for a request that resolved to nothing: a file that is not in the

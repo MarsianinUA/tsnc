@@ -29,6 +29,10 @@ main :: proc() {
 		fmt.eprintfln("target %v is not supported yet", options.target)
 		os.exit(1)
 	}
+	if options.jobs < 1 {
+		fmt.eprintfln("-j:%d is not a thread count\n  hint: pass 1 or more", options.jobs)
+		os.exit(1)
+	}
 
 	// One file per command: check.odin, build.odin and run.odin, with report.odin holding what all
 	// three print. No default case, so a command added later fails the build here until it is
