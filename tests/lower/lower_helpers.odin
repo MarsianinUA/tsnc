@@ -171,12 +171,6 @@ calls_to :: proc(body: ir.Func, export: abi.Runtime_Proc) -> int {
 	return total
 }
 
-// number_at answers the value of a Const_Number operand.
-number_at :: proc(body: ir.Func, value: ir.Value_ID) -> (number: f64, ok: bool) {
-	constant := body.values[value].variant.(ir.Const_Number) or_return
-	return constant.value, true
-}
-
 dump :: proc(files: []source.File, output: ir.Program_IR) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	writer := strings.to_writer(&builder)

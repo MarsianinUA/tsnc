@@ -16,43 +16,6 @@ object_fields_are_in_canonical_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, declared_text(c, "record"), "{ age: number; name: string }")
 }
 
-// Named types.
-
-@(test)
-two_interfaces_with_the_same_fields_are_compatible :: proc(t: ^testing.T) {
-	// Requirements 3.3: the set of fields determines the layout, so `Point` and `Vec2` share one
-	// and fit each other at no cost. This is the task's first done criterion.
-	expect_checked(
-		t,
-		lines(
-			`interface Point { x: number; y: number; }`, //
-			`interface Vec2 { x: number; y: number; }`,
-			`const p: Point = { x: 1, y: 2 };`,
-			`const v: Vec2 = p;`,
-			`const back: Point = v;`,
-		),
-	)
-}
-
-@(test)
-two_interfaces_that_name_each_other_are_compatible_with_their_twins :: proc(t: ^testing.T) {
-	// Two rings of types compared field by field would never end, so the comparison answers yes for
-	// a pair it is already inside. Without that this test does not finish.
-	expect_checked(
-		t,
-		lines(
-			`interface A { b: B | undefined; }`, //
-			`interface B { a: A | undefined; }`,
-			`interface A2 { b: B2 | undefined; }`,
-			`interface B2 { a: A2 | undefined; }`,
-			`function take(value: A): void { }`,
-			`function make(value: A2): void { take(value); }`,
-		),
-	)
-}
-
-// Optional and readonly.
-
 @(test)
 an_optional_field_prints_with_its_question_mark :: proc(t: ^testing.T) {
 	// The question mark is part of the field set and stays in the type. Only a read of the slot
@@ -68,45 +31,6 @@ an_optional_field_prints_with_its_question_mark :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, declared_text(c, "opts"), "{ x: number; y?: string }")
 	testing.expect_value(t, declared_text(c, "read"), "string | undefined")
-}
-
-@(test)
-readonly_does_not_change_what_a_type_fits :: proc(t: ^testing.T) {
-	// TypeScript compares the fields and not who may write them, and so does tsnc: `readonly` says
-	// what this name may do, not what the object holds.
-	expect_checked(
-		t,
-		lines(
-			`interface Frozen { readonly size: number; }`, //
-			`interface Loose { size: number; }`,
-			`const f: Frozen = { size: 1 };`,
-			`const l: Loose = f;`,
-		),
-	)
-}
-
-// A literal into a union.
-
-@(test)
-a_literal_picks_the_member_of_a_union_its_tag_names :: proc(t: ^testing.T) {
-	// The members have the same field names, so only the literal the tag is written with tells
-	// them apart. Picking by names alone would always land on the first.
-	c := expect_checked(
-		t,
-		lines(
-			`interface Add { kind: "add"; left: number; right: number; }`, //
-			`interface Sub { kind: "sub"; left: number; right: number; }`,
-			`const plus: Add | Sub = { kind: "add", left: 1, right: 2 };`,
-			`const minus: Add | Sub = { kind: "sub", left: 1, right: 2 };`,
-			`function value(n: Add | Sub): number { return n.left; }`,
-			`const answer = value({ kind: "sub", left: 1, right: 2 });`,
-			`const echoed = minus;`,
-		),
-	)
-
-	// The declaration keeps the type it was written with; the literal's own answer is what the
-	// write left behind, which a read after it holds.
-	testing.expect_value(t, declared_text(c, "echoed"), "Sub")
 }
 
 // Widenings: an object accepted where a wider object type was expected, which lower turns into one

@@ -13,3 +13,12 @@ console.log([3, 1, 2].sort(loose));
 const label = (word: string, at?: number): string => `${at}:${word}`;
 const plain: (word: string) => string = label;
 console.log(["a", "b"].map(plain), plain("c"));
+
+// `narrow` flows into a type that also takes a string label, and map, calling it through `f`, still
+// gives it the element alone rather than the index where the label would be.
+function run(f: (x: number) => number): number[] {
+  return [1, 2].map(f);
+}
+const narrow = (x: number): number => x * 2;
+const joined: (x: number, label: string) => number = narrow;
+console.log(run(narrow), joined(1, "a"));

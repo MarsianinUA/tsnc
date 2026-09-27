@@ -58,3 +58,20 @@ console.log(nothing ?? "fallback", nothing === null, nothing);
 
 const mixed: unknown = 3;
 console.log(mixed, typeof mixed, mixed === 3);
+
+// A primitive's word narrows `any` and `unknown` to that type, while "object" leaves `any` as it
+// was.
+function classify(a: any, u: unknown): number {
+  if (typeof a === "number" && typeof u === "string") {
+    return a + u.length;
+  }
+  if (typeof a === "object") {
+    return a === null ? 0 : 2;
+  }
+  if (typeof u === "undefined") {
+    return u === undefined ? 3 : 4;
+  }
+  return 1;
+}
+
+console.log(classify(1, "ab"), classify(null, 1), classify("s", undefined), classify(true, 1));

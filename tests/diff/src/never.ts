@@ -55,3 +55,31 @@ console.log(assigned(true), assigned(false));
 announce(true);
 announce(false);
 console.log(guard(true));
+
+// The call ends the path it stands on, so after the `if` x is a string.
+function size(x: string | undefined): number {
+  if (x === undefined) {
+    process.exit(74);
+  }
+  return x.length;
+}
+
+// Both arms leave, so neither ternary joins anything. They are declared and never called.
+function neither(c: boolean): number {
+  return c ? process.exit(75) : process.exit(76);
+}
+
+function leave(c: boolean): void {
+  c ? process.exit(77) : process.exit(78);
+  console.log("never");
+}
+
+function above(n: number): boolean {
+  return n > 0 || process.exit(79);
+}
+
+function below(n: number): boolean {
+  return n > 100 && process.exit(80);
+}
+
+console.log(size("four"), above(2), below(2));

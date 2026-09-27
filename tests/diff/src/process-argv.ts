@@ -23,3 +23,6 @@ console.log(widths(args), args.join("|"), word, args.includes("--flag=x"));
 for (const arg of args) {
   console.log(arg, arg.toUpperCase(), arg.startsWith("--"));
 }
+
+// process.argv is one array for the whole run, not a new one per read.
+console.log(process.argv === process.argv);

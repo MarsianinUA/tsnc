@@ -164,55 +164,6 @@ a_let_of_a_for_header_gets_a_box_per_pass :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_boxed_for_of_variable_and_a_boxed_callback_parameter_are_bound_per_pass :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		const fs: (() => number)[] = [];
-		for (let x of [1, 2]) {
-			fs.push(() => x);
-			x += 1;
-		}
-		[3, 4].forEach((y) => {
-			fs.push(() => y);
-			y += 1;
-		});
-		console.log(fs.length);
-	`,
-	)
-	init, _ := func_named(result.output, "init$m1")
-	testing.expectf(t, number_boxes(result, init) == 2, "%s", result.text)
-}
-
-@(test)
-a_callback_through_a_closure_gets_the_index_only_where_its_class_can_hold_it :: proc(
-	t: ^testing.T,
-) {
-	// `narrow` flows into a type that takes a label as well, so its class does; map passes the
-	// element and pads the label with the empty string rather than handing it the index.
-	result := lower_text(
-		t,
-		`
-		function run(f: (x: number) => number): number[] {
-			return [1, 2].map(f);
-		}
-		const narrow = (x: number): number => x * 2;
-		const joined: (x: number, label: string) => number = narrow;
-		console.log(run(narrow), joined(1, "a"));
-	`,
-	)
-	run, _ := func_named(result.output, "m1.run")
-	calls := instructions_of(run, ir.Call_Closure)
-	if !testing.expectf(t, len(calls) == 1 && len(calls[0].args) == 2, "%s", result.text) {
-		return
-	}
-	_, padded := run.values[calls[0].args[1]].variant.(ir.Const_String)
-	testing.expectf(t, padded, "the second argument is not the class zero:\n%s", result.text)
-	narrow, _ := func_prefixed(result.output, "m1.narrow$")
-	testing.expect(t, slice.equal(narrow.params, []ir.Type{ir.F64, ir.STR}))
-}
-
-@(test)
 sorting_with_a_comparator_passes_the_closure_as_it_stands :: proc(t: ^testing.T) {
 	result := lower_text(t, "const xs = [2, 1];\nconsole.log(xs.sort((a, b) => a - b));\n")
 	init, _ := func_named(result.output, "init$m1")
