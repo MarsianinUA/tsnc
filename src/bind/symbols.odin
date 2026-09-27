@@ -24,8 +24,6 @@ Name_Key :: struct {
 	meaning: Meaning,
 }
 
-// Scopes.
-
 @(private)
 open_scope :: proc(b: ^Binder, kind: Scope_Kind, node: ast.Node_ID) -> (previous: Scope_ID) {
 	id := Scope_ID(len(b.scopes))
@@ -59,8 +57,6 @@ function_of :: proc(b: ^Binder, scope: Scope_ID) -> Scope_ID {
 	}
 	return current
 }
-
-// Declarations.
 
 // declare declares nothing for a name parse could not read, and a meaning that is taken is reported
 // and left with its first declaration.
@@ -179,8 +175,6 @@ add_import :: proc(
 	)
 }
 
-// Uses.
-
 // resolve leaves NO_SYMBOL on a name no scope of this file holds: check looks it up among the lib
 // names.
 @(private)
@@ -215,8 +209,7 @@ resolve :: proc(b: ^Binder, id: ast.Node_ID, name: ast.Name, meaning: Meaning) -
 }
 
 // capture notes that the current function uses a symbol of an enclosing one: the symbol lives in
-// the closure's environment, and so it does in every function in between. A module global is a
-// cell of the program instead, and belongs to no environment.
+// the closure's environment, and so it does in every function in between.
 @(private)
 capture :: proc(b: ^Binder, symbol: Symbol_ID) {
 	if symbol == NO_SYMBOL {
@@ -256,8 +249,6 @@ mark_assigned :: proc(b: ^Binder, target: ast.Node_ID) {
 		b.symbols[symbol].flags += {.Assigned}
 	}
 }
-
-// Exports.
 
 // collect_exports runs after everything is bound: an export list names symbols of the module scope.
 @(private)
@@ -392,8 +383,6 @@ add_export :: proc(
 	append(&b.exports, entry)
 }
 
-// Side effects.
-
 // module_has_effects reports whether the top level of the module runs code when the module loads.
 // Declarations and constants that hold a value of their own do not: two modules that import each
 // other are safe as long as neither runs anything, since then neither can read the other before it
@@ -482,8 +471,6 @@ all_inert :: proc(b: ^Binder, ids: []ast.Node_ID) -> bool {
 	}
 	return true
 }
-
-// Diagnostics.
 
 @(private)
 report :: proc(b: ^Binder, code: diag.Code, name: ast.Name) {

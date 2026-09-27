@@ -5,10 +5,6 @@ import "../bind"
 import "../diag"
 import "../program"
 
-// Type syntax.
-
-// resolve_type answers with the error type for a slot the rules could not read: it is assignable in
-// both directions, so one message stays one message.
 @(private)
 resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
 	if id == ast.NO_NODE {
@@ -130,8 +126,6 @@ resolve_params :: proc(
 	}
 	return out[:], required, variadic
 }
-
-// Names.
 
 // resolve_name stays inside this file: bind answers for a name the file declares, an import
 // included; a name it does not is a name of the lib module, which every file sees, or nothing at

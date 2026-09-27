@@ -17,7 +17,7 @@ Width_Run :: struct {
 	width:       u8,
 }
 
-// string_width skips the escape sequences colors.odin writes, ESC [ digits m, as Node skips them
+// string_width skips the escape sequences color.odin writes, ESC [ digits m, as Node skips them
 // when it colors. A lone surrogate is a code point of its own, 1 column wide.
 string_width :: proc(text: string16) -> int {
 	width := 0

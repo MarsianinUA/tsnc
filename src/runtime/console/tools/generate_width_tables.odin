@@ -141,7 +141,6 @@ read_decompositions :: proc(lines: []string) -> [][]rune {
 	return decompositions
 }
 
-// decomposed_width is the width of the full canonical decomposition of `code`.
 decomposed_width :: proc(code: rune, decompositions: [][]rune, widths: []u8) -> u8 {
 	if decompositions[code] == nil {
 		return widths[code]

@@ -25,9 +25,8 @@ it may hold itself, and since its fields are not all read yet while it is being 
 ordered by the declaration it came from, which is a fact of the Program and so reads the same in
 every partition.
 
-Memory: a type and its parts come from the allocator the table was made with, which is meant to be
-an arena; the table never frees. Interning keys, and the parts of a type that turns out to be in the
-table already, are built in context.temp_allocator.
+Memory: interning keys, and the parts of a type that turns out to be in the table already, are built
+in context.temp_allocator.
 */
 package check
 
@@ -180,8 +179,6 @@ Table :: struct {
 	key:       strings.Builder,
 }
 
-// make_table interns the types with no parts, in the order of Basic_Kind, which is what makes every
-// one of the constants above its own row number.
 @(private)
 make_table :: proc(allocator: runtime.Allocator) -> Table {
 	table := Table {
@@ -196,8 +193,6 @@ make_table :: proc(allocator: runtime.Allocator) -> Table {
 	}
 	return table
 }
-
-// Making types.
 
 // literal_type folds a negative zero into zero: parse reads the minus of `-0` into the value, while
 // TypeScript has one literal type for both and `-0 === 0` at run time.
@@ -256,9 +251,8 @@ plain_object_type :: proc(table: ^Table, fields: []Field) -> Type_ID {
 }
 
 // reserve_object gives a named object its row before its members are read, and says whether the row
-// is new. A member that names the object again comes back here and finds the reserved row, which is
-// how `interface Node { next: Node | undefined }` gets interned at all. The caller fills the row with
-// finish_object once the members are read, and until then the object reads as one with no fields.
+// is new. The caller fills the row with finish_object once the members are read, and until then the
+// object reads as one with no fields.
 @(private)
 reserve_object :: proc(
 	table: ^Table,
@@ -294,7 +288,6 @@ finish_object :: proc(table: ^Table, id: Type_ID, fields: []Field) {
 
 // union_type is the canonical union of members: every union among them is flattened into its own
 // members, duplicates are dropped, `never` adds nothing, and the rest end up in canonical order.
-// One member is that member, and none at all is `never`.
 //
 // `any` and the error type swallow a union: a value that may be anything is not better described by
 // listing some of it, and a union built on a type that already failed would report the failure
@@ -543,8 +536,6 @@ write_decl_key :: proc(b: ^strings.Builder, decl: Decl_Ref) {
 	strings.write_u64(b, u64(decl.node))
 }
 
-// Canonical order.
-
 // compare_types orders two types by structure: negative when a comes first, zero when they are one
 // type. It reads no Type_ID as a number, so two checkers that built one union independently sort it
 // the same way. It terminates because the one type that can hold itself, a named object, is settled
@@ -726,8 +717,6 @@ compare_decls :: proc(a, b: Decl_Ref) -> int {
 	return 0
 }
 
-// Reading types.
-
 @(private)
 literal_base :: proc(value: ast.Literal) -> Type_ID {
 	switch _ in value {
@@ -776,8 +765,8 @@ Part :: enum u8 {
 }
 
 // part_of keeps only the surviving part, which is what makes `name || "none"` a `string` where name
-// is `string | undefined`: tsc types it the same way, and the differential gate of T4.7 runs
-// `tsc --strict` over every program first.
+// is `string | undefined`: tsc types it the same way, and the tsc gate of the differential tests
+// runs `tsc --strict` over every program first.
 //
 // A member of a union that survives nothing comes back as `never`, and union_type then drops it,
 // which is how `string | undefined` loses its `undefined`.
@@ -854,7 +843,7 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 		return true
 	}
 	// The error type has had its diagnostic already, and `any` is the type that gives up on
-	// checking. Letting both pass in either direction keeps one mistake from becoming many.
+	// checking.
 	if source == ERROR || target == ERROR || source == ANY || target == ANY {
 		return true
 	}
@@ -875,7 +864,6 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 		}
 	}
 
-	// A union fits where every one of its members fits.
 	if members, is_union := types[source].(Union); is_union {
 		for member in members.members {
 			if !assignable(types, member, target, trail) {
@@ -884,7 +872,6 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 		}
 		return true
 	}
-	// A value fits a union when it fits one of the members.
 	if members, is_union := types[target].(Union); is_union {
 		for member in members.members {
 			if assignable(types, source, member, trail) {
@@ -894,7 +881,6 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 		return false
 	}
 
-	// An overloaded member fits wherever one of its signatures does.
 	if overload, is_overload := types[source].(Overload); is_overload {
 		for signature in overload.signatures {
 			if assignable(types, signature, target, trail) {
@@ -1087,8 +1073,6 @@ list_widenings :: proc(
 		list_widenings(types, field.type, target_object.fields[i].type, out, trail)
 	}
 }
-
-// Printing a type.
 
 // type_text is how a type reads: `number`, `"circle"`, `(a: number) => string`, `number | string`,
 // `Point`, `{ x: number; y: number }`, `number[]`. types is the table the id belongs to, which is

@@ -15,8 +15,7 @@ import "../source"
 // array literal what it holds. Only the shapes that can use it read it, and the error type means
 // there is no context, which is also what a context that failed should say.
 //
-// Every rule that reports gives its node the error type. The error type is assignable in both
-// directions, so one mistake stays one message however far the value travels.
+// Every rule that reports gives its node the error type.
 @(private)
 check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Type_ID {
 	if id == ast.NO_NODE {
@@ -118,8 +117,6 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 	return ERROR
 }
 
-// Names.
-
 // check_ident answers twice, as the other two reads of a place do: with the type the name was
 // declared with, and with the type it holds here, which narrow_reference works out from the flow
 // graph.
@@ -218,8 +215,6 @@ starts_empty :: proc(c: ^Checker, ref: Symbol_Ref) -> bool {
 	}
 	return !fits(c, UNDEFINED, type_of_symbol(c, ref))
 }
-
-// Operators.
 
 @(private)
 check_unary :: proc(c: ^Checker, node: ast.Unary) -> Type_ID {
@@ -362,8 +357,7 @@ add_result :: proc(
 }
 
 // arithmetic_result answers `number` for a bitwise operator as well: requirements 3.1 puts the
-// conversion to int32 in the semantics, not in the type. spans holds where each operand stands, so
-// the message points at the one that is wrong.
+// conversion to int32 in the semantics, not in the type.
 @(private)
 arithmetic_result :: proc(
 	c: ^Checker,
@@ -501,13 +495,11 @@ typeof_type :: proc(c: ^Checker) -> Type_ID {
 @(private, rodata)
 TYPEOF_ANSWERS := [?]string{"boolean", "function", "number", "object", "string", "undefined"}
 
-// Objects and arrays.
-
 // check_object_literal checks a literal written where an object type is expected against that type,
 // and the literal takes it as its own: a field the type does not declare is a mistake, a field the
-// literal leaves out is one unless the type wrote it `x?: T`, and T5.7 puts `undefined` in the slot
-// of the one left out. TypeScript calls a literal read this way fresh, and it is what keeps the
-// exact-type rule of requirements 3.3 from rejecting `const p: Opts = { x: 1 }` while two named
+// literal leaves out is one unless the type wrote it `x?: T`, and lower puts `undefined` in the
+// slot of the one left out. TypeScript calls a literal read this way fresh, and it is what keeps
+// the exact-type rule of requirements 3.3 from rejecting `const p: Opts = { x: 1 }` while two named
 // types still need the same set of fields.
 //
 // With no context the literal makes its own type and widens every field, because a field can take
@@ -715,8 +707,6 @@ check_index :: proc(
 	return ERROR, ERROR
 }
 
-// Assertions.
-
 // check_non_null follows requirements 3.8, which makes `x!` a runtime check, and lower emits one,
 // so it has to be a check worth making: a value that can never be null or undefined is reported
 // rather than quietly accepted, which is where tsnc is stricter than tsc.
@@ -764,8 +754,6 @@ check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 	}
 	return target
 }
-
-// Assignment.
 
 // check_target answers twice: with the type the place holds here, which a compound assignment
 // computes from, and with the type it was declared with, which the new value has to fit. The two
@@ -922,8 +910,6 @@ check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
 	}
 	return true
 }
-
-// Calls and arrows.
 
 // check_call takes the first signature whose arity fits where a member declared more than once
 // offers several, which is what src/lib/lib.d.ts says its two `reduce` declarations rely on.
@@ -1171,8 +1157,6 @@ has_shape :: proc(c: ^Checker, id: Type_ID, shape: Shape) -> bool {
 	}
 	return false
 }
-
-// Reading a type.
 
 // based_on reports whether every value of id is a value of base: base itself, a literal of it, or a
 // union of those. The error type and `any` pass, because one has been reported already and the

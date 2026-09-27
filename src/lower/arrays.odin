@@ -72,7 +72,6 @@ element_type :: proc(s: ^Func_State, array_type: check.Type_ID) -> (type: ir.Typ
 	return ir.TAGGED if type == ir.VOID else type, true
 }
 
-// receiver_element is the element type of the array in front of the dot of a method call.
 @(private)
 receiver_element :: proc(s: ^Func_State, node: ast.Call) -> (ir.Type, bool) {
 	member := s.tree.nodes[node.callee].variant.(ast.Member)
@@ -118,8 +117,6 @@ store_checked :: proc(s: ^Func_State, array, checked, value: ir.Value_ID, span: 
 	}
 	ir.emit(&s.fb, ir.VOID, store, span)
 }
-
-// Elements.
 
 // element_place takes a string too, whose units a read gives out one at a time.
 @(private)
@@ -233,8 +230,6 @@ push :: proc(s: ^Func_State, array, value: ir.Value_ID, span: source.Span) -> ir
 	}
 	return ir.emit(&s.fb, ir.F64, call, span)
 }
-
-// Methods.
 
 // lower_push evaluates every argument before the first push, as Node evaluates the whole list, and
 // answers the length after the last one.
@@ -520,8 +515,6 @@ lower_reduce :: proc(
 	close_inline_loop(s, &loop, next, span)
 	return loop.accumulator
 }
-
-// Inline loops.
 
 // Inline_Loop is the loop the four methods share. The header holds the phis of the locals the
 // callback writes, then the index and, for reduce, the accumulator. next is the index of the next

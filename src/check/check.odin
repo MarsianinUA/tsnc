@@ -1,12 +1,11 @@
 /*
-The types of a program: what every expression is, what every name refers to, and every mistake the
-type rules catch. program freezes the files, their trees and their names; check reads that and
-returns a Check_Result, which lower reads and never changes.
+The types of a program, the Check_Result and Typed_File of
+docs/architecture-plan-tsnc.md#check_result-and-typed_file-package-check.
 
 Partitions: one call types the files of one partition and returns a Typed_File for each. It reads
 any file of the program, though, because a name used in its partition may be declared anywhere, so
 the answer for a file does not depend on how the program was split. In v1 driver passes one
-partition holding every file; T6.2 runs several calls at once.
+partition holding every file.
 
 Tables: the three tables of a Typed_File are as long as the file's tree.nodes and hold a fact of a
 node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed. A read of a
@@ -25,19 +24,12 @@ a function is read where its type is worked out, and not where the walk reaches 
 Types: every type is interned in the table of this call, so a Type_ID is meaningful only together
 with Check_Result.types. See types.odin.
 
-What this package types: primitives, literal types, unions, functions and arrows; objects under the
-exact-type rule of requirements 3.3, arrays, `interface` and `type`, contextual typing, and the
-generic signatures of the built-in types, which is the whole of src/lib/lib.d.ts; unions narrowed
-through bind's flow graph, and the rules of requirements 3.8 for `as` and `!`; names another module
-declares, through the import and export tables, which is modules.odin; and the rules of the subset
-that need a type or a file to decide, which is subset.odin. Constructs the compiler can reject on
-sight are rejected in parse with a T2xxx code and never reach here.
+Constructs the compiler can reject on sight are rejected in parse with a T2xxx code and never reach
+here.
 
-Memory: the type table, the node tables, the Typed_File list and the diagnostics come from the
-allocator passed in, which is meant to be an arena; check never frees. Names and texts are borrowed
-from the trees, so the result must not outlive the program. Scratch data, including the caches only
-one call needs and the node tables of a file the call reads without typing, goes to
-context.temp_allocator.
+Memory: names and texts are borrowed from the trees, so the result must not outlive the program. The
+caches only one call needs and the node tables of a file the call reads without typing are scratch
+in context.temp_allocator.
 */
 package check
 
@@ -298,8 +290,6 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.table.key.buf)
 }
 
-// Facts of a node.
-
 // set_type hands the type back so that a caller can end on it. The tables are nil only while a
 // generic lib declaration is being instantiated, and the fact is then dropped so that the instance
 // does not overwrite what the declaration recorded. See Place.
@@ -324,8 +314,6 @@ set_signature :: proc(c: ^Checker, id: ast.Node_ID, signature: Type_ID) {
 		c.at.node_signatures[id] = signature
 	}
 }
-
-// Diagnostics.
 
 // report drops arguments past diag.MAX_ARGS: a text that needs more than the registry holds is a
 // text to rewrite.

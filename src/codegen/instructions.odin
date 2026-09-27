@@ -350,7 +350,6 @@ store :: proc(m: ^Module, body: ^Body, value: ir.Value_ID, address: llvm.LLVMVal
 	llvm.LLVMBuildStore(m.builder, stored, address)
 }
 
-// build_length answers the length of a string or an array, which abi puts at one offset in both.
 @(private)
 build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
 	#assert(offset_of(abi.Array_Cell, length) == offset_of(abi.String_Cell, length))

@@ -12,12 +12,11 @@ diag.Diagnostic: ir does not depend on diag and nothing here prints. verify answ
 it finds rather than stopping at the first, the way a phase returns every diagnostic it found, and
 it never panics on a malformed program: a broken layer must still be reportable and printable.
 
-Definition before use is dominance, not the order the values were emitted in. A Value_ID is numbered
-when its instruction was emitted, which crosses block boundaries, and a loop header receives its phi
-before the body that feeds it. So verify builds the predecessors of every block, walks them in
-reverse post-order, builds the dominator tree from that order and asks whether the block that
-defines a value lies on every path to the block that uses it. A phi operand is checked at the end of
-the block its edge names instead, which is what makes a back edge legal.
+Definition before use is dominance, not the order the values were emitted in. So verify builds the
+predecessors of every block, walks them in reverse post-order, builds the dominator tree from that
+order and asks whether the block that defines a value lies on every path to the block that uses it.
+A phi operand is checked at the end of the block its edge names instead, which is what makes a back
+edge legal.
 
 A block nothing reaches is not a violation: the builder opens one after every terminator, so the
 statements that follow a return land somewhere. Its instructions are still checked for shape and

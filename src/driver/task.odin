@@ -2,10 +2,9 @@
 /*
 The unit of work of the frontend: one file, parsed and bound in one place.
 
-run_file_task is the shape T6.1 hands to core:thread.Pool. It reads no shared state, writes only
-into its own task, and never touches the file system, so running many of them at once changes
-nothing about the result. Reading the file stays in the closure loop, where the imperative code
-belongs.
+run_file_task reads no shared state, writes only into its own task, and never touches the file
+system, so running many of them at once changes nothing about the result. Reading the file stays
+in the closure loop, where the imperative code belongs.
 */
 package driver
 
@@ -17,8 +16,6 @@ import "../diag"
 import "../parse"
 import "../source"
 
-// File_Task is always heap-allocated: the allocator taken from arena below captures it by pointer,
-// so the task must never move.
 File_Task :: struct {
 	arena:       virtual.Arena, // holds tree, bound and diagnostics until the end of the build
 	file:        source.File_ID,

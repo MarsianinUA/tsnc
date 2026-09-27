@@ -1,7 +1,6 @@
 /*
-The whole program as one frozen value: every file, its tree, its names, and the graph its imports
-draw. driver builds it once the import closure is walked; check and lower read it and never change
-it.
+The whole program as one frozen value, the Program of
+docs/architecture-plan-tsnc.md#program-package-program.
 
 Tables: files, trees, bound and imports are all indexed by source.File_ID, and the lib module is
 LIB, number zero. imports[id] holds one edge per module request of that file, in source order. A
@@ -10,7 +9,7 @@ file that is not there is not a node of the graph.
 
 Order: init_order lists every File_ID once, each module after the modules it imports. That is the
 order the top-level code of the modules runs in, the order Node evaluates ES modules in, and the
-order lower will emit the init functions in. `import type` edges are left out of it, since Node
+order lower emits the init functions in. `import type` edges are left out of it, since Node
 never loads a module imported only that way and tsnc must not run its top-level code either.
 
 Cycles: when modules import each other in a ring, there is no order in which each of them runs
@@ -25,9 +24,8 @@ The order and the rings come out of one depth-first search rather than a library
 answer has to be the same on every run: roots are taken in File_ID order and edges in source order,
 so nothing depends on a hash or on an address in memory.
 
-Memory: init_order, cycles and the diagnostics come from the allocator passed in, which is meant to
-be an arena; program never frees. Everything else is borrowed from driver's arenas, so the result
-must not outlive them. The search works in context.temp_allocator.
+Memory: everything but init_order, cycles and the diagnostics is borrowed from driver's arenas, so
+the result must not outlive them.
 */
 package program
 

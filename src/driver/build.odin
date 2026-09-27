@@ -1,12 +1,6 @@
 /*
 Everything after check: the rest of the pipeline, and running what came out of it.
 
-build is the whole compiler in one call. It runs check_only, stops while the program still has a
-mistake in it, lowers the typed program to IR, puts that IR through the verifier, and writes the one
-artifact the command line asked for: the tsnc IR dump of -emit-ir, the textual LLVM IR of
--emit-llvm, or an executable through codegen and link. run starts the program build wrote and
-answers its exit code.
-
 Atomicity. An artifact is written into a temporary directory and renamed into place once it is
 whole, so whoever reads the output path sees either the program that was there before or the new
 one, never half of either. The directory sits beside the target rather than in the system temp
@@ -15,15 +9,12 @@ needs an object file on the way, and that object is written into the same direct
 it: requirements 9 lists an object file as an artifact only on request, and no flag asks for one.
 
 Errors. codegen and link each answer with an enum of their own, and build turns them into a
-Driver_Error whose detail is a sentence a user can act on, which is the rule for an infrastructure
-failure. Every detail is allocated in the report's memory and dies with it.
+Driver_Error whose detail is a sentence a user can act on.
 
-Memory. lower gets an arena of its own, the phase arena of Build_Memory, holding the Program_IR and
-whatever lower had to say about the program. Paths and error texts go into the driver arena beside
-the file table. Everything else is scratch from context.temp_allocator, which build does not rewind:
-lower and ir.verify each say that resetting their scratch belongs to whoever owns the frame, and
-T6.2 settles it for every phase at once, once every phase has a thread of its own. One build then
-exits, so nothing accumulates; the test runner frees the scratch between tests.
+Memory. The IR goes into Build_Memory.lowering, paths and error texts into the driver arena. The
+scratch in context.temp_allocator is never rewound here, although lower and ir.verify leave that to
+whoever owns the frame: one build then exits, so nothing accumulates, and the test runner frees the
+scratch between tests.
 */
 package driver
 
@@ -415,7 +406,6 @@ build_executable :: proc(
 	paths: Paths,
 	allocator: runtime.Allocator,
 ) -> Driver_Error {
-	// The object lives beside the program in its temporary directory, and is removed with it.
 	object := strings.concatenate({paths.temporary, OBJECT_SUFFIX}, allocator)
 	object_paths := paths
 	object_paths.temporary = object

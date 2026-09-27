@@ -108,8 +108,6 @@ starts_declaration_word :: proc(p: ^Parser) -> bool {
 	return false
 }
 
-// Declarations.
-
 // parse_declaration starts at the current token, after the modifiers already read from start on
 // (`export`, `declare`).
 parse_declaration :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
@@ -165,7 +163,6 @@ parse_declaration :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> a
 	return add_node(p, start, ast.Bad{})
 }
 
-// parse_var_decl parses `let a = 1, b: T;` from its keyword.
 parse_var_decl :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	keyword := advance(p)
 	kind: ast.Var_Kind = .Const if keyword.kind == .Const else .Let
@@ -200,7 +197,6 @@ parse_declarator_list :: proc(
 	return finish_list(p, first)
 }
 
-// parse_declarator parses `name: type = init`.
 parse_declarator :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	name := parse_binding_name(p)
@@ -326,7 +322,6 @@ parse_function_rest :: proc(
 	return add_node(p, start, function)
 }
 
-// parse_interface parses `interface Name<T> { members }`.
 parse_interface :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	advance(p) // interface
 	name := parse_type_name(p)
@@ -355,7 +350,6 @@ parse_interface :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast
 	return add_node(p, start, interface)
 }
 
-// parse_type_alias parses `type Name<T> = type;`.
 parse_type_alias :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> ast.Node_ID {
 	advance(p) // type
 	name := parse_type_name(p)
@@ -374,8 +368,6 @@ parse_type_alias :: proc(p: ^Parser, start: i32, modifiers: ast.Modifiers) -> as
 	}
 	return add_node(p, start, alias)
 }
-
-// Imports and exports.
 
 // parse_import parses `import { a, b as c } from "./m"`, `import * as m from "./m"` and
 // `import "./m"`, each optionally `import type`. A default import is outside the subset.
@@ -624,8 +616,6 @@ parse_module_path :: proc(p: ^Parser) -> (path: ast.Node_ID, ok: bool) {
 	return path, true
 }
 
-// Constructs outside the subset.
-
 // parse_decorators reports every decorator `@expr` in a row and reads it. They make no node: the
 // declaration after them then parses on its own. A loop, not recursion, so that a long run of them
 // is not deep nesting.
@@ -708,8 +698,6 @@ parse_namespace :: proc(p: ^Parser, start: i32) -> ast.Node_ID {
 	}
 	return discard(p, m, start)
 }
-
-// Statements.
 
 // parse_statement takes a declaration for no statement: as the body of an `if` or a loop it needs
 // a block, so there it is reported, then parsed anyway. The result is NO_NODE when no statement
@@ -857,7 +845,6 @@ parse_switch :: proc(p: ^Parser) -> ast.Node_ID {
 	return add_node(p, start, ast.Switch{value = value, cases = finish_list(p, first)})
 }
 
-// parse_case parses `case value:` or `default:` and the statements after it.
 parse_case :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	value := ast.NO_NODE

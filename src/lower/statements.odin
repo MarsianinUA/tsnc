@@ -54,7 +54,6 @@ build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) 
 	end_function(&s)
 }
 
-// build_functions builds the declarations first and the arrows after, each in walk order.
 @(private)
 build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]

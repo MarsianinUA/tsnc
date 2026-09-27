@@ -379,7 +379,7 @@ Where: `test-corpus-map.md`, section "Lower decisions"; [Package boundaries: com
 After: T5.14, T5.15.
 Done: a refactor that keeps a decision passes its test and one that changes it fails; the map is gone.
 
-### [ ] T5.17 Comments in `src/` say only what the code cannot
+### [x] T5.17 Comments in `src/` say only what the code cannot
 
 What: a pass over `src/` by the comment rule of `$code-conventions` section 10: a comment gives the why, a constraint or a short example, and one that restates the code goes. An audit of 35% of the comment lines found about 12% to remove, some 600 lines. That means restatements, the 63 section dividers such as `// Names.` and the grammar labels of `ast` and `parse` (about 230 lines). It means package headers that retell the architecture plan (about 300 lines: `driver/driver.odin`, `abi/abi.odin`, the thirteen "Memory:" paragraphs), cut to their own facts and a link to the plan section. It means one constraint written in several places, kept in one: the arena that captures the task by pointer (five places), Odin's map iteration order (four), the error type assignable both ways (four). Task numbers such as "from T6.2" give way to the fact they stand for. Why-comments of three to ten lines get cut where one or two carry the reason. Left alone: `src/lib/lib.d.ts`, `src/llvm`, and every comment that records a measured fact or a trap (the `strconv.parse_f64` ulp, `os.same_file` on Windows, the 2^N walk in `check/narrow.odin`).
 Where: `$code-conventions` section 10, `$direct-taste` section 3; [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may).

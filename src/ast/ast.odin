@@ -1,7 +1,6 @@
 /*
-The syntax tree of one source file. parse builds a File_AST; bind, check and lower read it and never
-change it. A later phase keeps what it learns about a node (its type, the symbol an identifier
-refers to) in its own table indexed by the node's Node_ID.
+The syntax tree of one source file, frozen by rule 2 of
+docs/architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers.
 
 IDs:
 - A File_AST keeps every node of the file in one array, and a Node_ID is an index into it, so the
@@ -26,8 +25,7 @@ cases, specifiers, properties, members) never holds one: parse drops the broken 
 outside the v1 subset (classes, `try`, destructuring and the other v2 and "never" items of
 requirements 2.2) have no node of their own; they parse to Bad.
 
-Memory: parse allocates the node array, every list and every cooked string with its task allocator.
-The other Ident and Name texts borrow the source text. Both live until the end of the build.
+Memory: an Ident or Name text that needed no cooking borrows the source text.
 */
 package ast
 
@@ -37,7 +35,6 @@ Node_ID :: distinct u32
 
 ROOT :: Node_ID(0)
 
-// NO_NODE in a child field means the child is absent. It equals ROOT, which is never a child.
 NO_NODE :: Node_ID(0)
 
 File_AST :: struct {
@@ -53,7 +50,6 @@ Node :: struct {
 	variant: Variant,
 }
 
-// Name is a declared or member name. It is not a node; see the package doc.
 Name :: struct {
 	text: string,
 	span: source.Span,
@@ -125,18 +121,15 @@ Variant :: union #no_nil {
 	Property_Signature,
 }
 
-// Bad covers the text parse skipped after reporting it.
 Bad :: struct {}
 
 Module :: struct {
 	statements: []Node_ID,
 }
 
-// Declarations and modules.
-
 Modifier :: enum u8 {
 	Export,
-	Declare, // `declare`: allowed only in the lib file, check rejects it elsewhere
+	Declare, // allowed only in the lib file, check rejects it elsewhere
 }
 
 Modifiers :: bit_set[Modifier;u8]
@@ -146,21 +139,18 @@ Var_Kind :: enum u8 {
 	Const,
 }
 
-// Var_Decl is `let a = 1, b = 2` or `declare const console: Console`.
 Var_Decl :: struct {
 	modifiers:   Modifiers,
 	kind:        Var_Kind,
 	declarators: []Node_ID, // Declarator nodes
 }
 
-// Declarator is one `name: type = init` of a Var_Decl.
 Declarator :: struct {
 	name: Name,
 	type: Node_ID, // type slot; NO_NODE without an annotation
 	init: Node_ID, // expression slot; NO_NODE without an initializer
 }
 
-// Function_Decl is `function name<T>(params): return_type { body }`.
 Function_Decl :: struct {
 	modifiers:   Modifiers,
 	name:        Name,
@@ -188,7 +178,6 @@ Type_Param :: struct {
 	name: Name,
 }
 
-// Interface_Decl is `interface Name<T> { members }`.
 Interface_Decl :: struct {
 	modifiers:   Modifiers,
 	name:        Name,
@@ -196,7 +185,6 @@ Interface_Decl :: struct {
 	body:        Node_ID, // an Object_Type, so an interface and a type literal read the same
 }
 
-// Type_Alias_Decl is `type Name<T> = type`.
 Type_Alias_Decl :: struct {
 	modifiers:   Modifiers,
 	name:        Name,
@@ -214,14 +202,12 @@ Import_Named :: struct {
 	path:       Node_ID, // a String_Literal
 }
 
-// Import_Namespace is `import * as name from "./m"`.
 Import_Namespace :: struct {
 	type_only: bool,
 	name:      Name,
 	path:      Node_ID, // a String_Literal
 }
 
-// Export_Named is `export { a, b as c }`, or a re-export with `from "./m"`.
 Export_Named :: struct {
 	type_only:  bool,
 	specifiers: []Node_ID, // Specifier nodes
@@ -236,8 +222,6 @@ Specifier :: struct {
 	name:      Name,
 	alias:     Name,
 }
-
-// Statements.
 
 Block :: struct {
 	statements: []Node_ID,
@@ -300,9 +284,6 @@ Return :: struct {
 // Empty is a lone `;`.
 Empty :: struct {}
 
-// Expressions.
-
-// Ident is a use of a name.
 Ident :: struct {
 	name: string,
 }
@@ -345,7 +326,6 @@ Property :: struct {
 	value: Node_ID,
 }
 
-// Arrow is `(params): return_type => body`.
 Arrow :: struct {
 	params:      []Node_ID, // Param nodes
 	return_type: Node_ID, // type slot; NO_NODE without an annotation
@@ -436,7 +416,6 @@ Assign :: struct {
 	value:  Node_ID,
 }
 
-// Conditional is `condition ? then_value : else_value`.
 Conditional :: struct {
 	condition:  Node_ID,
 	then_value: Node_ID,
@@ -448,30 +427,24 @@ Call :: struct {
 	args:   []Node_ID,
 }
 
-// Member is `object.name`.
 Member :: struct {
 	object: Node_ID,
 	name:   Name,
 }
 
-// Index is `object[index]`.
 Index :: struct {
 	object: Node_ID,
 	index:  Node_ID,
 }
 
-// As is `expr as type`.
 As :: struct {
 	expr: Node_ID,
 	type: Node_ID,
 }
 
-// Non_Null is `expr!`.
 Non_Null :: struct {
 	expr: Node_ID,
 }
-
-// Types.
 
 Type_Keyword :: enum u8 {
 	Number,
@@ -489,7 +462,6 @@ Keyword_Type :: struct {
 	keyword: Type_Keyword,
 }
 
-// Literal is the value of a literal type: "circle", 42 or true.
 Literal :: union #no_nil {
 	f64,
 	string,
@@ -501,7 +473,6 @@ Literal_Type :: struct {
 	value: Literal,
 }
 
-// Type_Ref is `Point`, `m.Point` or `Array<T>`.
 Type_Ref :: struct {
 	qualifier: Name, // `m` in `m.Point`; empty text without one
 	name:      Name,

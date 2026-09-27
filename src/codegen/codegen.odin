@@ -4,8 +4,7 @@ codegen unit and writes it as an object file or as textual LLVM IR.
 
 The translation is one to one: a number is a double, a boolean an i1, a tagged value the two words
 of abi.Tagged, and every reference an opaque pointer. Each IR block becomes an LLVM block and each
-instruction one or a few LLVM instructions. codegen reads the program and never changes it, and it
-knows nothing of TypeScript: the closed instruction set of package ir is the whole contract.
+instruction one or a few LLVM instructions.
 
 The program is expected to have passed ir.verify. codegen relies on what the verifier promises -
 one terminator per block, definitions before uses, exact operand types - and does not check again.
@@ -18,8 +17,7 @@ share nothing.
 Memory: emit owns nothing that outlives the call. Scratch goes to context.temp_allocator behind a
 temp guard, and the LLVM handles are disposed on the way out.
 
-Errors: emit returns an Error value, like every infrastructure failure in tsnc. When LLVM explains a
-failure, emit logs the text at error level through context.logger.
+Errors: when LLVM explains a failure, emit logs the text at error level through context.logger.
 */
 package codegen
 
@@ -34,9 +32,9 @@ import "../target"
 // Optimization values are lowercase because they are the values of `tsnc -o:`: core:flags matches
 // them against the command line by exact name, and Odin's `-o:` spells them the same way.
 Optimization :: enum u8 {
-	none, // pipeline default<O0>, machine code level None
-	speed, // pipeline default<O2>, machine code level Default
-	aggressive, // pipeline default<O3>, machine code level Aggressive
+	none,
+	speed,
+	aggressive,
 }
 
 Artifact :: enum u8 {

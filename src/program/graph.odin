@@ -48,8 +48,6 @@ Search :: struct {
 	next:      i32,
 }
 
-// search_modules takes roots in File_ID order and each module's edges in source order, so two runs
-// of one program give one answer.
 search_modules :: proc(
 	bound: []bind.Bound_File,
 	imports: [][]Import_Edge,
@@ -133,8 +131,7 @@ discover :: proc(s: ^Search, module: source.File_ID) {
 }
 
 // close_component finishes the component whose root is `root`: its modules are everything pending
-// above the root. They take their place in the order together, in File_ID order, and a component
-// of more than one module is a ring.
+// above the root.
 close_component :: proc(s: ^Search, root: source.File_ID) {
 	first := len(s.pending) - 1
 	for s.pending[first] != root {

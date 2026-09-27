@@ -4,7 +4,6 @@ import "core:fmt"
 
 import "driver"
 
-// check answers the process exit code of `tsnc check`.
 check :: proc(options: driver.Options) -> int {
 	report, err := driver.check_only(options)
 	defer driver.destroy(&report)

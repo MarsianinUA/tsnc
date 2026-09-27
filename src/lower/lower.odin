@@ -1,15 +1,13 @@
 /*
-The typed program becomes IR here. lower is the last phase that knows what TypeScript is: it reads
-the frozen Program and the typing facts of check, and answers a Program_IR in which every rule is an
-instruction. codegen below it knows only the instruction set.
+The typed program becomes IR here, the last phase that knows what TypeScript is.
 
-Scope of this build (T5.9): numbers, booleans, null, undefined, strings and their operations,
-objects, arrays and their methods, `for...of`, functions, arrows and closures as values, calls
-direct and through a value, unions and `any` with the checks of requirements 3.8 (unions.odin), the
-whole of control flow, module initialization and the entry point. An arrow passed straight to map,
-filter, forEach or reduce is inlined where it is called. What this build does not compile yet is
-reported as Not_Lowered, so a program outside the build gets a compile error with a place in it and
-never a wrong program.
+Scope: numbers, booleans, null, undefined, strings and their operations, objects, arrays and their
+methods, `for...of`, functions, arrows and closures as values, calls direct and through a value,
+unions and `any` with the checks of requirements 3.8 (unions.odin), the whole of control flow,
+module initialization and the entry point. An arrow passed straight to map, filter, forEach or
+reduce is inlined where it is called. What this build does not compile yet is reported as
+Not_Lowered, so a program outside the build gets a compile error with a place in it and never a
+wrong program.
 
 Shape of the output:
 - One IR function per module, init$m<N>, holding that module's top-level code.
@@ -35,12 +33,11 @@ of the switch that declares it, since a jump to that case skips the declaration.
 marks whether its declaration has run and the read tests the mark (check_ready, bindings.odin). A
 reference binding holds null until then, any other a ready flag beside it, as V8 holds its hole.
 
-Memory: everything in the answer comes from the allocator, which is meant to be an arena. Names are
-built with it, because ir borrows them and they outlive the call; the tables lower needs only while
-walking come from context.temp_allocator, which it never rewinds. A rewind would be wrong rather
-than merely untidy: a caller may hand the same temp allocator in as the phase allocator, as the
-tests do, and the IR built after a mark would go with the scratch. Resetting the scratch of a phase
-belongs to whoever owns the frame, which T6.2 settles for every phase at once.
+Memory: names are built with the phase allocator, because ir borrows them and they outlive the
+call; the tables lower needs only while walking come from context.temp_allocator, which it never
+rewinds. A rewind would be wrong rather than merely untidy: a caller may hand the same temp
+allocator in as the phase allocator, as the tests do, and the IR built after a mark would go with
+the scratch. Resetting the scratch of a phase belongs to whoever owns the frame.
 */
 package lower
 

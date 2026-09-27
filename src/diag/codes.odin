@@ -3,8 +3,8 @@ package diag
 // Code keeps its number, text and hint in REGISTRY; the package doc has the numbering and wording
 // rules.
 Code :: enum u16 {
-	// T1xxx: syntax. tokenize (T2.4) and parse (T2.5) report these, and bind (T2.7) the three jumps,
-	// which need to know what encloses them.
+	// T1xxx: syntax. tokenize and parse report these, and bind the three jumps, which need to know
+	// what encloses them.
 	Unexpected_Character,
 	Unterminated_String,
 	Unterminated_Template,
@@ -22,10 +22,10 @@ Code :: enum u16 {
 	Return_Outside_Function,
 
 	// T2xxx: constructs outside the subset. parse reports the syntactic "never" rules of
-	// requirements 2.2 and the v2 and other non-v1 constructs; check (T3.5, T5.9) reports the seven
-	// that need a type, a name or the file the declaration stands in. lower reports Any_Operation
-	// too, for a value of type `any` that would become a function, which only a flow into a place
-	// of a function type shows.
+	// requirements 2.2 and the v2 and other non-v1 constructs; check reports the seven that need a
+	// type, a name or the file the declaration stands in. lower reports Any_Operation too, for a
+	// value of type `any` that would become a function, which only a flow into a place of a
+	// function type shows.
 	Var_Declaration,
 	With_Statement,
 	Namespace,
@@ -53,15 +53,15 @@ Code :: enum u16 {
 	Symbol_Global,
 	Namespace_As_Value, // {0} is the local name of the `import * as`
 	// {0} names the construct the way the text reads it, as an object: "rest parameters",
-	// "`Math.hypot`". lower (T4.3) reports it for a construct of the v1 subset that the code
-	// generator does not build yet; the code leaves the registry when the last one is lowered.
+	// "`Math.hypot`". lower reports it for a construct of the v1 subset that the code generator
+	// does not build yet; the code leaves the registry when the last one is lowered.
 	Not_Lowered,
 	Function_To_String,
 	// {0} is what the value cannot do: "be an operand of `*`", "be called"; {1} is "any" or
 	// "unknown"
 	Any_Operation,
 
-	// T3xxx: types. check (T3.2 on) reports these, the only phase that knows what a type is.
+	// T3xxx: types. check reports these, the only phase that knows what a type is.
 	Type_Mismatch, // {0} is the type of the value, {1} the type it has to fit
 	Loose_Equality, // {0} and {1} are the types of the two sides
 	Operand_Not_Number, // {0} is the operator: "*", "-"; {1} the type of the operand
@@ -93,17 +93,17 @@ Code :: enum u16 {
 	Circular_Initializer, // {0} is the name
 	Used_Before_Declaration, // {0} is the name
 
-	// T4xxx: names, modules and imports. bind (T2.7) reports these, driver (T2.8) the three that
-	// need a file system to decide, program (T3.1) the one that needs the whole module graph, and
-	// check (T3.2 on) the three that need the tables of another module.
+	// T4xxx: names, modules and imports. bind reports these, driver the three that need a file
+	// system to decide, program the one that needs the whole module graph, and check the three
+	// that need the tables of another module.
 	Redeclared_Name, // {0} is the name
 	Duplicate_Export, // {0} is the exported name
 	Undeclared_Export, // {0} is the exported name
 	Module_Not_Found, // {0} is the specifier as written
 	Bare_Specifier, // {0} is the specifier as written
 	Module_Unreadable, // {0} is the specifier, {1} why the file could not be read
-	Cycle_With_Side_Effects, // {0} lists the modules of the cycle; program (T3.1) reports it
-	Cannot_Find_Name, // {0} is the name; check (T3.2) reports it, once it has read the lib module
+	Cycle_With_Side_Effects, // {0} lists the modules of the cycle; program reports it
+	Cannot_Find_Name, // {0} is the name; check reports it, once it has read the lib module
 	Unknown_Export, // {0} is the name asked for, {1} the specifier as written
 	Type_Used_As_Value, // {0} is the name
 }

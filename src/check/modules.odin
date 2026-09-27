@@ -39,8 +39,6 @@ Import_Error :: enum u8 {
 	Not_A_Type, // the module has the name, but only as a value. The use reports it
 }
 
-// Statements.
-
 @(private)
 check_import :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Import_Named) {
 	check_specifiers(c, id, node.specifiers)
@@ -74,10 +72,7 @@ check_specifiers :: proc(c: ^Checker, request: ast.Node_ID, specifiers: []ast.No
 	}
 }
 
-// Uses.
-
-// imported_name says nothing more about a failure the import statement already reported: the error
-// type is assignable in both directions, so nothing cascades from it.
+// imported_name says nothing more about a failure the import statement already reported.
 @(private)
 imported_name :: proc(
 	c: ^Checker,
@@ -207,8 +202,6 @@ namespace_export :: proc(
 	return {}, false
 }
 
-// Resolution.
-
 // resolved_import reports nothing: every caller knows which of its own spans a failure belongs on.
 @(private)
 resolved_import :: proc(
@@ -319,8 +312,6 @@ follow_alias :: proc(
 	}
 	return follow_export(c, module, record.name.text, meaning, seen)
 }
-
-// The module graph.
 
 // module_of_request fails only for a request driver has already reported: program drew an edge for
 // every request it could resolve.

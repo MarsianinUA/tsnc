@@ -72,7 +72,7 @@ lower_effect :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	return lower_raw(s, id)
 }
 
-// lower_node is lower_expression without the net: the one switch over the kinds of expression.
+// lower_node is lower_raw without the net: the one switch over the kinds of expression.
 @(private)
 lower_node :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -1128,8 +1128,6 @@ store_place :: proc(
 	}
 	return value
 }
-
-// binary_op and compare_op split the syntactic operators into the two IR instructions they become.
 
 @(private)
 binary_op :: proc(op: ast.Binary_Op) -> (ir.Binary_Op, bool) {

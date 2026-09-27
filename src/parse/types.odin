@@ -348,7 +348,6 @@ starts_parameter_rest :: proc(p: ^Parser, at: int) -> bool {
 	return false
 }
 
-// parse_function_type parses `<U>(params) => type`.
 parse_function_type :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	type_params: []ast.Node_ID
