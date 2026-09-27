@@ -48,8 +48,11 @@ Variant :: union #no_nil {
 	Element_Load,
 	Element_Store,
 	Element_Store_Ref,
+	Unit_Load,
+	Ascii_Cell,
 	Layout_Test,
 	Null_Test,
+	Same_Cell,
 
 	// Tagged values.
 	Tag_Test,
@@ -174,7 +177,7 @@ Length :: struct {
 }
 
 // Bounds_Check answers the index again, as F64, once it has proved that the index is an integer
-// inside the array, or inside the string, which the index of a Str then reads through the runtime.
+// inside the array, or inside the string, whose unit Unit_Load then reads.
 // The element instructions take that answer, so the check cannot drift away from the access it
 // guards, and the v2 optimization that removes it has an edge to follow.
 Bounds_Check :: struct {
@@ -203,6 +206,20 @@ Element_Store_Ref :: struct {
 	value: Value_ID,
 }
 
+// Unit_Load answers the UTF-16 unit of a Str as F64.
+Unit_Load :: struct {
+	text:  Value_ID,
+	index: Value_ID, // the answer of a Bounds_Check
+}
+
+// Ascii_Cell answers the one-unit string of a unit below ASCII_LIMIT, which a branch before it
+// proved, as a row of a table of static cells codegen emits.
+Ascii_Cell :: struct {
+	unit: Value_ID, // the answer of a Unit_Load
+}
+
+ASCII_LIMIT :: 128
+
 // Layout_Test answers Bool: whether the cell's type table is a row whose base is this layout. A
 // Tag_Test says only that a tagged value holds an object; a read of an object out of a slot that
 // holds any object needs this as well before it trusts the layout.
@@ -216,6 +233,13 @@ Layout_Test :: struct {
 // (the read check of lower).
 Null_Test :: struct {
 	value: Value_ID,
+}
+
+// Same_Cell answers Bool: whether two Str are one cell. Two cells may hold the same units, so only
+// a test in front of the comparison of contents may use it.
+Same_Cell :: struct {
+	a: Value_ID,
+	b: Value_ID,
 }
 
 // Tag_Test answers whether the tag of a Tagged value is in the set. It is what narrowing compiles
@@ -332,6 +356,8 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
 		return false
+	case Unit_Load, Ascii_Cell, Same_Cell:
+		return false
 	case Tag_Test, Box, Unbox, Global_Load, Global_Store:
 		return false
 	case Env, Func_Ref, Make_Closure:
@@ -370,7 +396,8 @@ Binary_Op :: enum u8 {
 // Compare_Op answers Bool. Two F64 compare by IEEE rules, so NaN is equal to nothing and -0 equals
 // 0, which is what === asks for. Equal and Not_Equal also take two Bool, or two references, where
 // they compare addresses. A string and a tagged value compare through the runtime instead: one
-// holds its contents and the other its tag.
+// holds its contents and the other its tag. lower tests two strings with Same_Cell, Length and
+// Unit_Load before it asks the runtime.
 Compare_Op :: enum u8 {
 	Less,
 	Less_Equal,

@@ -753,11 +753,7 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 	checked := bounds_check(s, iterable, index, span)
 	step, piece: ir.Value_ID
 	if is_string {
-		call := ir.Call_Runtime {
-			export = .String_Code_Point_At,
-			args   = {iterable, checked},
-		}
-		piece = ir.emit(&s.fb, ir.STR, call, span)
+		piece = string_piece(s, iterable, checked, .String_Code_Point_At, span)
 		step = ir.emit(&s.fb, ir.F64, ir.Length{value = piece}, span)
 	} else {
 		load := ir.Element_Load {

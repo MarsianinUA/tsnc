@@ -69,6 +69,7 @@ Module :: struct {
 	// the abi.Function_Info every closure of the function points at.
 	closures:     []llvm.LLVMValueRef,
 	infos:        []llvm.LLVMValueRef,
+	ascii_cells:  llvm.LLVMValueRef,
 }
 
 @(private)
@@ -358,16 +359,31 @@ add_string_cells :: proc(m: ^Module) {
 // (see abi).
 @(private)
 add_string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
-	unit_values := make([]llvm.LLVMValueRef, len(units), context.temp_allocator)
-	for unit, i in units {
-		unit_values[i] = llvm.LLVMConstInt(m.types.int16, u64(unit), false)
-	}
+	cell := llvm.LLVMAddGlobal(m.module, string_cell_type(m, len(units)), "str")
+	llvm.LLVMSetInitializer(cell, string_cell(m, units))
+	llvm.LLVMSetGlobalConstant(cell, true)
+	llvm.LLVMSetLinkage(cell, .LLVMPrivateLinkage)
+	llvm.LLVMSetUnnamedAddress(cell, .LLVMGlobalUnnamedAddr)
+	llvm.LLVMSetAlignment(cell, align_of(abi.String_Cell))
+	return cell
+}
 
+@(private)
+string_cell_type :: proc(m: ^Module, length: int) -> llvm.LLVMTypeRef {
 	field_types := [?]llvm.LLVMTypeRef {
 		m.types.int32,
 		m.types.int32,
 		m.types.int64,
-		llvm.LLVMArrayType2(m.types.int16, u64(len(units))),
+		llvm.LLVMArrayType2(m.types.int16, u64(length)),
+	}
+	return llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
+}
+
+@(private)
+string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
+	unit_values := make([]llvm.LLVMValueRef, len(units), context.temp_allocator)
+	for unit, i in units {
+		unit_values[i] = llvm.LLVMConstInt(m.types.int16, u64(unit), false)
 	}
 	fields := [?]llvm.LLVMValueRef {
 		llvm.LLVMConstInt(m.types.int32, u64(abi.Builtin_Table.String), false), // header.type_table
@@ -375,17 +391,23 @@ add_string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
 		llvm.LLVMConstInt(m.types.int64, u64(len(units)), false), // length
 		llvm.LLVMConstArray2(m.types.int16, raw_data(unit_values), u64(len(unit_values))), // units
 	}
-	cell_type := llvm.LLVMStructTypeInContext(m.ctx, &field_types[0], len(field_types), false)
-	cell := llvm.LLVMAddGlobal(m.module, cell_type, "str")
-	llvm.LLVMSetInitializer(
-		cell,
-		llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false),
-	)
-	llvm.LLVMSetGlobalConstant(cell, true)
-	llvm.LLVMSetLinkage(cell, .LLVMPrivateLinkage)
-	llvm.LLVMSetUnnamedAddress(cell, .LLVMGlobalUnnamedAddr)
-	llvm.LLVMSetAlignment(cell, align_of(abi.String_Cell))
-	return cell
+	return llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false)
+}
+
+// ascii_cells is the table Ascii_Cell reads, made on first use: the one-unit cell of every unit
+// below ir.ASCII_LIMIT, 24 bytes apart. The program has its own, since Odin gives a variable of the
+// runtime an external symbol only as a dllexport.
+@(private)
+ascii_cells :: proc(m: ^Module) -> llvm.LLVMValueRef {
+	if m.ascii_cells == nil {
+		rows := make([]llvm.LLVMValueRef, ir.ASCII_LIMIT, context.temp_allocator)
+		for &row, unit in rows {
+			units := [1]u16{u16(unit)}
+			row = string_cell(m, units[:])
+		}
+		m.ascii_cells = add_constant_array(m, string_cell_type(m, 1), rows, "ascii_cells")
+	}
+	return m.ascii_cells
 }
 
 // static_closure is the one cell of a function with no environment, { i32, i32, ptr, ptr, ptr }:

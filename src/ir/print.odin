@@ -360,6 +360,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, " = ") or_return
 		write_value(w, v.value) or_return
 
+	case Unit_Load:
+		io.write_string(w, "unit_load ") or_return
+		write_element(w, v.text, v.index) or_return
+
+	case Ascii_Cell:
+		io.write_string(w, "ascii_cell ") or_return
+		write_value(w, v.unit) or_return
+
 	case Layout_Test:
 		io.write_string(w, "layout_test ") or_return
 		write_value(w, v.cell) or_return
@@ -369,6 +377,12 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 	case Null_Test:
 		io.write_string(w, "null_test ") or_return
 		write_value(w, v.value) or_return
+
+	case Same_Cell:
+		io.write_string(w, "same_cell ") or_return
+		write_value(w, v.a) or_return
+		io.write_string(w, ", ") or_return
+		write_value(w, v.b) or_return
 
 	case Tag_Test:
 		io.write_string(w, "tag_test ") or_return
