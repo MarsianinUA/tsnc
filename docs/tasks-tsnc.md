@@ -1,6 +1,6 @@
 # Task board: tsnc
 
-Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 27, 2026.
+Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 28, 2026.
 
 Purpose. The operator gives the agent a task number. The agent reads the shared handoff kit and the task kit, makes a detailed plan and writes the code. Tasks do not change the architecture. If a task runs into a key block from the section [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the work stops and the question goes back to the operator.
 
@@ -404,12 +404,37 @@ Where: [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Parallel c
 After: T6.1.
 Done: the determinism test runs in CI; the v1 acceptance criterion is fully met.
 
-### [ ] T6.3 Benchmarks
+### [x] T6.3 Benchmarks
 
 What: `bench/`: numeric loops, strings, arrays of objects, closures, allocations against Node and Go; startup time and exe size; compile time at `-j:1` and `-j:N` (the cost of duplicated checker work); results in `bench/RESULTS.md` by version. One idea for the strings benchmark: `str.unit_at` allocates a cell for every `s[i]`, while V8 keeps a cache of single-character strings. Odin cannot build a table of 128 cells at compile time, so 128 spelled-out rows have to pay for themselves in the numbers.
 Where: [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions), the item on private tables; requirements §10 "Benchmarks", §11.
 After: T6.2.
 Done: v1 results are recorded.
+
+## After v1: what the benchmarks found
+
+The v1 numbers in `bench/RESULTS.md` show three places where tsnc lags Node for a reason the compiler can remove. The tasks change speed, not output: the differential and expected-output corpora are their tests, and `bench/runner` measures each before and after. They run before the v2 waves, in the order below, which is the order of what they are likely to gain.
+
+### [ ] T6.4 `s[i]` and string `===` without a runtime call
+
+What: `chars` takes 0.669 s against Node's 0.208. Every `s[i]` is a call to `String_At` (`load_element` in `src/lower/arrays.odin`), every `for...of` step over a string one to `String_Code_Point_At` (`src/lower/statements.odin`), and every string `===` or `!==` one to `String_Equal` (`src/lower/strings.odin`). Each call builds an Odin context and a temp arena guard (`src/runtime/exports.odin`), where V8 does the same work inline. After the bounds check lower already emits, the unit is one load. Candidates the plan picks from: compare against a one-unit string literal as a length and a unit, not a call; answer `s[i]` below U+0080 from the runtime's static table (`src/runtime/str/ascii.odin`), which means an `abi` row for a data symbol generated code may address; put the identity and length tests of `===` in front of the call. Strings stay immutable, and a result may still be a static cell (`src/runtime/str/str.odin`, header).
+Where: requirements §3.2, §3.7; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `lower` and `abi`; `bench/ts/chars.ts`, `bench/ts/strings.ts`.
+After: T6.3.
+Done: the corpora are green in all passes, under stress and ASan too; a lower test pins each decision the way T5.16 pins them (no runtime call where the plan says none); `chars` runs in at most 1.5 times Node's time.
+
+### [ ] T6.5 `T | null` of one reference type as a plain pointer
+
+What: `trees` takes 1.124 s against 0.342 for Node and 0.352 for Go. A union with an object member is a 16-byte tagged slot (requirements §3.4, and the item settled in T5.7 under [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may)), so the node `{left: Tree | null, right: Tree | null}` is a 40-byte cell in the 48-byte size class, against 16 bytes in Go, and the collector marks three times the memory. A union of one reference type (an object, array, string or function type) with exactly one of `null` and `undefined` becomes one pointer slot, 0 meaning that `null` or `undefined`, with its narrowing a compare with 0. Where such a value flows into `any`, a wider union or the console, lower gives it its tag. The layout stays a function of structure. The task amends requirements §3.4 and the T5.7 item, so the operator approves the plan before any code.
+Where: requirements §3.3, §3.4, §6; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `lower`, `codegen`, `abi`; the `gc` type table format; `bench/ts/trees.ts`.
+After: T6.3.
+Done: the corpora are green in all passes, under stress and ASan too; a lower test pins that such a slot carries no tag; the node of `trees` is a 24-byte cell; requirements §3.4 and the architecture plan say what changed.
+
+### [ ] T6.6 A cheaper entry into the runtime
+
+What: every export starts with `export_context()` (`runtime.default_context()` and two fields, `src/runtime/rt.odin`) and a `DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD`, although most hot exports (`String_Equal`, `String_Char_Code_At`, the `Math` rows, what T6.4 leaves of `String_At`) touch no scratch memory and fail only through an `ensure`. First measure what the two cost per call and what share of `chars`, `strings` and `closures` that is after T6.4. Candidates: a guard only in the exports that use scratch memory; a context built only on the failure path. "Setting up `context` in the exports" and "the GC heap as the only runtime state" are key blocks of [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), so the measurement and the proposal go to the operator before any code.
+Where: requirements §4.3, §4.5; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime); `src/runtime/exports.odin`.
+After: T6.4.
+Done: the measurement is recorded in the plan; if the operator accepts a change, the corpora are green in all passes, under stress and ASan too, the benchmarks it targets are measured before and after, and the key block's text says what changed.
 
 ## Milestone 7: v2 waves (epics)
 
@@ -432,4 +457,4 @@ An actionable v2 task cannot be written before the v1 code exists. Each epic sta
 
 T1.1 → T1.3 → T1.5 → T1.6 → T1.7 → T1.8 → T1.9 → T2.2 → T2.3 → T2.4 → T2.5 → T2.7 → T2.8 → T3.1 → T3.2 → T3.3 → T3.4 → T3.5 → T3.6 → T4.1 → T4.2 → T4.3 → T4.4 → T4.5 → T4.7 → T5.1 → T5.2 → T5.3 → T5.4 → T5.5 → T5.7 → T5.8 → T5.9 → T5.10 → T6.1 → T6.2.
 
-Running in parallel with the critical path: T1.2 and T1.4 (after T1.1), T2.1 and T2.6, T4.6 (after T1.5), T5.6, T6.3. T5.11 to T5.17 run between T5.10 and T6.1: they change tests, the runner and comments, not what the compiler does.
+Running in parallel with the critical path: T1.2 and T1.4 (after T1.1), T2.1 and T2.6, T4.6 (after T1.5), T5.6, T6.3. T5.11 to T5.17 run between T5.10 and T6.1: they change tests, the runner and comments, not what the compiler does. T6.4 to T6.6 come after T6.3 and before the v2 waves; T6.4 and T6.5 share no code and can run in parallel.

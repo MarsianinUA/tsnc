@@ -32,7 +32,7 @@ fib(30) = 832040
 
 ## What a compiled program is
 
-- One native executable for Windows x64, Linux x64 or macOS on arm64 and x64. It runs without Node and without a JavaScript engine.
+- One native executable for Windows x64, Linux x64 or macOS on arm64 and x64, where x64 means a CPU from 2009 or later. It runs without Node and without a JavaScript engine.
 - tsnc's own garbage collector manages memory. It is a stop-the-world mark-sweep that never moves an object.
 - `number` is always a 64-bit float with the JavaScript rules: `NaN`, `-0`, `%`, bitwise operators through int32. Numbers print the way Node prints them.
 - Strings are UTF-16, so `length`, `charCodeAt` and indexing agree with Node on Cyrillic and emoji. Output is UTF-8.
@@ -61,9 +61,9 @@ Anything else is a compile error, and `tsnc check` reports all of them in one pa
 
 ## Status
 
-Milestones 1 to 5 of the six that make up v1 are done. `tsnc check` covers the whole v1 subset and reports syntax, type, name and module errors in one pass. `tsnc build` and `tsnc run` compile strings, objects, arrays, closures, unions and `any`, with the garbage collector underneath. The differential corpus, a program for each construct of the subset, prints what Node prints on Windows, Linux and macOS, also with the collector checking the heap on every allocation, and on Windows and Linux with the runtime built with AddressSanitizer.
+All six milestones of v1 are done. `tsnc check` covers the whole v1 subset and reports syntax, type, name and module errors in one pass. `tsnc build` and `tsnc run` compile strings, objects, arrays, closures, unions and `any`, with the garbage collector underneath. The differential corpus, a program for each construct of the subset, prints what Node prints on Windows, Linux and macOS, also with the collector checking the heap on every allocation, and on Windows and Linux with the runtime built with AddressSanitizer. Parsing and type checking run on every core, and the output does not change with the thread count. [bench/RESULTS.md](bench/RESULTS.md) compares compiled programs with Node and Go.
 
-Milestone 6 is next: parsing and type checking on every core, then benchmarks against Node and Go. The [task board](docs/tasks-tsnc.md) tracks the rest.
+The v2 waves come next; the [task board](docs/tasks-tsnc.md) tracks them.
 
 ## Usage
 

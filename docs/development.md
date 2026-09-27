@@ -181,13 +181,28 @@ The define makes the first command fail if the build lost the sanitizer, where e
 
 ## Benchmarks
 
-`bench/runner` builds `bench/hello.ts` with `dist/tsnc.exe -o:speed` and prints the size of the executable and the startup time, the fastest and the median of 20 runs, next to `node bench/hello.ts`. It needs the compiler and the runtime object, and Node on `PATH`.
+`bench/ts/` holds the programs of requirements 10: `mandelbrot` and `collatz` (numeric loops), `sieve` (a `boolean[]`), `chars` and `strings` (a scan by `s[i]` and the string methods), `objects` (an array of records sorted and filtered), `closures`, `trees` (binary-trees, for the collector) and `hello`. Each has a Go twin in `bench/go/<name>/main.go`. The twins run the same algorithm on the same data, in the types a Go programmer would pick: `int` where a value is always an integer, byte indexing for ASCII text, a slice of structs for records.
+
+`bench/runner` needs the compiler and the runtime object, and Node and Go on `PATH`:
 
 ```sh
 odin run bench/runner -out:dist/bench.exe -vet -strict-style
+odin run bench/runner -out:dist/bench.exe -vet -strict-style -- chars strings
 ```
 
-CI only type-checks it: timings on a shared runner say little. The benchmarks against Node and Go come with milestone 6.
+The names pick benchmarks: a program, `hello` or `compile`. With no names, everything runs, which takes about four minutes. The runner prints Markdown:
+
+- The tables of `bench/RESULTS.md`. Each program is built with `-o:speed` by tsnc and with `go build`, runs once under each implementation, and all three must exit 0 and print the same output. The table gives the median wall time of five more runs, or of 20 for hello, then the size of hello's executable.
+- compile: three generated projects of about a thousand modules under `dist/bench-compile-*` go through `tsnc check` at `-j:1` and at the default `-j`.
+  - In `apart` no file uses another's declarations.
+  - In `shared` every module calls functions of ten shared lib modules.
+  - In `layered` the entry also calls into every module.
+  - The last column repeats both runs with tsnc held to one CPU. What stays is the work the checkers repeat, since each types what its files reach in its own table, without what slower cores and shared caches add. Windows only.
+  - Last come the `-o:none` and `-o:speed` build times of `layered`.
+
+A timed run writes its output to files: `os.process_exec` polls its pipes without pausing and would keep a core busy. Wall time includes starting the process, the same for all three.
+
+To record a version, run the programs and hello on an idle machine and paste the two tables under a new version heading in `bench/RESULTS.md`, with one line naming the date, the CPU, the OS and the Node and Go versions from the runner's header. CI only type-checks the runner and runs no benchmark: timings on a shared runner say little, and it has no Go.
 
 ## Unicode case tables
 
@@ -249,7 +264,7 @@ src/lower/    the typed syntax tree to our IR
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, negative, diff and expect corpora
-bench/        benchmarks: the hello world starter and its runner
+bench/        benchmark programs in bench/ts, their Go twins in bench/go, the runner, RESULTS.md
 docs/         requirements, architecture plan, task board, this development guide
 dist/         build output, not in git
 .zed/         Zed tasks and debug config

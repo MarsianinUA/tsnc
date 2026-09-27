@@ -51,6 +51,9 @@ Linker :: enum u8 {
 
 Spec :: struct {
 	triple:              cstring, // LLVM target triple, the one Odin gives the runtime object
+	// LLVM CPU name, "" for the triple's generic CPU. x86-64 before v2 has no roundsd, so the
+	// truncation in a bounds check or a bitwise operator was a call to libm's trunc.
+	cpu:                 cstring,
 	linker:              Linker,
 	link_flags:          []string, // one command line argument per element, unquoted
 	runtime_object:      string, // file name; link looks for it next to tsnc
@@ -64,6 +67,7 @@ Spec :: struct {
 SPECS := #partial [Target]Spec {
 	.windows_amd64 = {
 		triple = "x86_64-pc-windows-msvc",
+		cpu = "x86-64-v2",
 		linker = .Lld_Link,
 		link_flags = {
 			"/ENTRY:mainCRTStartup",
@@ -84,6 +88,7 @@ SPECS := #partial [Target]Spec {
 	},
 	.linux_amd64 = {
 		triple              = "x86_64-pc-linux-gnu",
+		cpu                 = "x86-64-v2",
 		linker              = .Cc,
 		// -no-pie: distributions build PIE executables by default, and Odin and LLVM emit
 		// position-dependent code by default.
@@ -95,6 +100,7 @@ SPECS := #partial [Target]Spec {
 	},
 	.darwin_arm64 = {
 		triple = "arm64-apple-macosx11.0.0",
+		cpu = "",
 		linker = .Cc,
 		link_flags = {"-target", "arm64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_arm64.obj",
@@ -104,6 +110,7 @@ SPECS := #partial [Target]Spec {
 	},
 	.darwin_amd64 = {
 		triple = "x86_64-apple-macosx11.0.0",
+		cpu = "x86-64-v2",
 		linker = .Cc,
 		link_flags = {"-target", "x86_64-apple-macosx", "-e", "_main", "-lm"},
 		runtime_object = "tsnc_rt-darwin_amd64.obj",
