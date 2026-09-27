@@ -5,9 +5,11 @@ The test runner: one program with a mode per kind of run, started from the repos
 
 smoke (T1.8) checks the infrastructure: codegen, link and the runtime object. negative (T2.9) runs
 the corpus in tests/negative/, where every program must fail to compile the way its header says.
-diff (T4.7) runs the corpus in tests/diff/, where every program must print what Node prints; with
--sanitize:address (T5.10) it builds them against the runtime built with AddressSanitizer. A mode
-prints what failed to stderr, and the runner exits with code 1.
+diff (T4.7) runs the corpus in tests/diff/, where every program must print what Node prints. expect
+(T5.12) runs the corpus in tests/expect/, where every program must print what its header says: the
+runtime failures of requirements 3.8, where Node is no reference. With -sanitize:address (T5.10)
+both build their programs against the runtime built with AddressSanitizer. A mode prints what
+failed to stderr, and the runner exits with code 1.
 */
 package main
 
@@ -23,11 +25,12 @@ Mode :: enum {
 	smoke,
 	negative,
 	diff,
+	expect,
 }
 
 Options :: struct {
-	mode:     Mode `args:"pos=0,required" usage:"smoke, negative or diff"`,
-	sanitize: link.Sanitizer `usage:"diff: build against the runtime built with -sanitize:address"`,
+	mode:     Mode `args:"pos=0,required" usage:"smoke, negative, diff or expect"`,
+	sanitize: link.Sanitizer `usage:"diff, expect: link the runtime built with -sanitize:address"`,
 }
 
 // COMPILER and the path in COMPILER_BUILD are relative to the current directory, as smoke's dist/
@@ -52,6 +55,8 @@ main :: proc() {
 		passed = negative()
 	case .diff:
 		passed = diff(options.sanitize)
+	case .expect:
+		passed = expect(options.sanitize)
 	}
 	if !passed {
 		os.exit(1)

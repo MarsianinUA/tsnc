@@ -37,6 +37,7 @@
 		// The gate is about the corpus, not about @types/node.
 		"skipLibCheck": true
 	},
-	// The programs and the modules they import, which is everything under src/.
-	"include": ["src/**/*.ts"]
+	// The programs and the modules they import, which is everything under src/, and the programs
+	// of the expect corpus, which Node never runs but tsc still has to accept.
+	"include": ["src/**/*.ts", "../expect/*.ts"]
 }

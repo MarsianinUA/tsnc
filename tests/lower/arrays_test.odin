@@ -2,10 +2,9 @@ package lower_tests
 
 import "core:testing"
 
-import "../../src/abi"
 import "../../src/ir"
 
-// Arrays: the four loops lower builds around a callback, and reduce of an empty array.
+// Arrays: the four loops lower builds around a callback.
 
 @(test)
 the_four_callback_methods_are_loops_with_the_callback_inlined :: proc(t: ^testing.T) {
@@ -105,19 +104,5 @@ a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 	calls := instructions_of(init, ir.Call)
 	if testing.expectf(t, len(calls) == 1, "%s", result.text) {
 		testing.expect_value(t, len(calls[0].args), 1)
-	}
-}
-
-@(test)
-reduce_without_an_initial_value_fails_on_an_empty_array :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		"function total(xs: number[]): number {\nreturn xs.reduce((a, b) => a + b);\n}\ntotal([1]);\n",
-	)
-	body, _ := func_named(result.output, "m1.total")
-	fails := instructions_of(body, ir.Fail)
-	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
-		error := result.output.fail_sites[fails[0].site].error
-		testing.expect_value(t, error, abi.Runtime_Error.Reduce_Of_Empty_Array)
 	}
 }

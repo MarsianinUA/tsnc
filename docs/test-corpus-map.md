@@ -2,7 +2,7 @@
 
 A working file for T5.11 to T5.16 of `tasks-tsnc.md`. It was made on September 27, 2026, by reading every `@(test)` procedure under `tests/` and every program of the three corpora. Each task strikes its own section when it is done, and T5.16 deletes the file.
 
-T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert.
+T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs.
 
 The map is a reading, not a proof. Before a test goes, open the program named next to it and confirm that it reaches the same construct: the same built-in and corner, or the same diagnostic code on the same kind of construct. When it does not, the test moves instead of going.
 
@@ -16,37 +16,6 @@ Classes:
 - NODE-DIFFERS: visible in the output, but Node is not the reference (a runtime failure); it moves to `tests/expect`.
 - KEEP-STRATEGY: a lower test that guards a decision no program shows; it stays and gets rewritten in T5.16.
 - KEEP: needs internal state or more inputs than a program can hold; it stays.
-
-## Expected-output corpus
-
-T5.12. A failed check writes `error: <name> at <path>:L:C` to stderr and exits with 1 (`src/runtime/fail/fail.odin`, `write_message`). The path is the display path `tsnc build` was given, cleaned, with forward slashes; a relative build prints the same text on every OS.
-
-### From tests/driver/build_test.odin
-
-`expect_failure` builds at `-o:none` in process and runs the result. Its eight runs become programs, and the fixtures go if no other driver test reads them:
-
-| Fixture | stdout | Message | Position |
-|---|---|---|---|
-| non-null/main.ts | `4` | non-null assertion failed | 5:41 |
-| non-null/as.ts | `1` | type assertion failed | 5:9 |
-| any-union/main.ts | (none) | a value holds a kind its type does not allow | 6:7 |
-| early-read/object.ts | `before` | cannot access a variable before its initialization | 5:9 |
-| early-read/number.ts | (none) | the same | 4:9 |
-| early-read/function.ts | (none) | the same | 4:9 |
-| early-read/captured.ts | (none) | the same | 5:29 |
-| early-read/switch.ts | `2` | the same | 9:4 |
-
-Tests replaced: a_failed_non_null_assertion_ends_the_program, a_failed_type_assertion_ends_the_program, an_any_given_to_a_union_it_fits_no_member_of_ends_the_program, a_read_before_initialization_ends_the_program. Positions shift by the header lines a program gains. non-null/as.ts is the only `as` in any corpus that narrows a union, so its program must keep the narrowing that passes (`1`) as well as the one that fails.
-
-### Failure paths no test runs yet
-
-- An early read through an inlined callback: `[1].map(x => x + later)` and the `forEach` form. Replaces lower/bindings a_local_read_early_through_a_closure_is_checked_in_its_box and the run-time half of check/reachability a_name_used_in_a_function_before_its_declaration_is_left_to_the_run.
-- `reduce` of an empty array with no initial value ("Reduce of empty array with no initial value"). Replaces lower/arrays reduce_without_an_initial_value_fails_on_an_empty_array.
-- A string index past the end ("index out of range"; Node answers `undefined`). Replaces lower/strings an_index_into_a_string_is_checked_and_read_by_the_runtime.
-- `x!` on an object that is null. Replaces lower/unions a_non_null_assertion_fails_on_null_and_undefined.
-- `v as number | Circle` on a value that is neither. Replaces lower/unions as_to_a_narrower_union_tests_membership.
-- A read through the narrow type after a write through the wide one (Field_Holds_Other_Kind), and a widened parameter given a value of another kind through `any` (Value_Of_Other_Kind). Their tests went in T5.11 as DUP; only the failure is new.
-- A `let` read in a later case of its `switch`, jumped to directly: `case 1: return y + 1;` above the `let y` of `case 2`. The early-read/switch.ts fixture fails on a write, which lower checks at another place. Replaces lower/bindings a_let_read_in_a_later_case_of_its_switch_is_checked_in_its_box.
 
 ## Negative moves
 

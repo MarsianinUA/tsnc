@@ -183,57 +183,6 @@ a_nullable_reference_is_truthy_by_its_tag_alone :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_non_null_assertion_fails_on_null_and_undefined :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		SHAPES + `
-		function r(c: Circle | undefined): number {
-			return c!.radius;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.r")
-	tests := instructions_of(body, ir.Tag_Test)
-	fails := instructions_of(body, ir.Fail)
-	if !testing.expectf(t, len(tests) == 2 && len(fails) == 2, "%s", result.text) {
-		return
-	}
-	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Undefined, .Null})
-	error := result.output.fail_sites[fails[0].site].error
-	testing.expect_value(t, error, abi.Runtime_Error.Non_Null_Assertion)
-	testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Object})
-	testing.expectf(t, len(instructions_of(body, ir.Layout_Test)) == 1, "%s", result.text)
-}
-
-@(test)
-as_to_a_narrower_union_tests_membership :: proc(t: ^testing.T) {
-	// A tag for the number, the tag and the layout for the circle, and the value stays tagged.
-	result := lower_text(
-		t,
-		SHAPES +
-		`
-		function pick(v: number | string | Circle): number | Circle {
-			return v as number | Circle;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.pick")
-	tests := instructions_of(body, ir.Tag_Test)
-	if !testing.expectf(t, len(tests) == 2, "%s", result.text) {
-		return
-	}
-	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number})
-	testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Object})
-	testing.expectf(t, len(instructions_of(body, ir.Layout_Test)) == 1, "%s", result.text)
-	fails := instructions_of(body, ir.Fail)
-	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
-		error := result.output.fail_sites[fails[0].site].error
-		testing.expect_value(t, error, abi.Runtime_Error.Type_Assertion)
-	}
-	testing.expect(t, body.result == ir.TAGGED)
-}
-
-@(test)
 an_any_nested_in_a_flow_never_becomes_a_function :: proc(t: ^testing.T) {
 	// The `any` stands in a parameter, a field, the result of an inlined arrow and the element an
 	// inlined callback takes. The first called 41 through a closure of another signature.

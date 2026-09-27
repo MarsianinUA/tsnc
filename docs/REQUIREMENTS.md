@@ -121,7 +121,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
 - division by zero and overflow follow f64 semantics (`Infinity`, `NaN`), without errors.
 
-A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr with the error name and, where available, the source location, and exits with code `1`. Programs that behave differently in Node in these cases are invalid and stay out of the differential tests.
+A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr with the error name and, where available, the source location, and exits with code `1`. Programs that behave differently in Node in these cases are invalid and stay out of the differential tests; the expected-output tests (section 10) pin them instead.
 
 ### 3.9 Console output
 - `console.log` and `console.error` print what Node's `util.format` prints. A string first argument is a format string while more arguments follow it, with Node's specifiers `%s %d %i %f %j %o %O %c %%`. Every other argument follows after a space: a string as is, anything else as `util.inspect` prints it with Node's defaults (depth 2, 80 columns, 100 array items, 10000 string units, long arrays grouped into columns, cycles marked `<ref *1>` and `[Circular *1]`). The line and its newline leave in one write.
@@ -251,6 +251,7 @@ tsnc build src/main.ts -sanitize:address            # link the runtime built wit
 - **Checks on third-party code.** Once per version, several real small TS programs run through `tsnc check` to show what the subset rejects in practice.
 - **Gate.** Each test first passes `tsc --noEmit --strict`; TypeScript is a dev dependency in the tests folder.
 - **Negative tests.** A file with an expected compile error: the test checks the error code, line, and column.
+- **Expected-output tests.** A `.ts` file for each runtime failure of section 3.8, where Node is no reference by design. Its header comment states stdout and stderr line by line and the exit code, and the test compares them byte for byte with the built program's, under the same gate, optimization levels, GC stress mode and ASan run as the differential tests.
 - **Unit tests.** Lexer, parser, checker, number formatting, GC through `odin test`.
 - **GC stress mode.** A runtime flag that runs a collection on every allocation and checks heap integrity after each collection. The differential tests also run in this mode.
 - **AddressSanitizer.** A separate CI test run, on Windows and Linux, builds the runtime with `-sanitize:address` and runs the differential tests against it in GC stress mode. macOS has no ASan build: its toolchains fail to link or run one (docs/development.md), so `-sanitize:address` is refused there. The collector poisons the memory of its heap that no cell owns, as Go's sweep does under ASan, so a runtime read past the end of a cell or into the body of a freed one stops the program.
