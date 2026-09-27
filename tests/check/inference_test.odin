@@ -71,24 +71,6 @@ a_bare_return_beside_one_with_a_value_gives_undefined :: proc(t: ^testing.T) {
 	testing.expect_value(t, declared_text(c, "maybe"), "(flag: boolean) => number | undefined")
 }
 
-@(test)
-a_return_is_checked_against_the_declared_result :: proc(t: ^testing.T) {
-	expect_errors(t, `function count(): number { return "a"; }`, []Error{{.Type_Mismatch, 1, 35}})
-}
-
-@(test)
-mutually_recursive_functions_need_an_annotation :: proc(t: ^testing.T) {
-	// The ring is reported once, where it closes, and not once per function in it.
-	expect_errors(
-		t,
-		lines(
-			`function first() { return second(); }`, //
-			`function second() { return first(); }`,
-		),
-		[]Error{{.Recursive_Return_Type, 1, 10}},
-	)
-}
-
 // A name inside its own initializer.
 
 @(test)
@@ -105,27 +87,4 @@ an_arrow_with_a_return_type_may_call_itself :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, declared_text(c, "tick"), "(n: number) => void")
 	testing.expect_value(t, declared_text(c, "tock"), "(n: number) => void")
-}
-
-@(test)
-a_recursive_arrow_without_a_return_type_needs_an_annotation :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		`const fact = (n: number) => n <= 1 ? 1 : n * fact(n - 1);`,
-		[]Error{{.Recursive_Return_Type, 1, 7}},
-	)
-}
-
-@(test)
-a_variable_read_from_a_function_that_types_it_is_reported :: proc(t: ^testing.T) {
-	// Node throws on this at run time, and the type of `total` would have to be known before the
-	// body that reads it is typed. An annotation on `total` settles it.
-	expect_errors(
-		t,
-		lines(
-			`let total = size();`, //
-			`function size(): number { return total; }`,
-		),
-		[]Error{{.Circular_Initializer, 1, 5}},
-	)
 }

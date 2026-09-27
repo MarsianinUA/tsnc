@@ -7,36 +7,40 @@ first line that is neither. A header line of the form
 
 	// expect: T2001 5:1
 
-names one diagnostic, spelled the way `tsnc check` prints it: the code, then the 1-based line and
-column of its position, where a column counts UTF-16 code units (src/source). Every other header
-line is prose about the rule the program pins.
+names one diagnostic, spelled the way the compiler prints it: the code, then the 1-based line and
+column of its position, where a column counts UTF-16 code units (src/source). Two more parts may
+be written:
+
+	// expect: T4009 modules/relay.ts:1:10
+	// expect: T3001 4:23 "not assignable to type `number`"
+
+A file in front of the position, relative to tests/negative, puts the diagnostic in a module the
+program imports; without one, it stands in the program itself. A quoted text at the end has to
+occur in the message or in its hint. It runs to the last `"` of the line, so it may hold quotes of
+its own, as some hints do. Every other header line is prose about the rule the program pins.
 
 The expectations are the whole truth about a program. They are compared with what the compiler
-printed one for one and in order, so a diagnostic the header does not mention fails the program
-exactly as a missing one does; otherwise parser recovery could start emitting noise and no test
-would notice. For the same reason a program with no expectation at all fails, and so does a
-malformed `// expect:` line: skipping either would leave a test that proves nothing.
+printed one for one and in print order, which is the program first and then its modules in the
+order the imports reach them, each by position. So a diagnostic the header does not mention fails
+the program exactly as a missing one does; otherwise parser recovery could start emitting noise
+and no test would notice. For the same reason a program with no expectation at all fails, and so
+does a malformed `// expect:` line: skipping either would leave a test that proves nothing.
 
-An expectation has no file in it, because every diagnostic it can name stands in the program
-itself. A program may still import: the modules under tests/negative/modules/ are there to be
-imported and are never run as programs of their own, since the walk over the corpus takes only the
-`.ts` files directly in tests/negative. A diagnostic printed for any other file fails the program
-rather than sliding into the comparison unseen, which is what keeps a rule about two modules
-honest: the message has to land where the header says it does.
-
-The mode runs the compiler the build left in dist/ instead of calling driver in process, so that
-the rendered message, the code number, the choice of stderr and the exit code are covered as well
-as the diagnostics themselves. The corpus holds one program for every rule of the subset and every
-rule of the types, which is one program per code of the diag registry, except the lexer and parser
-codes that tests/parse owns and the fifty constructs that share T2021, grouped three ways.
+The mode runs `tsnc build` with the compiler the build left in dist/, instead of calling driver in
+process, so that the rendered message, the code number, the choice of stderr and the exit code are
+covered as well as the diagnostics themselves. A build stops before lower when check reported
+anything, so a program that pins a code of lower has to pass check. The corpus holds a program for
+every code of the diag registry. The modules under tests/negative/modules/ are there to be imported
+and are never run as programs of their own.
 */
 package main
 
 import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:strings"
+
+import "../../src/target"
 
 // NEGATIVE_CORPUS is relative to the current directory, as the compiler path in runner.odin is:
 // the runner is started from the repository root.
@@ -44,63 +48,49 @@ NEGATIVE_CORPUS :: "tests/negative"
 
 EXPECT_PREFIX :: "// expect:"
 EXPECT_EXAMPLE :: "// expect: T2001 5:1"
+EXPECT_FULL_EXAMPLE :: `// expect: T4009 modules/relay.ts:1:10 "does not export"`
 
 // MARKER stands between the position of a rendered diagnostic and its code:
 //
 //	tests/negative/var.ts:5:1: error[T2001]: `var` is not supported
-//
-// The parse finds it and then reads the position from the right, rather than counting colons from
-// the left, so that a path holding a colon of its own cannot throw it off.
 MARKER :: ": error[T"
 
 // HINT_PREFIX opens the second line of every rendered diagnostic.
 HINT_PREFIX :: "  hint: "
 
-// Expected is one diagnostic, either as a header expects it or as the compiler printed it. It has
-// no file: every program in the corpus is a single file, so every diagnostic comes from that file.
-Expected :: struct {
+// Site is where a diagnostic stands and which one it is, the part an expectation always names.
+@(private = "file")
+Site :: struct {
+	file:   string, // as the compiler prints it: tests/negative/<name>
 	number: int, // the code as diag prints it, without the leading T
 	line:   int,
 	column: int,
 }
 
+@(private = "file")
+Expectation :: struct {
+	site: Site,
+	text: string, // "" when the header quotes nothing
+}
+
+@(private = "file")
+Printed :: struct {
+	site:    Site,
+	message: string,
+	hint:    string,
+}
+
 // negative reports every mismatch instead of stopping at the first, so that one CI log shows all of
 // them.
 negative :: proc() -> (passed: bool) {
-	// The programs keep their relative paths: the compiler inherits this directory, and a short
-	// path keeps the diagnostics readable in a CI log.
 	compiler := compiler_path("negative") or_return
-
-	// The listing stays in the temp allocator for the whole run. Everything here is allocated
-	// before the first check_program, and that procedure's temp guard releases only what the call
-	// itself allocated, so these names stay valid to the end.
-	entries, dir_err := os.read_all_directory_by_path(NEGATIVE_CORPUS, context.temp_allocator)
-	if dir_err != nil {
-		fmt.eprintfln("negative: read %s: %v", NEGATIVE_CORPUS, dir_err)
-		fmt.eprintln("run the runner from the repository root")
-		return false
-	}
-
-	// A directory is skipped even when it is named like a source file: tests/negative/modules/
-	// holds one on purpose, to give an import something it cannot read.
-	names := make([dynamic]string, context.temp_allocator)
-	for entry in entries {
-		if entry.type != .Directory && strings.has_suffix(entry.name, ".ts") {
-			append(&names, entry.name)
-		}
-	}
-	// Sorted by name: a file system lists a directory in whatever order it keeps it, and two runs
-	// of the corpus should print the same log.
-	slice.sort(names[:])
-	if len(names) == 0 {
-		fmt.eprintfln("negative: no .ts program in %s", NEGATIVE_CORPUS)
-		return false
-	}
+	names := corpus_names(.negative, NEGATIVE_CORPUS) or_return
+	dist := dist_directory(.negative) or_return
 
 	passed = true
 	diagnostics := 0
 	for name in names {
-		printed, ok := check_program(compiler, name)
+		printed, ok := negative_program(compiler, dist, name)
 		diagnostics += printed
 		if !ok {
 			passed = false
@@ -112,9 +102,11 @@ negative :: proc() -> (passed: bool) {
 	return passed
 }
 
-// check_program answers how many diagnostics the compiler printed, for the summary line.
+// negative_program answers how many diagnostics the compiler printed, for the summary line. The
+// program keeps its relative path: the compiler inherits this directory, and the path is what the
+// compiler prints and an expectation names.
 @(private = "file")
-check_program :: proc(compiler, name: string) -> (printed: int, ok: bool) {
+negative_program :: proc(compiler, dist, name: string) -> (printed: int, ok: bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
 	path := fmt.tprintf("%s/%s", NEGATIVE_CORPUS, name)
@@ -125,27 +117,30 @@ check_program :: proc(compiler, name: string) -> (printed: int, ok: bool) {
 	}
 	want, want_ok := expectations(path, string(text))
 
-	state, stdout, stderr, run_err := os.process_exec(
-		{command = {compiler, "check", path}},
-		context.temp_allocator,
-	)
-	if run_err != nil {
-		fmt.eprintfln("negative: %s: run %s: %v", path, compiler, run_err)
+	// A build with a diagnostic writes nothing. The artifact is named for a program that stops
+	// failing: it links, and the exit code below reports it.
+	suffix := target.SPECS[target.HOST].executable_suffix
+	artifact := fmt.tprintf("negative-%s%s", strings.trim_suffix(name, ".ts"), suffix)
+	output, join_err := os.join_path({dist, artifact}, context.temp_allocator)
+	if join_err != nil {
+		fmt.eprintfln("negative: %s: path of %s: %v", path, artifact, join_err)
 		return 0, false
 	}
-	got, got_ok := diagnostics_of(path, string(stderr))
+	command := []string{compiler, "build", path, fmt.tprintf("-out:%s", output)}
+	built := execute(.negative, path, "tsnc build", command) or_return
+	got, got_ok := diagnostics_of(path, built.stderr)
 
 	ok = want_ok && got_ok
-	if state.exit_code != 1 {
-		// `tsnc check` answers 1 for a program with any diagnostic and 0 for a clean one, so a
+	if built.code != 1 {
+		// `tsnc build` answers 1 for a program with any diagnostic and 0 for one it built, so a
 		// negative test always expects 1. A crash lands here too, with whatever the OS reports.
-		fmt.eprintfln("negative: %s: exit code: got %d, want 1", path, state.exit_code)
+		fmt.eprintfln("negative: %s: exit code: got %d, want 1", path, built.code)
 		ok = false
 	}
-	if len(stdout) > 0 {
-		// check writes to stderr alone, so that the diagnostics of a build never mix with the
-		// output of a program under `tsnc run`.
-		fmt.eprintfln("negative: %s: stdout: got %q, want nothing", path, string(stdout))
+	if built.stdout != "" {
+		// The compiler writes to stderr alone, so that the diagnostics of a build never mix with
+		// the output of a program under `tsnc run`.
+		fmt.eprintfln("negative: %s: stdout: got %q, want nothing", path, built.stdout)
 		ok = false
 	}
 
@@ -153,27 +148,55 @@ check_program :: proc(compiler, name: string) -> (printed: int, ok: bool) {
 	// header that did not parse has already been reported and is not worth comparing against.
 	if want_ok {
 		for index in 0 ..< max(len(want), len(got)) {
-			if index < len(want) && index < len(got) && want[index] == got[index] {
-				continue
+			if !same_diagnostic(path, index, want, got) {
+				ok = false
 			}
-			fmt.eprintfln(
-				"negative: %s: diagnostic %d: got %s, want %s",
-				path,
-				index + 1,
-				describe(got, index),
-				describe(want, index),
-			)
-			ok = false
 		}
 	}
 	return len(got), ok
 }
 
+// same_diagnostic names what differs at one index, and a text that is not there gets the message
+// and the hint it was looked for in.
+@(private = "file")
+same_diagnostic :: proc(path: string, index: int, want: []Expectation, got: []Printed) -> bool {
+	if index < len(want) && index < len(got) && want[index].site == got[index].site {
+		text := want[index].text
+		if strings.contains(got[index].message, text) || strings.contains(got[index].hint, text) {
+			return true
+		}
+		fmt.eprintfln(
+			"negative: %s: diagnostic %d: %s: neither the message nor the hint holds \"%s\"",
+			path,
+			index + 1,
+			describe(path, got[index].site),
+			text,
+		)
+		fmt.eprintfln("  message: %s", got[index].message)
+		fmt.eprintfln("  hint: %s", got[index].hint)
+		return false
+	}
+
+	wanted := "nothing"
+	if index < len(want) {
+		wanted = describe(path, want[index].site)
+		if want[index].text != "" {
+			wanted = fmt.tprintf("%s \"%s\"", wanted, want[index].text)
+		}
+	}
+	found := "nothing"
+	if index < len(got) {
+		found = describe(path, got[index].site)
+	}
+	fmt.eprintfln("negative: %s: diagnostic %d: got %s, want %s", path, index + 1, found, wanted)
+	return false
+}
+
 // expectations ends the header at the first line that is neither blank nor a comment, so an
 // expectation always sits above the program it describes.
 @(private = "file")
-expectations :: proc(path, text: string) -> (want: []Expected, ok: bool) {
-	list := make([dynamic]Expected, context.temp_allocator)
+expectations :: proc(path, text: string) -> (want: []Expectation, ok: bool) {
+	list := make([dynamic]Expectation, context.temp_allocator)
 	ok = true
 
 	rest := text
@@ -190,10 +213,12 @@ expectations :: proc(path, text: string) -> (want: []Expected, ok: bool) {
 		if !strings.has_prefix(trimmed, EXPECT_PREFIX) {
 			continue
 		}
-		expected, line_ok := parse_expectation(strings.trim_space(trimmed[len(EXPECT_PREFIX):]))
+		body := strings.trim_space(trimmed[len(EXPECT_PREFIX):])
+		expected, line_ok := parse_expectation(path, body)
 		if !line_ok {
 			fmt.eprintfln("negative: %s:%d: cannot read %q", path, number, trimmed)
 			fmt.eprintfln("  an expectation reads: %s", EXPECT_EXAMPLE)
+			fmt.eprintfln("  or with a file and a text: %s", EXPECT_FULL_EXAMPLE)
 			ok = false
 			continue
 		}
@@ -208,60 +233,67 @@ expectations :: proc(path, text: string) -> (want: []Expected, ok: bool) {
 	return list[:], ok
 }
 
-// parse_expectation reads the body of an expectation, `T2001 5:1`.
+// parse_expectation reads the body of an expectation, `T4009 modules/relay.ts:1:10 "text"`, where
+// the file and the text may be left out.
 @(private = "file")
-parse_expectation :: proc(body: string) -> (expected: Expected, ok: bool) {
-	fields := strings.fields(body, context.temp_allocator)
-	if len(fields) != 2 || !strings.has_prefix(fields[0], "T") {
-		return {}, false
-	}
+parse_expectation :: proc(program, body: string) -> (expected: Expectation, ok: bool) {
+	code, _, after_code := strings.partition(body, " ")
+	position, _, after_position := strings.partition(strings.trim_left_space(after_code), " ")
+	quoted := strings.trim_space(after_position)
 
 	// The range is the one diag guarantees, so that a typo such as T20 cannot pass for a code.
-	expected.number = parse_number(fields[0][1:]) or_return
-	if expected.number < 1000 || expected.number > 9999 {
+	if !strings.has_prefix(code, "T") {
+		return {}, false
+	}
+	number := parse_number(code[1:]) or_return
+	if number < 1000 || number > 9999 {
 		return {}, false
 	}
 
-	colon := strings.index_byte(fields[1], ':')
-	if colon < 0 {
-		return {}, false
+	file, line, column := parse_position(position) or_return
+	expected.site = {
+		file   = program,
+		number = number,
+		line   = line,
+		column = column,
 	}
-	expected.line = parse_number(fields[1][:colon]) or_return
-	expected.column = parse_number(fields[1][colon + 1:]) or_return
-	if expected.line < 1 || expected.column < 1 {
-		return {}, false
+	if file != "" {
+		expected.site.file = fmt.tprintf("%s/%s", NEGATIVE_CORPUS, file)
+	}
+
+	if quoted != "" {
+		// The quotes are the first and the last byte, and an empty text would match anything.
+		if len(quoted) < 3 || quoted[0] != '"' || quoted[len(quoted) - 1] != '"' {
+			return {}, false
+		}
+		expected.text = quoted[1:len(quoted) - 1]
 	}
 	return expected, true
 }
 
-// diagnostics_of reads what `tsnc check` printed. Every diagnostic is two lines, the error and its
+// diagnostics_of reads what `tsnc build` printed. Every diagnostic is two lines, the error and its
 // hint. A line that is neither is the compiler saying something an expectation cannot express,
 // such as an entry file it could not read, and it fails the program rather than passing unseen.
-//
-// A diagnostic about another file fails the program as well. A corpus program may import a module
-// from tests/negative/modules/, and an expectation names no file, so a message from there would
-// otherwise be compared as if it stood in the program itself. The paths compare as written: the
-// compiler prints a file under the spelling it was reached by, folded with forward slashes, and
-// the entry file is reached under exactly the path this runner passed on the command line.
 @(private = "file")
-diagnostics_of :: proc(path, text: string) -> (got: []Expected, ok: bool) {
-	list := make([dynamic]Expected, context.temp_allocator)
+diagnostics_of :: proc(path, text: string) -> (got: []Printed, ok: bool) {
+	list := make([dynamic]Printed, context.temp_allocator)
 	ok = true
 
 	rest := text
+	awaits_hint := false
 	for line in strings.split_lines_iterator(&rest) {
-		if line == "" || strings.has_prefix(line, HINT_PREFIX) {
+		if line == "" {
 			continue
 		}
-		printed, file, line_ok := parse_diagnostic(line)
+		if awaits_hint && strings.has_prefix(line, HINT_PREFIX) {
+			list[len(list) - 1].hint = line[len(HINT_PREFIX):]
+			awaits_hint = false
+			continue
+		}
+		printed, line_ok := parse_diagnostic(line)
+		awaits_hint = line_ok
 		if !line_ok {
 			fmt.eprintfln("negative: %s: cannot read the compiler output %q", path, line)
-			ok = false
-			continue
-		}
-		if file != path {
-			fmt.eprintfln("negative: %s: diagnostic in %s: %s", path, file, line)
-			fmt.eprintln("  a program expects only what stands in the program itself")
 			ok = false
 			continue
 		}
@@ -270,44 +302,61 @@ diagnostics_of :: proc(path, text: string) -> (got: []Expected, ok: bool) {
 	return list[:], ok
 }
 
-// parse_diagnostic skips the text and the hint: they belong to the diag registry, which tests/diag
-// already covers.
 @(private = "file")
-parse_diagnostic :: proc(line: string) -> (printed: Expected, file: string, ok: bool) {
-	marker := strings.index(line, MARKER)
+parse_diagnostic :: proc(text: string) -> (printed: Printed, ok: bool) {
+	marker := strings.index(text, MARKER)
 	if marker < 0 {
-		return {}, "", false
+		return {}, false
+	}
+	file, line, column := parse_position(text[:marker]) or_return
+	if file == "" {
+		return {}, false
+	}
+	printed.site = {
+		file   = file,
+		line   = line,
+		column = column,
 	}
 
-	// Before the marker stands `<path>:<line>:<column>`, read from the right so that the path is
-	// left alone whatever it holds.
-	head := line[:marker]
-	column_colon := strings.last_index_byte(head, ':')
-	if column_colon < 0 {
-		return {}, "", false
-	}
-	line_colon := strings.last_index_byte(head[:column_colon], ':')
-	if line_colon < 0 {
-		return {}, "", false
-	}
-	file = head[:line_colon]
-	printed.line = parse_number(head[line_colon + 1:column_colon]) or_return
-	printed.column = parse_number(head[column_colon + 1:]) or_return
-
-	// After the marker stands the number, then `]`.
-	tail := line[marker + len(MARKER):]
+	// After the marker stand the number, `]: ` and the message.
+	tail := text[marker + len(MARKER):]
 	close := strings.index_byte(tail, ']')
-	if close < 0 {
-		return {}, "", false
+	if close < 0 || !strings.has_prefix(tail[close:], "]: ") {
+		return {}, false
 	}
-	printed.number = parse_number(tail[:close]) or_return
-	return printed, file, true
+	printed.site.number = parse_number(tail[:close]) or_return
+	printed.message = tail[close + len("]: "):]
+	return printed, true
 }
 
+// parse_position reads `file:line:column` from the right, so that a path holding a colon of its own
+// cannot throw it off. The file is "" when the text is `line:column` alone.
 @(private = "file")
-describe :: proc(list: []Expected, index: int) -> string {
-	if index >= len(list) {
-		return "nothing"
+parse_position :: proc(text: string) -> (file: string, line, column: int, ok: bool) {
+	column_colon := strings.last_index_byte(text, ':')
+	if column_colon < 0 {
+		return
 	}
-	return fmt.tprintf("T%d %d:%d", list[index].number, list[index].line, list[index].column)
+	head := text[:column_colon]
+	if line_colon := strings.last_index_byte(head, ':'); line_colon >= 0 {
+		file = head[:line_colon]
+		head = head[line_colon + 1:]
+		if file == "" {
+			return
+		}
+	}
+	line = parse_number(head) or_return
+	column = parse_number(text[column_colon + 1:]) or_return
+	return file, line, column, line >= 1 && column >= 1
+}
+
+// describe spells a diagnostic as a header does: the file only when it is not the program itself,
+// and relative to the corpus.
+@(private = "file")
+describe :: proc(program: string, site: Site) -> string {
+	if site.file == program {
+		return fmt.tprintf("T%d %d:%d", site.number, site.line, site.column)
+	}
+	file := strings.trim_prefix(site.file, NEGATIVE_CORPUS + "/")
+	return fmt.tprintf("T%d %s:%d:%d", site.number, file, site.line, site.column)
 }

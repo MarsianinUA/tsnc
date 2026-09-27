@@ -104,13 +104,6 @@ a_program_that_never_reads_process_argv_has_no_global_for_it :: proc(t: ^testing
 	testing.expectf(t, calls_to(main, .Process_Argv) == 0, "%s", result.text)
 }
 
-// What this build refuses. Each construct is named once, where it stands.
-
-@(test)
-the_four_math_names_the_ir_cannot_say_are_reported :: proc(t: ^testing.T) {
-	expect_later(t, "console.log(Math.hypot(3, 4));\n", {{.Not_Lowered, 1, 13}})
-}
-
 @(private = "file")
 intrinsics_of :: proc(body: ir.Func) -> []ir.Intrinsic_Op {
 	out := make([dynamic]ir.Intrinsic_Op, context.temp_allocator)

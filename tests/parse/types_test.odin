@@ -125,13 +125,3 @@ the_lib_file_shape_parses :: proc(t: ^testing.T) {
 		),
 	)
 }
-
-@(test)
-a_member_without_a_type_is_an_error :: proc(t: ^testing.T) {
-	expect_parse(
-		t,
-		lines("type T = {", "\ta;", "\tm()", "}"),
-		{{.Expected_Token, 2, 3}, {.Expected_Token, 3, 5}},
-		"(type T = {(a : bad) (m : (=> [] bad))})",
-	)
-}

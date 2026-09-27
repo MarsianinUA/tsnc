@@ -35,11 +35,6 @@ two_interfaces_with_the_same_fields_are_compatible :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_unknown_type_name_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, `const p: Missing = 1;`, []Error{{.Cannot_Find_Name, 1, 10}})
-}
-
-@(test)
 two_interfaces_that_name_each_other_are_compatible_with_their_twins :: proc(t: ^testing.T) {
 	// Two rings of types compared field by field would never end, so the comparison answers yes for
 	// a pair it is already inside. Without that this test does not finish.
@@ -56,92 +51,7 @@ two_interfaces_that_name_each_other_are_compatible_with_their_twins :: proc(t: ^
 	)
 }
 
-@(test)
-a_generic_of_ones_own_is_rejected_at_its_declaration :: proc(t: ^testing.T) {
-	// Generics of one's own are v2 (requirements 2.2), so the declaration is reported once and the
-	// uses say nothing more. The machinery behind the arguments is the lib file's and still works:
-	// the interface types with `number` in force, so the message is the only thing wrong here.
-	c := expect_errors(
-		t,
-		lines(
-			`interface Box<T> { value: T; }`, //
-			`const held: Box<number> = { value: 1 };`,
-		),
-		[]Error{{.Generic_Declaration, 1, 15}},
-	)
-
-	testing.expect_value(t, declared_text(c, "held"), "Box<number>")
-}
-
-// The exact-type rule.
-
-@(test)
-an_extra_field_is_reported_with_a_hint :: proc(t: ^testing.T) {
-	// Requirements 3.3: an object goes only where the same set of fields is expected. This is the
-	// task's second done criterion, and the message names the field rather than printing two shapes.
-	text := lines(
-		`interface Point { x: number; y: number; }`, //
-		`const p: Point = { x: 1, y: 2, z: 3 };`,
-	)
-	c := expect_errors(t, text, {{.Field_Not_Found, 2, 32}})
-
-	message := rendered(c, 0)
-	testing.expectf(
-		t,
-		strings.contains(message, "`z` is not a field of type `Point`"),
-		"the message names the field: %q",
-		message,
-	)
-	testing.expectf(
-		t,
-		strings.contains(message, "hint: check the spelling"),
-		"the message has a hint: %q",
-		message,
-	)
-}
-
-@(test)
-a_field_whose_type_does_not_fit_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`interface Point { x: number; y: number; }`, //
-			`const p: Point = { x: 1, y: "two" };`,
-		),
-		[]Error{{.Type_Mismatch, 2, 29}},
-	)
-}
-
-@(test)
-two_object_types_with_different_fields_do_not_fit :: proc(t: ^testing.T) {
-	// The rule is about types, not only about literals: a value that already has a type has the
-	// layout of that type, and the two layouts differ.
-	expect_errors(
-		t,
-		lines(
-			`interface Point { x: number; y: number; }`, //
-			`interface Point3 { x: number; y: number; z: number; }`,
-			`const big: Point3 = { x: 1, y: 2, z: 3 };`,
-			`const small: Point = big;`,
-		),
-		[]Error{{.Field_Not_Found, 4, 22}},
-	)
-}
-
 // Optional and readonly.
-
-@(test)
-a_value_that_is_not_a_literal_needs_the_same_set_of_fields :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`interface Opts { x: number; y?: number; }`, //
-			`const plain = { x: 1 };`,
-			`const opts: Opts = plain;`,
-		),
-		[]Error{{.Missing_Field, 3, 20}},
-	)
-}
 
 @(test)
 an_optional_field_prints_with_its_question_mark :: proc(t: ^testing.T) {
@@ -197,37 +107,6 @@ a_literal_picks_the_member_of_a_union_its_tag_names :: proc(t: ^testing.T) {
 	// The declaration keeps the type it was written with; the literal's own answer is what the
 	// write left behind, which a read after it holds.
 	testing.expect_value(t, declared_text(c, "echoed"), "Sub")
-}
-
-@(test)
-a_literal_whose_tag_fits_no_member_is_reported_once :: proc(t: ^testing.T) {
-	// No member takes the tag, so the second pass picks by names alone and the value is measured
-	// against that one: one mistake, one message.
-	expect_errors(
-		t,
-		lines(
-			`interface Add { kind: "add"; left: number; }`, //
-			`interface Sub { kind: "sub"; left: number; }`,
-			`const times: Add | Sub = { kind: "mul", left: 1 };`,
-		),
-		[]Error{{.Type_Mismatch, 3, 34}},
-	)
-}
-
-@(test)
-a_tag_written_as_a_name_falls_back_to_the_field_names :: proc(t: ^testing.T) {
-	// `{ kind: k }` says nothing before anything is typed, so the choice is the first member the
-	// names fit, and the value is measured against it.
-	expect_errors(
-		t,
-		lines(
-			`interface Add { kind: "add"; left: number; }`, //
-			`interface Sub { kind: "sub"; left: number; }`,
-			`const k: "sub" = "sub";`,
-			`const times: Add | Sub = { kind: k, left: 1 };`,
-		),
-		[]Error{{.Type_Mismatch, 4, 34}},
-	)
 }
 
 // Widenings: an object accepted where a wider object type was expected, which lower turns into one

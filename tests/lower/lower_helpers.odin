@@ -41,12 +41,11 @@ Error :: struct {
 }
 
 Lowered :: struct {
-	program:    program.Program,
-	files:      []source.File,
-	output:     ir.Program_IR,
-	errors:     []Error, // what lower reported, in print order
-	constructs: []string, // what each of them names, the {0} of Not_Lowered
-	text:       string, // the -emit-ir dump
+	program: program.Program,
+	files:   []source.File,
+	output:  ir.Program_IR,
+	errors:  []Error, // what lower reported, in print order
+	text:    string, // the -emit-ir dump
 }
 
 // lower_sources fails the test when parse, bind or check said anything or the IR breaks its
@@ -127,16 +126,11 @@ lower_sources :: proc(t: ^testing.T, sources: []string, loc := #caller_location)
 		loc = loc,
 	)
 
-	constructs := make([]string, len(diagnostics), context.temp_allocator)
-	for d, i in diagnostics {
-		constructs[i] = d.args[0]
-	}
 	return {
 		program = prog,
 		files = files,
 		output = output,
 		errors = errors_of(files, diagnostics),
-		constructs = constructs,
 		text = dump(files, output),
 	}
 }
@@ -145,26 +139,6 @@ lower_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Lowe
 	one := [1]string{text}
 	result := lower_sources(t, one[:], loc)
 	testing.expectf(t, len(result.errors) == 0, "lower %v", result.errors, loc = loc)
-	return result
-}
-
-// expect_later lowers one source and compares what lower refused, one for one.
-expect_later :: proc(
-	t: ^testing.T,
-	text: string,
-	expected: []Error,
-	loc := #caller_location,
-) -> Lowered {
-	one := [1]string{text}
-	result := lower_sources(t, one[:], loc)
-	testing.expectf(
-		t,
-		slice_equal(result.errors, expected),
-		"errors %v, want %v",
-		result.errors,
-		expected,
-		loc = loc,
-	)
 	return result
 }
 
@@ -236,19 +210,6 @@ errors_of :: proc(files: []source.File, diagnostics: []diag.Diagnostic) -> []Err
 		}
 	}
 	return out
-}
-
-@(private = "file")
-slice_equal :: proc(a, b: []Error) -> bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for value, i in a {
-		if value != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // make_edges is the module graph of one file, as driver builds it from paths on disk: a specifier

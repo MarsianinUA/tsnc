@@ -10,15 +10,6 @@ import "core:testing"
 // A missing `return`.
 
 @(test)
-an_arrow_that_can_end_without_a_return_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		`const pick = (c: boolean): number => { if (c) { return 1; } };`,
-		[]Error{{.Missing_Return, 1, 28}},
-	)
-}
-
-@(test)
 a_result_that_takes_undefined_may_end_without_a_return :: proc(t: ^testing.T) {
 	expect_checked(
 		t,
@@ -75,22 +66,6 @@ a_body_that_is_an_exhaustive_switch_of_returns_needs_no_return :: proc(t: ^testi
 }
 
 @(test)
-a_switch_that_leaves_a_case_out_still_needs_a_return :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function name(k: "a" | "b" | "c"): number {`, //
-			`switch (k) {`,
-			`case "a": return 1;`,
-			`case "b": return 2;`,
-			`}`,
-			`}`,
-		),
-		[]Error{{.Missing_Return, 1, 36}},
-	)
-}
-
-@(test)
 an_inferred_result_of_an_exhaustive_switch_holds_no_undefined :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -110,20 +85,6 @@ an_inferred_result_of_an_exhaustive_switch_holds_no_undefined :: proc(t: ^testin
 }
 
 // A read before a write.
-
-@(test)
-a_let_read_before_any_write_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function size(): number {`, //
-			`let s: string;`,
-			`return s.length;`,
-			`}`,
-		),
-		[]Error{{.Used_Before_Assigned, 3, 8}},
-	)
-}
 
 @(test)
 a_let_written_on_every_path_is_not_reported :: proc(t: ^testing.T) {
@@ -172,24 +133,6 @@ a_let_written_before_a_loop_may_be_read_inside_it :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_compound_assignment_reads_the_target_before_it_writes :: proc(t: ^testing.T) {
-	// `s += "a"` means `s = s + "a"`, and `n++` means `n = n + 1`, so each one reads a variable
-	// that holds nothing yet, and each one is one message.
-	expect_errors(
-		t,
-		lines(
-			`function run(): void {`, //
-			`let s: string;`,
-			`s += "a";`,
-			`let n: number;`,
-			`n++;`,
-			`}`,
-		),
-		[]Error{{.Used_Before_Assigned, 3, 1}, {.Used_Before_Assigned, 5, 1}},
-	)
-}
-
-@(test)
 a_plain_write_to_a_let_is_no_read :: proc(t: ^testing.T) {
 	expect_checked(
 		t,
@@ -204,36 +147,6 @@ a_plain_write_to_a_let_is_no_read :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_read_inside_a_function_declaration_is_reported :: proc(t: ^testing.T) {
-	// The declaration is hoisted and may run before any assignment, so its start reaches nothing
-	// outside it. tsc accepts this and leaves the check to Node, which throws; tsnc emits no such
-	// check, so the variable would hold garbage.
-	expect_errors(
-		t,
-		lines(
-			`let total: number;`, //
-			`function add(n: number): void { total = total + n; }`,
-			`total = 0;`,
-		),
-		[]Error{{.Used_Before_Assigned, 2, 41}},
-	)
-}
-
-@(test)
-a_read_inside_an_arrow_made_before_the_write_is_reported :: proc(t: ^testing.T) {
-	// The arrow keeps the flow where it was made, and there the variable held nothing yet.
-	expect_errors(
-		t,
-		lines(
-			`let timer: number;`, //
-			`const step = (): number => timer + 1;`,
-			`timer = 0;`,
-		),
-		[]Error{{.Used_Before_Assigned, 2, 28}},
-	)
-}
-
-@(test)
 a_read_inside_an_arrow_made_after_the_write_is_not_reported :: proc(t: ^testing.T) {
 	expect_checked(
 		t,
@@ -242,43 +155,5 @@ a_read_inside_an_arrow_made_after_the_write_is_not_reported :: proc(t: ^testing.
 			`timer = 0;`,
 			`const step = (): number => timer + 1;`,
 		),
-	)
-}
-
-@(test)
-an_exported_let_with_no_initializer_is_reported_at_its_declaration :: proc(t: ^testing.T) {
-	// No walk sees across modules, so the one message stands where the variable is declared, and
-	// the module that imports it says nothing a second time.
-	expect_program_errors(
-		t,
-		[]string {
-			`export let config: number;`, //
-			lines(`import { config } from "./m1.ts";`, `const n: number = config;`),
-		},
-		[]File_Error{{MAIN, .Used_Before_Assigned, 1, 12}},
-	)
-}
-
-@(test)
-a_name_used_where_it_stands_before_its_declaration_is_reported :: proc(t: ^testing.T) {
-	// tsc's TS2448. The read, the write, and the read inside the initializer itself all run before
-	// the declaration has.
-	expect_errors(
-		t,
-		lines(
-			`console.log(later);`, //
-			`later = 2;`,
-			`let later: number = later + 1;`,
-			`function f(): void {`,
-			`console.log(inner);`,
-			`const inner = 1;`,
-			`}`,
-		),
-		[]Error {
-			{.Used_Before_Declaration, 1, 13},
-			{.Used_Before_Declaration, 2, 1},
-			{.Used_Before_Declaration, 3, 21},
-			{.Used_Before_Declaration, 5, 13},
-		},
 	)
 }

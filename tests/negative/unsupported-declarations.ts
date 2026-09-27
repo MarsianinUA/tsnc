@@ -8,7 +8,7 @@
 // expect: T2021 32:19
 // expect: T2021 34:1
 // expect: T2021 35:8
-// expect: T2021 37:1
+// expect: T2021 37:1 "`debugger` statements"
 // expect: T2021 39:1
 // expect: T2021 41:8
 // expect: T2021 42:46

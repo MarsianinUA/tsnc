@@ -137,13 +137,6 @@ a_void_call_returned_as_a_tagged_value_is_undefined :: proc(t: ^testing.T) {
 }
 
 @(test)
-poison_nothing_reported_is_named_at_the_expression :: proc(t: ^testing.T) {
-	// process.exit answers no value, and the `!` that reads it answers poison without a word.
-	// The net in lower_expression names the `!`, so the build fails instead of compiling it.
-	expect_later(t, "const b = !process.exit(3);\n", {{.Not_Lowered, 1, 11}})
-}
-
-@(test)
 every_arithmetic_and_bitwise_operator_lowers :: proc(t: ^testing.T) {
 	lower_text(
 		t,

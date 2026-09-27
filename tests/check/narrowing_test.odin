@@ -12,19 +12,6 @@ import "../../src/source"
 // typeof.
 
 @(test)
-a_union_has_no_members_of_its_own_outside_a_narrowing :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function size(v: string | number): number {`, //
-			`return v.length;`,
-			`}`,
-		),
-		[]Error{{.Field_Not_Found, 2, 10}},
-	)
-}
-
-@(test)
 typeof_tells_a_function_value_from_a_reference :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -41,20 +28,6 @@ typeof_tells_a_function_value_from_a_reference :: proc(t: ^testing.T) {
 }
 
 // A literal field: discriminated unions.
-
-@(test)
-a_member_of_a_discriminated_union_is_not_readable_before_the_test :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			SHAPE_TYPES, //
-			`function area(s: Shape): number {`,
-			`return s.r;`,
-			`}`,
-		),
-		[]Error{{.Field_Not_Found, 5, 10}},
-	)
-}
 
 @(test)
 a_switch_groups_the_cases_that_share_one_body :: proc(t: ^testing.T) {
@@ -77,38 +50,6 @@ a_switch_groups_the_cases_that_share_one_body :: proc(t: ^testing.T) {
 	testing.expect_value(t, use_text(c, "v", 0), `"a" | "b" | "c"`)
 	testing.expect_value(t, use_text(c, "v", 1), `"a" | "b"`)
 	testing.expect_value(t, use_text(c, "v", 2), `"c"`)
-}
-
-@(test)
-a_case_the_value_can_never_equal_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function pick(v: string): number {`, //
-			`switch (v) {`,
-			`case 1: return 0;`,
-			`}`,
-			`return 1;`,
-			`}`,
-		),
-		[]Error{{.No_Overlap, 3, 6}},
-	)
-}
-
-// null and undefined.
-
-@(test)
-an_optional_field_read_without_a_test_does_not_fit_the_type :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`interface Opts { x?: number; }`, //
-			`function get(o: Opts): number {`,
-			`return o.x;`,
-			`}`,
-		),
-		[]Error{{.Type_Mismatch, 3, 8}},
-	)
 }
 
 // Truth, and the operators bind erases.
@@ -182,38 +123,6 @@ a_write_inside_a_narrowing_is_measured_against_the_declared_type :: proc(t: ^tes
 }
 
 @(test)
-a_write_of_the_wrong_type_is_still_reported_inside_a_narrowing :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function f(v: string | number): void {`, //
-			`if (typeof v === "number") { v = true; }`,
-			`}`,
-		),
-		[]Error{{.Type_Mismatch, 2, 34}},
-	)
-}
-
-@(test)
-a_write_to_the_object_drops_what_was_known_about_its_field :: proc(t: ^testing.T) {
-	// The write lands on `b` and not on `b.v`, but it is what `b.v` is read through, so the test
-	// above it says nothing about the new value.
-	expect_errors(
-		t,
-		lines(
-			`interface Box { v: number | undefined; }`, //
-			`function f(b: Box, other: Box): void {`,
-			`if (b.v !== undefined) {`,
-			`b = other;`,
-			`const n: number = b.v;`,
-			`}`,
-			`}`,
-		),
-		[]Error{{.Type_Mismatch, 5, 19}},
-	)
-}
-
-@(test)
 a_write_to_another_name_keeps_what_was_known_about_a_field :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -229,26 +138,6 @@ a_write_to_another_name_keeps_what_was_known_about_a_field :: proc(t: ^testing.T
 	)
 
 	testing.expect_value(t, member_text(c, "v", 1), "number")
-}
-
-// Loops.
-
-@(test)
-a_write_at_the_end_of_a_loop_reaches_the_top_of_the_next_turn :: proc(t: ^testing.T) {
-	// The back edge carries what the body left, so the read at the top of the body sees the write
-	// below it. Without that edge this would narrow to the string the declarator wrote.
-	expect_errors(
-		t,
-		lines(
-			`let v: string | undefined = "a";`, //
-			`let n: number = 0;`,
-			`while (n < 3) {`,
-			`n = n + v.length;`,
-			`v = undefined;`,
-			`}`,
-		),
-		[]Error{{.Field_Not_Found, 4, 11}},
-	)
 }
 
 // Closures.
@@ -269,24 +158,6 @@ a_narrowing_carries_into_an_arrow_made_inside_it :: proc(t: ^testing.T) {
 	)
 
 	testing.expect_value(t, use_text(c, "v", 1), "string")
-}
-
-@(test)
-a_narrowing_does_not_carry_into_an_arrow_when_the_name_is_written_to :: proc(t: ^testing.T) {
-	// The write could happen between the moment the arrow is made and the moment it runs, so what
-	// held where the arrow was written says nothing inside it.
-	expect_errors(
-		t,
-		lines(
-			`let v: string | number = "a";`, //
-			`if (typeof v === "string") {`,
-			`const get = (): number => v.length;`,
-			`v = 1;`,
-			`get();`,
-			`}`,
-		),
-		[]Error{{.Field_Not_Found, 3, 29}},
-	)
 }
 
 @(test)
@@ -313,27 +184,6 @@ a_loop_body_with_many_branches_is_walked_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, use_text(c, "x", 0), "number | string")
 }
 
-@(test)
-a_break_out_of_a_loop_carries_what_the_body_left :: proc(t: ^testing.T) {
-	// The `break` leaves the loop while the condition still holds, so after it the value is
-	// whatever the head held rather than what the condition ruled out.
-	expect_errors(
-		t,
-		lines(
-			`function run(c: boolean, v: string | number): void {`, //
-			`let x: string | number = v;`,
-			`let t = 0;`,
-			`while (typeof x === "string") {`,
-			`if (c) { break; }`,
-			`t = t + 1;`,
-			`}`,
-			`const n: number = x;`,
-			`}`,
-		),
-		[]Error{{.Type_Mismatch, 8, 19}},
-	)
-}
-
 // Calls that never return.
 
 @(test)
@@ -351,23 +201,6 @@ a_call_that_never_returns_ends_the_path_it_stands_on :: proc(t: ^testing.T) {
 	)
 
 	testing.expect_value(t, use_text(c, "x", 1), "string")
-}
-
-@(test)
-a_read_after_a_call_that_never_returns_keeps_the_declared_type :: proc(t: ^testing.T) {
-	// Code nothing reaches is not narrowed, so the read is still the union it was declared with
-	// and the field it does not have is still reported once.
-	c := check_text(
-		t,
-		lines(
-			`function size(x: string | number): number {`, //
-			`process.exit(1);`,
-			`return x.length;`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "x", 0), "number | string")
 }
 
 // `switch` and `default`.
@@ -457,11 +290,6 @@ a_narrowing_reads_the_same_in_every_partition :: proc(t: ^testing.T) {
 	testing.expect_value(t, use_text(one, "v", 2), use_text(both, "v", 2))
 }
 
-@(private = "file")
-SHAPE_TYPES :: `interface Circle { kind: "circle"; r: number; }
-interface Square { kind: "square"; side: number; }
-type Shape = Circle | Square;`
-
 // `any` and `unknown`.
 
 @(test)
@@ -490,20 +318,8 @@ typeof_narrows_any_and_unknown_to_a_primitive :: proc(t: ^testing.T) {
 
 @(test)
 a_write_to_a_field_of_a_union_fits_every_member :: proc(t: ^testing.T) {
-	// The object may be any one of the members, so the value has to fit the field of each. The
-	// field of the union holds what any member holds, which would let a number into the member
-	// whose field is a string.
-	expect_errors(
-		t,
-		lines(
-			`interface A { x: number; }`, //
-			`interface B { x: string; y: number; }`,
-			`function set(u: A | B): void {`,
-			`u.x = 1;`,
-			`}`,
-		),
-		[]Error{{.Type_Mismatch, 4, 7}},
-	)
+	// The object may be any one of the members, so the value has to fit the field of each, and
+	// here each holds a number. The refused half is a line of tests/negative/type-mismatch.ts.
 	expect_checked(
 		t,
 		lines(

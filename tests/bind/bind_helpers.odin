@@ -53,27 +53,6 @@ expect_bound :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Bo
 	return b
 }
 
-// expect_errors takes the diagnostics of bind alone, in print order: the text must parse cleanly.
-expect_errors :: proc(
-	t: ^testing.T,
-	text: string,
-	expected: []Error,
-	loc := #caller_location,
-) -> Bound {
-	b := bind_text(t, text, loc)
-	testing.expectf(t, len(b.parse_errors) == 0, "%q: parse %v", text, b.parse_errors, loc = loc)
-	testing.expectf(
-		t,
-		slice.equal(b.errors, expected),
-		"%q: errors %v, want %v",
-		text,
-		b.errors,
-		expected,
-		loc = loc,
-	)
-	return b
-}
-
 // Reading the result.
 
 // symbol_named is the symbol declared first under that name in that meaning.

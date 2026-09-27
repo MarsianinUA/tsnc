@@ -37,25 +37,6 @@ a_cycle_is_read_once_and_terminates :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_cycle_of_modules_that_run_code_is_reported :: proc(t: ^testing.T) {
-	c := check_project("cycle", "main.ts")
-	defer driver.destroy(&c.report)
-
-	// Each of a and b initializes a constant from the other's export, so whichever loads first
-	// reads a value that is not there yet. The message stands on the import that closes the ring,
-	// in a.ts, and names both modules once.
-	testing.expectf(
-		t,
-		slice.equal(c.errors, []Error{{"a.ts", .Cycle_With_Side_Effects, 1, 19}}),
-		"errors %v",
-		c.errors,
-	)
-	testing.expect_value(t, len(c.report.program.cycles), 1)
-	testing.expect_value(t, slice.equal(cycle_names(c, 0), []string{"a.ts", "b.ts"}), true)
-	testing.expect_value(t, c.report.program.cycles[0].has_effects, true)
-}
-
-@(test)
 a_cycle_of_types_and_functions_passes :: proc(t: ^testing.T) {
 	c := check_project("types-cycle", "main.ts")
 	defer driver.destroy(&c.report)

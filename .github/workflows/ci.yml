@@ -111,8 +111,8 @@ jobs:
       - name: Smoke
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
 
-      # Runs dist/tsnc.exe from the Compiler step over tests/negative/, so it needs no build of
-      # its own.
+      # Runs `dist/tsnc.exe build` from the Compiler step over tests/negative/, so it needs no
+      # build of its own: a program with a diagnostic never gets as far as linking.
       - name: Negative
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative
 

@@ -64,6 +64,29 @@ The compiler CLI follows Odin. [Usage](../README.md#usage) in the README shows t
 
 Without `-out:` the artifact is named after the entry file, in the current directory: `tsnc build src/main.ts` writes `main.exe` on Windows and `main` elsewhere, `-emit-llvm` writes `main.ll` and `-emit-ir` writes `main.ir`. `tsnc run` builds the file `tsnc build` would and leaves it there; its exit code is the program's own.
 
+## Negative tests
+
+`tests/negative/` holds programs that must not compile, at least one for every code of the `diag` registry. `tests/runner negative` builds each one with `tsnc build` and compares the diagnostics it prints with the ones its header names:
+
+```ts
+// A module gives out only what it exports. The message stands at the specifier, ...
+// expect: T4009 13:10 "module `./modules/values.ts` does not export `missing`"
+// expect: T4009 modules/relay-nowhere.ts:4:10
+```
+
+The header is the run of comment and blank lines at the top of the file. An `// expect:` line names one diagnostic: the code, then the line and column where it starts. Both are 1-based, and the column counts UTF-16 code units, as tsnc prints it. A path in front of the line, relative to `tests/negative`, puts the diagnostic in a module the program imports. A quoted text at the end has to occur in the message or in its hint. It runs to the last `"` of the line, so it may hold quotes of its own. Other comments are prose.
+
+The expectations are the whole list. They are compared one for one in print order: the program first, then its modules in the order the imports reach them, each by position. An extra diagnostic fails the program just as a missing one does, and so does a header that expects nothing or an `// expect:` line the runner cannot read. The build has to exit with code 1 and print nothing to stdout.
+
+`tsnc build` stops before lower when check reported anything. So a program that pins a code lower reports, T2027 or the T2029 of an `any` that would become a function, has to pass check.
+
+`tests/negative/modules/` holds the modules the programs import, and they are never run on their own. A module that carries a mistake is imported by the one program that expects it, since every program that imported it would get the diagnostic too.
+
+To write a program, put `// expect: T0000 0:0` placeholders in the header first, because the number of header lines moves every position below it. Work out each position from the source, then compare it with what `dist/tsnc.exe build tests/negative/<name>.ts` prints. Keep in mind:
+
+- A mistake that runs to the end of the file, such as an unclosed block, stands last. Its position is the line after the last one, column 1, since every program ends with a line break.
+- The parser reports one syntax error per line, so a program about syntax puts each mistake on a line of its own.
+
 ## Differential tests
 
 `tests/diff/src/` holds whole programs, one per construct. `tests/runner diff` runs each under `node`, compiles the same file with `tsnc build` at `-o:none` and at `-o:speed`, runs both and compares stdout, stderr and the exit code byte for byte. Nothing is stored as an expected output: the expectation is what Node prints today.

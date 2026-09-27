@@ -1,51 +1,6 @@
 package check_tests
 
-import "core:strings"
 import "core:testing"
-
-@(test)
-comparisons_order_two_numbers_or_two_strings :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const smaller = 1 < 2;`, //
-			`const earlier = "a" < "b";`,
-		),
-	)
-	testing.expect_value(t, declared_text(c, "smaller"), "boolean")
-	testing.expect_value(t, declared_text(c, "earlier"), "boolean")
-
-	expect_errors(t, `const mixed = 1 < "a";`, []Error{{.Comparison_Operands, 1, 15}})
-}
-
-@(test)
-strict_equality_rejects_two_types_with_no_value_in_common :: proc(t: ^testing.T) {
-	// Requirements 3.7 asks nothing of `===` itself, but a comparison whose two sides can never be
-	// equal is a mistake and not a test, and tsc reports it as well.
-	c := expect_errors(t, `const same = 1 === "a";`, []Error{{.No_Overlap, 1, 14}})
-	testing.expectf(
-		t,
-		strings.contains(rendered(c, 0), "no value in common"),
-		"the message does not say the two can never be equal: %q",
-		rendered(c, 0),
-	)
-
-	ok := expect_checked(t, lines(`let n = 1;`, `const same = n === 2;`))
-	testing.expect_value(t, declared_text(ok, "same"), "boolean")
-}
-
-@(test)
-comparing_different_types_with_double_equals_asks_for_triple_equals :: proc(t: ^testing.T) {
-	// Requirements 3.7 and the "Never" list of 2.2: a converting comparison has no honest machine
-	// code, so `==` is allowed only where it already means `===`.
-	c := expect_errors(t, `const same = 1 == "a";`, []Error{{.Loose_Equality, 1, 14}})
-	testing.expectf(
-		t,
-		strings.contains(rendered(c, 0), "use `===`"),
-		"the hint does not offer `===`: %q",
-		rendered(c, 0),
-	)
-}
 
 @(test)
 double_equals_between_one_type_is_allowed :: proc(t: ^testing.T) {
@@ -59,30 +14,6 @@ double_equals_between_one_type_is_allowed :: proc(t: ^testing.T) {
 			`return a == b;`,
 			`}`,
 		),
-	)
-}
-
-@(test)
-double_equals_on_a_type_of_several_kinds_asks_for_triple_equals :: proc(t: ^testing.T) {
-	// One type on both sides is not enough where `==` still converts: an `any` may hold anything,
-	// `null == undefined` holds, and so does `1 == "1"` or `1 == true`.
-	expect_errors(
-		t,
-		lines(
-			`function f(a: any, b: any, n: null | undefined, m: null | undefined): void {`, //
-			`const x = a == b;`,
-			`const y = n != m;`,
-			`}`,
-			`function g(p: number | string, q: number | string, r: number | boolean): boolean {`,
-			`return p == q || r == r;`,
-			`}`,
-		),
-		[]Error {
-			{.Loose_Equality, 2, 11},
-			{.Loose_Equality, 3, 11},
-			{.Loose_Equality, 6, 8},
-			{.Loose_Equality, 6, 18},
-		},
 	)
 }
 
@@ -144,62 +75,6 @@ typeof_gives_the_answers_it_can_produce :: proc(t: ^testing.T) {
 }
 
 @(test)
-update_operators_need_a_number :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`let counter = 0;`, //
-			`counter++;`,
-			`const after = --counter;`,
-		),
-	)
-	testing.expect_value(t, declared_text(c, "after"), "number")
-
-	expect_errors(
-		t,
-		lines(
-			`let word = "a";`, //
-			`word++;`,
-		),
-		[]Error{{.Operand_Not_Number, 2, 1}},
-	)
-}
-
-@(test)
-assignment_checks_the_declared_type :: proc(t: ^testing.T) {
-	expect_checked(
-		t,
-		lines(
-			`let total = 0;`, //
-			`total = 5;`,
-			`total += 2;`,
-		),
-	)
-
-	expect_errors(
-		t,
-		lines(
-			`let total = 0;`, //
-			`total = "a";`,
-		),
-		[]Error{{.Type_Mismatch, 2, 9}},
-	)
-}
-
-@(test)
-compound_assignment_follows_its_operator :: proc(t: ^testing.T) {
-	// `total *= "a"` means `total = total * "a"`, so it is the operator that complains first.
-	expect_errors(
-		t,
-		lines(
-			`let total = 0;`, //
-			`total *= "a";`,
-		),
-		[]Error{{.Operand_Not_Number, 2, 10}},
-	)
-}
-
-@(test)
 strict_equality_accepts_two_unions_that_share_a_member :: proc(t: ^testing.T) {
 	// Neither union fits the other, and `"b"` is still a value both sides can hold, so the
 	// comparison is a test and not a mistake.
@@ -209,16 +84,5 @@ strict_equality_accepts_two_unions_that_share_a_member :: proc(t: ^testing.T) {
 			`function same(a: "a" | "b", b: "b" | "c"): boolean { return a === b; }`, //
 			`function wide(a: number | string, b: string | boolean): boolean { return a === b; }`,
 		),
-	)
-}
-
-@(test)
-an_assertion_between_two_unions_that_merely_overlap_is_reported :: proc(t: ^testing.T) {
-	// `as` may widen a value or narrow a union and nothing in between, which is a narrower rule
-	// than having a value in common.
-	expect_errors(
-		t,
-		`function pick(a: "a" | "b"): "b" | "c" { return a as "b" | "c"; }`,
-		[]Error{{.Unrelated_Assertion, 1, 49}},
 	)
 }

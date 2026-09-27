@@ -156,21 +156,3 @@ semicolons_are_inserted_per_ecmascript :: proc(t: ^testing.T) {
 		{{.Expected_Token, 1, 15}, {.Expected_Token, 2, 6}},
 	)
 }
-
-@(test)
-a_body_takes_no_declaration :: proc(t: ^testing.T) {
-	expect_parse(t, "if (a) let x = 1", {{.Unexpected_Token, 1, 8}}, "(if a (let (x = 1)) _)")
-	expect_parse(
-		t,
-		"while (a) function f() {}",
-		{{.Unexpected_Token, 1, 11}},
-		"(while a (function f [] (block)))",
-	)
-	expect_parse(t, "{ import \"./m\" }", {{.Unexpected_Token, 1, 3}}, "(block bad)")
-	expect_parse(
-		t,
-		"function f() { export let x }",
-		{{.Unexpected_Token, 1, 16}},
-		"(function f [] (block bad))",
-	)
-}

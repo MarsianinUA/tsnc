@@ -1,20 +1,23 @@
 // One name holds at most one value and one type in a scope. Two declarations of it do not merge,
 // and neither do two interfaces of one name. A parameter, a type parameter, an import and a `let`
-// of a `switch` case each declare a name of their scope. An exported declaration that repeats a
-// name is one mistake, not an export twice as well. A name of another scope, or of the other
-// meaning, is free.
-// expect: T4001 18:7
+// of a `switch` case each declare a name of their scope. A name of another scope, or of the other
+// meaning, is free. An exported declaration that repeats a name is one mistake, not an export
+// twice as well: an importer gets the first declaration, and a function that repeats a `let`
+// exports nothing.
+// expect: T4009 20:20
 // expect: T4001 21:7
-// expect: T4001 24:10
-// expect: T4001 26:27
-// expect: T4001 29:6
-// expect: T4001 35:11
-// expect: T2023 39:15
-// expect: T4001 39:18
-// expect: T4001 49:8
-// expect: T4001 54:17
-// expect: T4001 57:17
+// expect: T4001 24:7
+// expect: T4001 27:10
+// expect: T4001 29:27
+// expect: T4001 32:6
+// expect: T4001 38:11
+// expect: T2023 42:15
+// expect: T4001 42:18
+// expect: T4001 52:8
+// expect: T4001 modules/redeclared-exports.ts:8:17
+// expect: T4001 modules/redeclared-exports.ts:13:17
 import { answer } from "./modules/values.ts";
+import { exported, lost } from "./modules/redeclared-exports.ts";
 const answer: number = 1;
 
 const total: number = 1;
@@ -50,11 +53,7 @@ function cases(n: number): void {
 	}
 }
 
-export function exported(): void {}
-export function exported(): void {}
-
-let lost = 1;
-export function lost(): void {}
+const first: number = exported();
 
 let outer = 1;
 {
