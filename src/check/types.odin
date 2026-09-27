@@ -3,9 +3,11 @@ The TypeScript types of one check and the table that holds them.
 
 Interning: every type goes into the table once, so one structure has one Type_ID and type identity
 is `==` on the id. The types with no parts are interned first, in the order of Basic_Kind, so ERROR
-is row 0 of every table. A parameter name is not part of a function type, as it is not in
-TypeScript, so two signatures that differ only in their names share one id and print with the names
-of whichever one arrived first.
+is row 0 of every table.
+
+Parameter names are part of a function type, so `(a: number) => void` prints as written: a shared
+row would print the names whichever checker of a split program met first. No rule reads them
+(compare_types skips them), and a union keeps the spelling whose text sorts first.
 
 Named objects: an `interface` is interned by its declaration rather than by its shape, because
 `interface Node { next: Node | undefined }` cannot have its members interned before itself. Its row
@@ -99,8 +101,7 @@ Function :: struct {
 	type_params: []Type_ID,
 }
 
-// Param borrows its name from the tree and prints it in a diagnostic; the name takes no part in
-// type identity.
+// Param borrows its name from the tree and prints it in a diagnostic.
 Param :: struct {
 	name: string,
 	type: Type_ID,
@@ -378,6 +379,9 @@ add_member :: proc(table: ^Table, out: ^[dynamic]Type_ID, member: Type_ID) {
 	for existing, i in out {
 		order := compare_types(table.types[:], member, existing)
 		if order == 0 {
+			if member != existing && prints_first(table.types[:], member, existing) {
+				out[i] = member
+			}
 			return
 		}
 		if order < 0 {
@@ -386,6 +390,12 @@ add_member :: proc(table: ^Table, out: ^[dynamic]Type_ID, member: Type_ID) {
 		}
 	}
 	append(out, member)
+}
+
+@(private)
+prints_first :: proc(types: []Type, a, b: Type_ID) -> bool {
+	first := type_text(types, a, context.temp_allocator)
+	return first < type_text(types, b, context.temp_allocator)
 }
 
 // intern takes a `type` whose parts may be scratch: a type that is already there is found by its
@@ -457,9 +467,8 @@ clone_ids :: proc(ids: []Type_ID, allocator: runtime.Allocator) -> []Type_ID {
 
 // write_key builds the key from the Type_ID values of the parts, which are interned already, so it
 // stays short and it always terminates: a type that names itself does so through a named object,
-// whose key is its declaration and not its members. A parameter name and an interface name are left
-// out, because neither is part of the type. The key is internal: it is never printed and never
-// ordered.
+// whose key is its declaration and not its members. The key is internal: it is never printed and
+// never ordered.
 @(private)
 write_key :: proc(b: ^strings.Builder, type: Type) {
 	switch v in type {
@@ -487,6 +496,7 @@ write_key :: proc(b: ^strings.Builder, type: Type) {
 		}
 		for param in v.params {
 			strings.write_byte(b, ',')
+			strings.write_quoted_string(b, param.name)
 			strings.write_u64(b, u64(param.type))
 		}
 		strings.write_byte(b, '>')
@@ -902,7 +912,7 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 		// Invariant, because requirements 3.6 stores elements unboxed: a `number[]` buffer holds f64
 		// and a `(number | string)[]` buffer holds tagged values, so one is not the other. tsc allows
 		// the assignment; tsnc may be stricter where its model says so (requirements 5).
-		return source_array.element == target_array.element
+		return compare_types(types, source_array.element, target_array.element) == 0
 	}
 
 	source_object, source_is_object := types[source].(Object)

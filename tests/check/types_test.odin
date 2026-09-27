@@ -24,21 +24,24 @@ the_types_with_no_parts_are_the_first_rows_of_the_table :: proc(t: ^testing.T) {
 }
 
 @(test)
-one_structure_gets_one_type_id :: proc(t: ^testing.T) {
-	// Two signatures that differ only in the names of their parameters are one type in TypeScript,
-	// so they have to be one row of the table as well.
+parameter_names_tell_two_signatures_apart :: proc(t: ^testing.T) {
+	// `second` goes into the union first.
 	c := expect_checked(
 		t,
 		lines(
-			`const first = (a: number): string => "x";`, //
-			`const second = (b: number): string => "y";`,
+			`const second = (b: number): string => "y";`, //
+			`const first = (a: number): string => "x";`,
+			`let flag = true;`,
+			`const either = flag ? second : first;`,
 		),
 	)
 
 	typed, ok := check.typed_file(c.result, MAIN)
 	testing.expect(t, ok)
-	testing.expect_value(t, declared_text(c, "first"), declared_text(c, "second"))
-	testing.expect_value(t, type_id_of(c, typed, "first"), type_id_of(c, typed, "second"))
+	testing.expect_value(t, declared_text(c, "first"), "(a: number) => string")
+	testing.expect_value(t, declared_text(c, "second"), "(b: number) => string")
+	testing.expect(t, type_id_of(c, typed, "first") != type_id_of(c, typed, "second"))
+	testing.expect_value(t, declared_text(c, "either"), "(a: number) => string")
 }
 
 @(test)

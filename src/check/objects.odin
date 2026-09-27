@@ -162,12 +162,12 @@ alias_type :: proc(
 		file = ref.file,
 		node = node,
 	}
-	if decl in c.aliases {
-		report(c, .Circular_Type, name.span, name.text)
-		return ERROR
-	}
 	if cached, found := c.symbol_types[ref]; found && len(args) == 0 {
 		return cached
+	}
+	if decl in c.aliases {
+		report_alias_loop(c, decl, name)
+		return ERROR
 	}
 
 	previous := move_to(c, ref.file)
@@ -180,15 +180,55 @@ alias_type :: proc(
 
 	drop_facts_of_instance(c, args)
 	c.aliases[decl] = true
-	defer delete_key(&c.aliases, decl)
+	append(&c.alias_path, Alias_Step{decl = decl, ref = ref, name = name, plain = len(args) == 0})
+	defer {
+		pop(&c.alias_path)
+		delete_key(&c.aliases, decl)
+	}
 	restore := bind_type_params(c, ref.file, declaration.type_params, args)
 	defer unbind_type_params(c, restore)
 
 	type := resolve_type(c, declaration.type)
 	if len(args) == 0 {
-		c.symbol_types[ref] = type
+		if looped, found := c.symbol_types[ref]; found {
+			type = looped
+		} else {
+			c.symbol_types[ref] = type
+		}
 	}
 	return set_type(c, node, type)
+}
+
+@(private)
+Alias_Step :: struct {
+	decl:  Decl_Ref,
+	ref:   Symbol_Ref,
+	name:  ast.Name, // the reference the alias was entered by
+	plain: bool, // no type arguments, so cached by symbol
+}
+
+// report_alias_loop reports at the reference, inside the loop, to the member declared first, as
+// report_loop does and for its reason. name closes the loop, so it is the reference to its start.
+@(private)
+report_alias_loop :: proc(c: ^Checker, decl: Decl_Ref, name: ast.Name) {
+	start := len(c.alias_path) - 1
+	for c.alias_path[start].decl != decl {
+		start -= 1
+	}
+
+	first := start
+	for i in start + 1 ..< len(c.alias_path) {
+		if compare_decls(c.alias_path[i].decl, c.alias_path[first].decl) < 0 {
+			first = i
+		}
+	}
+	for step in c.alias_path[start:] {
+		if step.plain {
+			c.symbol_types[step.ref] = ERROR
+		}
+	}
+	at := name if first == start else c.alias_path[first].name
+	report(c, .Circular_Type, at.span, at.text)
 }
 
 // type_param_type is what one type parameter stands for: the argument in force, or the type variable

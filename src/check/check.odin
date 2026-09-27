@@ -4,8 +4,7 @@ docs/architecture-plan-tsnc.md#check_result-and-typed_file-package-check.
 
 Partitions: one call types the files of one partition and returns a Typed_File for each. It reads
 any file of the program, though, because a name used in its partition may be declared anywhere, so
-the answer for a file does not depend on how the program was split. In v1 driver passes one
-partition holding every file.
+the answer for a file does not depend on how the program was split.
 
 Tables: the three tables of a Typed_File are as long as the file's tree.nodes and hold a fact of a
 node by its ast.Node_ID. An expression holds its type, and ERROR where the rules failed. A read of a
@@ -112,8 +111,10 @@ check :: proc(
 		facts        = make([]Facts, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
 		resolving    = make(map[Symbol_Ref]bool, context.temp_allocator),
+		path         = make([dynamic]Symbol_Ref, context.temp_allocator),
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
 		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
+		alias_path   = make([dynamic]Alias_Step, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
 		widenings    = make([dynamic]Widening, context.temp_allocator),
 		narrowing    = make_narrowing(context.temp_allocator),
@@ -155,8 +156,10 @@ Checker :: struct {
 	// in another.
 	symbol_types: map[Symbol_Ref]Type_ID,
 	// The symbols whose type is being worked out right now. A declaration that needs its own type
-	// finds itself here, which is the only way that search could fail to end.
+	// finds itself here, which is the only way that search could fail to end. path is the same, in
+	// entry order.
 	resolving:    map[Symbol_Ref]bool,
+	path:         [dynamic]Symbol_Ref,
 	// The type arguments in force while the members of a generic lib declaration are read: `T` of
 	// `Array<T>` stands for `number` while `Array<number>` is built. Saved and restored around one
 	// instantiation, so a nested one cannot see the outer bindings.
@@ -164,6 +167,7 @@ Checker :: struct {
 	// The type aliases being resolved right now. An alias is transparent, so one that names itself
 	// has nothing to stand for; an interface needs no guard, because its row is reserved first.
 	aliases:      map[Decl_Ref]bool,
+	alias_path:   [dynamic]Alias_Step, // aliases, in entry order
 	// The lib declarations check has to know by name rather than by use. Filled on first use.
 	lib:          Lib_Types,
 	trail:        Trail,
@@ -280,8 +284,10 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.in_partition, context.temp_allocator)
 	delete(c.symbol_types)
 	delete(c.resolving)
+	delete(c.path)
 	delete(c.bindings)
 	delete(c.aliases)
+	delete(c.alias_path)
 	delete(c.trail)
 	delete(c.widenings)
 	delete(c.narrowing.answers)

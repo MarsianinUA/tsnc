@@ -192,7 +192,7 @@ All interactions are synchronous calls. Parallelism exists only in the form "`dr
 
 There are no cycles. The only callback, from the runtime into generated code, goes through a procedure type from `abi`, not through an import.
 
-Determinism. `File_ID`s are assigned in breadth-first import traversal order from the input file, with imports in source order, so the numbering does not depend on which task finished first. Partitions are contiguous `File_ID` ranges balanced by size. Diagnostics are sorted by the triple (`File_ID`, offset, code). In v1, `lower` and `codegen` run on one thread in `File_ID` order.
+Determinism. `File_ID`s are assigned in breadth-first import traversal order from the input file, with imports in source order, so the numbering does not depend on which task finished first. Partitions are contiguous `File_ID` ranges of about equal AST nodes, `min(-j, source files)` of them. Diagnostics are sorted by (`File_ID`, offset, code), then by end and arguments, so print order does not depend on which checker found what first. In v1, `lower` and `codegen` run on one thread in `File_ID` order.
 
 ## Contracts
 
@@ -344,6 +344,7 @@ May change during detailed planning:
 
 - Derived pointers from LLVM optimizations under a conservative scan (requirements, 13). Architecturally this is contained in `ir` (`store_ref`, no pointer arithmetic), `codegen` (`-disable-lsr`) and `gc`. The shadow stack fallback touches only `abi`, `codegen` and `gc`. Planning can go ahead.
 - Private type tables mean the checkers repeat work on shared dependencies. The cost is accepted, as in tsgo; the compile benchmark in milestone 6 measures it. If it turns out large, a merge step gets added; the decision is marked reversible.
+- Inference loops are reported at the member declared first, whichever member a checker entered at, so every split reports them alike. Two loops that share a member, or a loop through the body of a function whose result is written out, can still be found differently from different entry points; the negative corpus runs at `-j:1` and `-j:8` to catch such a case.
 - `string16` from the nightly build is isolated in `rt/str`; falling back to a "pointer plus length" pair does not change `abi` outside the cell.
 - The runtime root package is named `rt` instead of `runtime` because of the conflict with `base:runtime`; the directory stays `src/runtime`.
 

@@ -413,7 +413,7 @@ equality_result :: proc(c: ^Checker, span: source.Span, left, right: Type_ID) ->
 		return BOOLEAN
 	}
 	type := widen(&c.table, left)
-	if type == widen(&c.table, right) && one_kind(c, type) {
+	if compare_types(c.table.types[:], type, widen(&c.table, right)) == 0 && one_kind(c, type) {
 		return BOOLEAN
 	}
 	report_types(c, .Loose_Equality, span, left, right)

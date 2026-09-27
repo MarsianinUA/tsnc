@@ -36,8 +36,7 @@ Diagnostic :: struct {
 	args: [MAX_ARGS]string,
 }
 
-// sort is stable, so the order stays deterministic as long as the caller collects the diagnostics
-// in a fixed order, whatever the number of threads.
+// sort keys on every field: the checkers of a split program find diagnostics in any order.
 sort :: proc(diagnostics: []Diagnostic) {
 	slice.stable_sort_by(diagnostics, prints_before)
 }
@@ -70,7 +69,18 @@ prints_before :: proc(a, b: Diagnostic) -> bool {
 		return a.span.start < b.span.start
 	}
 	// The number, not the enum position: the enum order is free.
-	return REGISTRY[a.code].number < REGISTRY[b.code].number
+	if a.code != b.code {
+		return REGISTRY[a.code].number < REGISTRY[b.code].number
+	}
+	if a.span.end != b.span.end {
+		return a.span.end < b.span.end
+	}
+	for arg, i in a.args {
+		if arg != b.args[i] {
+			return arg < b.args[i]
+		}
+	}
+	return false
 }
 
 // write_template writes template with every {i} replaced by args[i]. Any other brace is literal.

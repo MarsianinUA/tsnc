@@ -76,7 +76,7 @@ Without `-out:` the artifact is named after the entry file, in the current direc
 
 The header is the run of comment and blank lines at the top of the file. An `// expect:` line names one diagnostic: the code, then the line and column where it starts. Both are 1-based, and the column counts UTF-16 code units, as tsnc prints it. A path in front of the line, relative to `tests/negative`, puts the diagnostic in a module the program imports. A quoted text at the end has to occur in the message or in its hint. It runs to the last `"` of the line, so it may hold quotes of its own. Other comments are prose.
 
-The expectations are the whole list. They are compared one for one in print order: the program first, then its modules in the order the imports reach them, each by position. An extra diagnostic fails the program just as a missing one does, and so does a header that expects nothing or an `// expect:` line the runner cannot read. The build has to exit with code 1 and print nothing to stdout.
+The expectations are the whole list. They are compared one for one in print order: the program first, then its modules in the order the imports reach them, each by position. An extra diagnostic fails the program just as a missing one does, and so does a header that expects nothing or an `// expect:` line the runner cannot read. The build has to exit with code 1 and print nothing to stdout. Each program is built at `-j:1` and at `-j:8`, and the two builds must print the same bytes: one checker over the program and one per partition find the same mistakes.
 
 `tsnc build` stops before lower when check reported anything. So a program that pins a code lower reports, T2027 or the T2029 of an `any` that would become a function, has to pass check.
 

@@ -120,7 +120,7 @@ a_path_that_is_not_ascii_builds_and_runs :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.exit_code, 6)
 }
 
-// One program builds to one file, byte for byte, which the determinism test of T6.2 stands on. The
+// One program builds to one file, byte for byte, which the next test stands on. The
 // executable used to carry the name of the temporary file it was linked as, process id and all: in
 // the export table on Windows, and in the code signature the linker puts on an arm64 program on
 // macOS. Both builds here run in one process and share that id, so the temporary name is looked for
@@ -144,6 +144,54 @@ two_builds_of_one_program_are_identical :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect(t, read_artifact(t, elsewhere.output) == before, "the two builds differ")
+}
+
+// One checker over the program and one per partition of it give the same bytes (requirements 11).
+@(test)
+the_thread_count_changes_no_byte_of_any_artifact :: proc(t: ^testing.T) {
+	Artifact :: struct {
+		name:      string,
+		emit_ir:   bool,
+		emit_llvm: bool,
+	}
+	artifacts := [?]Artifact {
+		{name = "driver-split.ir", emit_ir = true},
+		{name = "driver-split.ll", emit_llvm = true},
+		{name = "driver-split.exe"},
+	}
+	for artifact in artifacts {
+		bytes: [2]string
+		for jobs, i in ([2]int{1, 8}) {
+			options := build_options("split", "main.ts", artifact.name)
+			options.emit_ir = artifact.emit_ir
+			options.emit_llvm = artifact.emit_llvm
+			options.jobs = jobs
+			built := build_project(options)
+			defer driver.destroy(&built.report.check)
+			if !expect_built(t, built) {
+				return
+			}
+			testing.expect_value(t, len(built.report.check.results), min(jobs, 9))
+			bytes[i] = read_artifact(t, options.output)
+		}
+		testing.expectf(t, bytes[0] == bytes[1], "%s differs at -j:1 and -j:8", artifact.name)
+	}
+
+	state, stdout, stderr, run_err := os.process_exec(
+		{command = {out_path("driver-split.exe")}},
+		context.allocator,
+	)
+	defer delete(stdout)
+	defer delete(stderr)
+	if !testing.expectf(t, run_err == nil, "run: %v", run_err) {
+		return
+	}
+	testing.expect_value(
+		t,
+		string(stdout),
+		"10\nVEC=5 [ 5, 10 ]\n[ 3, 4 ] 12 vec 3,4 number 7 string seven\n11 4\n1 2\n",
+	)
+	testing.expect_value(t, state.exit_code, 0)
 }
 
 // driver.run itself. The fixture prints nothing, so inherited stdio leaves the test log alone and

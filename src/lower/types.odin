@@ -274,11 +274,16 @@ object_slots :: proc(types: []check.Type, object: check.Object) -> (slots: []ir.
 // part in no widening.
 @(private)
 object_layout :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -> ir.Layout_ID {
+	return ir.object_layout(&low.builder, class_slots(low, types, object))
+}
+
+@(private)
+class_slots :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -> []ir.Slot {
 	slots, _ := object_slots(types, object)
 	if joined, found := class_value(&low.objects, slots_key(slots)); found {
-		slots = joined
+		return joined
 	}
-	return ir.object_layout(&low.builder, slots)
+	return slots
 }
 
 // Classes is a union-find over string keys, each node holding a value. join_classes gives every
@@ -364,6 +369,8 @@ build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
 	}
 	join_classes(&low.objects, join_slots)
 
+	intern_signature_layouts(low, results)
+	interned := len(low.builder.layouts)
 	for result in results {
 		for widening in result.widenings {
 			source, source_ok := signature_node(low, result.types, widening.source)
@@ -373,7 +380,87 @@ build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
 			}
 		}
 	}
+	ensure(
+		len(low.builder.layouts) == interned,
+		"a signature interned a layout intern_signature_layouts did not see",
+	)
 	join_classes(&low.signatures, join_signatures)
+}
+
+// intern_signature_layouts interns the layouts of the signature pass in key order. That pass meets
+// them in the order of the results and their Type_IDs, which differs between -j:1 and -j:8.
+@(private)
+intern_signature_layouts :: proc(low: ^Lowering, results: []check.Check_Result) {
+	wanted := Signature_Layouts {
+		objects = make([dynamic]Object_Shape, context.temp_allocator),
+	}
+	for result in results {
+		for widening in result.widenings {
+			collect_signature(low, result.types, widening.source, &wanted)
+			collect_signature(low, result.types, widening.target, &wanted)
+		}
+	}
+
+	for element in wanted.arrays {
+		ir.array_layout(&low.builder, element)
+	}
+	slice.sort_by(wanted.objects[:], proc(a, b: Object_Shape) -> bool {
+		return a.key < b.key
+	})
+	for object in wanted.objects {
+		ir.object_layout(&low.builder, object.slots)
+	}
+}
+
+@(private)
+Signature_Layouts :: struct {
+	arrays:  bit_set[abi.Slot_Kind],
+	objects: [dynamic]Object_Shape,
+}
+
+@(private)
+Object_Shape :: struct {
+	key:   string,
+	slots: []ir.Slot,
+}
+
+// collect_signature and collect_layout mirror own_signature and map_type, early exits included.
+@(private)
+collect_signature :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+	wanted: ^Signature_Layouts,
+) {
+	function, is_function := types[id].(check.Function)
+	if !is_function || function.variadic {
+		return
+	}
+	for param in function.params {
+		if !collect_layout(low, types, param.type, wanted) {
+			return
+		}
+	}
+	collect_layout(low, types, function.result, wanted)
+}
+
+@(private)
+collect_layout :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+	wanted: ^Signature_Layouts,
+) -> bool {
+	representation(types, id) or_return
+	#partial switch v in types[id] {
+	case check.Object:
+		slots := class_slots(low, types, v)
+		append(&wanted.objects, Object_Shape{key = slots_key(slots), slots = slots})
+	case check.Array:
+		element, _ := element_slot(types, v.element)
+		wanted.arrays += {element}
+	}
+	return true
 }
 
 // object_node answers the node of an object type's key. A type with no representation takes part

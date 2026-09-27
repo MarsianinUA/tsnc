@@ -68,38 +68,49 @@ the_thread_count_changes_no_number_and_no_diagnostic :: proc(t: ^testing.T) {
 		defer driver.destroy(&eight.report)
 		testing.expectf(t, slice.equal(file_names(eight), names), "files %v", file_names(eight))
 		testing.expectf(t, slice.equal(eight.errors, one.errors), "errors %v", eight.errors)
+		for d, i in eight.report.diagnostics {
+			testing.expect_value(t, d.args, one.report.diagnostics[i].args)
+		}
 	}
 }
 
 @(test)
-one_partition_holds_every_file_but_the_lib :: proc(t: ^testing.T) {
-	c := check_project("clean", "main.ts")
-	defer driver.destroy(&c.report)
+partitions_are_contiguous_ranges_of_the_files_but_the_lib :: proc(t: ^testing.T) {
+	for jobs in ([?]int{1, 2, 3, 8, 20}) {
+		c := check_project("multi", "main.ts", jobs = jobs)
+		defer driver.destroy(&c.report)
 
-	// v1 types the program in one call. The lib is module zero and is read rather than typed: its
-	// declarations are what every other file is measured against, and tests/check/lib_test.odin is
-	// what pins that the file itself has nothing wrong with it.
-	testing.expect_value(t, len(c.report.results), 1)
-	result := c.report.results[0]
-	testing.expectf(
-		t,
-		slice.equal(result.partition, []source.File_ID{1, 2}),
-		"partition %v",
-		result.partition,
-	)
-
-	// A Typed_File for each, with a row for every node of its tree, which is what lower indexes.
-	for file in result.partition {
-		typed, ok := check.typed_file(result, file)
-		testing.expectf(t, ok, "no Typed_File for %v", file)
-		if !ok {
-			continue
+		results := c.report.results
+		testing.expect_value(t, len(results), min(jobs, 9))
+		next := source.File_ID(1)
+		for result in results {
+			testing.expectf(t, len(result.partition) > 0, "-j:%d: an empty partition", jobs)
+			for file in result.partition {
+				testing.expect_value(t, file, next)
+				next += 1
+				expect_typed(t, c, result, file)
+			}
 		}
-		nodes := len(c.report.program.trees[file].nodes)
-		testing.expect_value(t, len(typed.node_types), nodes)
-		testing.expect_value(t, len(typed.node_symbols), nodes)
-		testing.expect_value(t, len(typed.node_signatures), nodes)
+		testing.expect_value(t, next, source.File_ID(10))
+
+		// big.ts, File_ID 2, holds most of the nodes.
+		if jobs == 2 {
+			first := results[0].partition
+			testing.expectf(t, slice.equal(first, []source.File_ID{1, 2}), "first %v", first)
+		}
 	}
+}
+
+// expect_typed wants a row for every node of the file's tree, which is what lower indexes.
+expect_typed :: proc(t: ^testing.T, c: Checked, result: check.Check_Result, file: source.File_ID) {
+	typed, ok := check.typed_file(result, file)
+	if !testing.expectf(t, ok, "no Typed_File for %v", file) {
+		return
+	}
+	nodes := len(c.report.program.trees[file].nodes)
+	testing.expect_value(t, len(typed.node_types), nodes)
+	testing.expect_value(t, len(typed.node_symbols), nodes)
+	testing.expect_value(t, len(typed.node_signatures), nodes)
 }
 
 @(test)

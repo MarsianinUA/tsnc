@@ -169,15 +169,16 @@ type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 		if type := recorded_declaration(c, ref, symbol); type != ERROR {
 			return type
 		}
-		report(c, recursion_code(c, ref, symbol), symbol.name.span, symbol.name.text)
-		c.symbol_types[ref] = ERROR
+		report_loop(c, ref)
 		return ERROR
 	}
 
 	c.resolving[ref] = true
+	append(&c.path, ref)
 	previous := move_to(c, ref.file)
 	type := declared_type(c, ref, symbol)
 	c.at = previous
+	pop(&c.path)
 	delete_key(&c.resolving, ref)
 
 	// A function whose result is annotated answers before its body is read, so that a call to
@@ -199,6 +200,49 @@ recorded_declaration :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) 
 		return ERROR
 	}
 	return types[symbol.declaration]
+}
+
+// report_loop reports the loop at the member declared first and gives every member the error type,
+// so checkers entering it at different members of a split program report and read it alike. A
+// member with its result written out is known already and keeps its type.
+@(private)
+report_loop :: proc(c: ^Checker, ref: Symbol_Ref) {
+	start := len(c.path) - 1
+	for c.path[start] != ref {
+		start -= 1
+	}
+
+	first := ref
+	for member in c.path[start:] {
+		if waits_on_loop(c, member) && declared_before(c, member, first) {
+			first = member
+		}
+	}
+	for member in c.path[start:] {
+		if waits_on_loop(c, member) {
+			c.symbol_types[member] = ERROR
+		}
+	}
+	symbol := c.program.bound[first.file].symbols[first.symbol]
+	report(c, recursion_code(c, first, symbol), symbol.name.span, symbol.name.text)
+}
+
+@(private)
+waits_on_loop :: proc(c: ^Checker, ref: Symbol_Ref) -> bool {
+	if _, known := c.symbol_types[ref]; known {
+		return false
+	}
+	symbol := c.program.bound[ref.file].symbols[ref.symbol]
+	return recorded_declaration(c, ref, symbol) == ERROR
+}
+
+@(private)
+declared_before :: proc(c: ^Checker, a, b: Symbol_Ref) -> bool {
+	if a.file != b.file {
+		return a.file < b.file
+	}
+	declarations := c.program.bound[a.file].symbols
+	return declarations[a.symbol].declaration < declarations[b.symbol].declaration
 }
 
 // recursion_code tells two mistakes apart: a function and an arrow both lack a result the search
