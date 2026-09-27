@@ -38,3 +38,15 @@ echo(1 / 7);
 echo(NaN);
 echo(Infinity);
 echo(-Infinity);
+
+// Where the shortest digits are hard to find: the round up that carries through 9s, bounds whose
+// decimal points differ, and the exponents that need all three digits.
+echo(4.35);
+echo(9.999999999999999e20);
+echo(1.2e-5);
+echo(1e-323);
+echo(1e300);
+echo(9007199254740994);
+echo(426147580146789570);
+echo(28206292283999998000);
+echo(1.3649515199999999e21);

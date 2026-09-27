@@ -29,3 +29,15 @@ echo(tabbed);
 echo("");
 label(cyrillic, 1);
 console.log(ascii, cyrillic, emoji);
+
+// A lone surrogate reaches the console as U+FFFD, as Node writes it. The two halves of a pair, each
+// a string of its own, make the pair again when joined.
+function joined(a: string, b: string): string {
+  return a + b;
+}
+
+echo("a\uD83D");
+echo("\uDE00b");
+echo("\uDE00\uD83D");
+echo(joined(cyrillic, "\u{1F600}"));
+echo(joined("\uD83D", "\uDE00"));

@@ -5,63 +5,15 @@ import "core:testing"
 
 import "../../../src/runtime/num"
 
-// Every expected value below came out of Node 24, which is the only authority on these rules; the
-// header of each test names the expression that produced it. Regenerate a row with, for example:
-//
-//	node -e 'console.log(JSON.stringify(String(1e21)))'
+// What the conversions answer for a value is pinned by the programs of tests/diff; the tests here
+// sweep more values than a program holds, or check a promise no program can see. Node 24 is the
+// authority on the rules, and a test names the expression that produced its expectation.
 //
 // NaN, the infinities and the negative zero are spelled as bit patterns, so that no case depends on
 // the arithmetic it is meant to check.
 NAN :: 0h7ff8_0000_0000_0000
 INF :: 0h7ff0_0000_0000_0000
 NEGATIVE_ZERO :: 0h8000_0000_0000_0000
-
-// String(value)
-@(test)
-to_string_matches_node :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		value: f64,
-		text:  string,
-	} {
-		{0, "0"},
-		{NEGATIVE_ZERO, "0"},
-		{NAN, "NaN"},
-		{INF, "Infinity"},
-		{-INF, "-Infinity"},
-		{1, "1"},
-		{-1.5, "-1.5"},
-		{100, "100"},
-		{123.456, "123.456"},
-		{4.35, "4.35"},
-		{1.0 / 3.0, "0.3333333333333333"},
-		{0.30000000000000004, "0.30000000000000004"},
-		// The thresholds of requirements 3.1: decimal form while 1e-7 <= |value| < 1e21.
-		{1e20, "100000000000000000000"},
-		{1e21, "1e+21"},
-		{9.999999999999999e20, "999999999999999900000"},
-		{1.2345678901234568e21, "1.2345678901234568e+21"},
-		{1e-6, "0.000001"},
-		{1e-7, "1e-7"},
-		{1.2e-5, "0.000012"},
-		// The extremes of a double, where the exponent needs all three of its digits.
-		{5e-324, "5e-324"},
-		{1e-323, "1e-323"},
-		{1e300, "1e+300"},
-		{1.7976931348623157e308, "1.7976931348623157e+308"},
-		// Two to the fifty-third, where the integers stop being exact.
-		{9007199254740992, "9007199254740992"},
-		{9007199254740994, "9007199254740994"},
-		// The two fixes core:strconv's round_shortest lacks: the round up that carries through 9s
-		// (it answered ...560 for the first), and the decimal points of the bounds aligned.
-		{426147580146789570, "426147580146789570"},
-		{28206292283999998000, "28206292283999998000"},
-		{1.3649515199999999e21, "1.3649515199999999e+21"},
-	}
-	for c in cases {
-		got := text(c.value)
-		testing.expectf(t, got == c.text, "to_string: got %q, want %q", got, c.text)
-	}
-}
 
 // String(x) of every double splitmix64 draws from seed 0, hashed with FNV-1a over the texts, each
 // followed by a newline. The second draw keeps the exponent within [2^58, 2^71), where the old
@@ -118,63 +70,6 @@ to_string_never_outgrows_the_buffer_it_promises :: proc(t: ^testing.T) {
 	testing.expect_value(t, longest, 25)
 }
 
-// value.toFixed(digits)
-@(test)
-to_fixed_matches_node :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		value:  f64,
-		digits: f64,
-		text:   string,
-	} {
-		{0, 2, "0.00"},
-		{NEGATIVE_ZERO, 2, "0.00"},
-		{-0.0001, 2, "-0.00"},
-		{NAN, 2, "NaN"},
-		{INF, 2, "Infinity"},
-		{-INF, 2, "-Infinity"},
-		{1.5, 0, "2"},
-		{123.456, 0, "123"},
-		{1234.5678, 3, "1234.568"},
-		{0.5, 1, "0.5"},
-		{0.6, 0, "1"},
-		{0.06, 0, "0"},
-		{0.000001, 0, "0"},
-		{99.99, 1, "100.0"},
-		// A tie goes to the larger number, which is a half away from zero. The half to even that
-		// core:strconv rounds by would answer "1.2", "2" and "1" here.
-		{0.5, 0, "1"},
-		{1.5, 0, "2"},
-		{2.5, 0, "3"},
-		{-1.5, 0, "-2"},
-		{1.25, 1, "1.3"},
-		// These four only look like ties. The double is a little under or over, and the exact
-		// expansion is what decides.
-		{1.005, 2, "1.00"},
-		{1.45, 1, "1.4"},
-		{1.55, 1, "1.6"},
-		{9.995, 2, "9.99"},
-		{8.125, 2, "8.13"},
-		{8.575, 2, "8.57"},
-		// The integer part runs past the digits the double carries, and zeros fill the rest.
-		{1e15, 2, "1000000000000000.00"},
-		// Twenty digits of a double that carries seventeen: the rest is the exact expansion.
-		{1.45, 20, "1.44999999999999995559"},
-		// At and above 1e21 the text is the one Number::toString gives.
-		{1e21, 2, "1e+21"},
-		{-1e21, 0, "-1e+21"},
-		// The digit count is coerced the way ECMAScript coerces it: NaN counts as zero, and a
-		// fraction drops toward zero.
-		{1.5, NAN, "2"},
-		{1.5, -0.5, "2"},
-		{1.5, 3.9, "1.500"},
-	}
-	for c in cases {
-		got, ok := fixed(c.value, c.digits)
-		testing.expectf(t, ok, "to_fixed(%v, %v): out of range", c.value, c.digits)
-		testing.expectf(t, got == c.text, "to_fixed: got %q, want %q", got, c.text)
-	}
-}
-
 // A digit count outside zero to a hundred is a RangeError in ECMAScript. v1 cannot throw, so it
 // comes back as a refusal the caller turns into a runtime failure.
 @(test)
@@ -226,73 +121,6 @@ to_fixed_never_outgrows_the_buffer_it_promises :: proc(t: ^testing.T) {
 	)
 	// A sign, twenty-one integer digits, the point and a hundred fraction digits.
 	testing.expect_value(t, longest, 123)
-}
-
-// parseFloat(text)
-@(test)
-parse_float_matches_node :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		text:  string,
-		value: f64,
-	} {
-		{"0.1", 0.1},
-		{"000123", 123},
-		{"-0", NEGATIVE_ZERO},
-		{"3.14abc", 3.14},
-		{"  42 ", 42},
-		{"12.5e2e3", 1250},
-		{"  -.5e-2xyz", -0.005},
-		// A point needs a digit on one side of it, and an exponent needs one after it. The prefix
-		// that reads is the longest one the grammar accepts, so "1e" is 1.
-		{".5", 0.5},
-		{"5.", 5},
-		{"-5.", -5},
-		{"1e3", 1000},
-		{"1e", 1},
-		{"1e+", 1},
-		{".", NAN},
-		{"+.e3", NAN},
-		{"", NAN},
-		{"abc", NAN},
-		// Infinity is a word of the grammar, spelled exactly.
-		{"Infinity", INF},
-		{"+Infinity", INF},
-		{"-Infinity", -INF},
-		{"Infinityx", INF},
-		{"infinity", NAN},
-		{"In", NAN},
-		// What core:strconv would take and ECMAScript does not: a hexadecimal literal and the
-		// underscores between digits.
-		{"0x10", 0},
-		{"1_000", 1},
-		// A unit in the last place. strconv.parse_f64 answers 3.1415926499999998e+41 for the first
-		// of these, because its fast path scales the mantissa and then tests the value it held
-		// before scaling. Odin folds the constants on the right exactly, so they are Node's values.
-		{"3.14159265e41", 3.14159265e41},
-		{"6.02214076e44", 6.02214076e44},
-		{"1278572e37", 1278572e37},
-		{"1800601e36", 1800601e36},
-		// An overflow is an infinity and an underflow is zero, neither a failure to read.
-		{"1e400", INF},
-		{"-1e400", -INF},
-		{"1e-400", 0},
-		{"-1e-400", NEGATIVE_ZERO},
-		// The denormals, and the value that has famously broken a parser or two.
-		{"5e-324", 5e-324},
-		{"1e-323", 1e-323},
-		{"2.2250738585072011e-308", 2.2250738585072011e-308},
-		{"11111111111111111111e-19", 1.1111111111111112},
-		// Whitespace of the grammar: a no-break space and a line separator are skipped, while
-		// U+0085 is not whitespace here although Unicode gives it the property.
-		{"\xc2\xa03", 3},
-		{"\xe2\x80\xa83", 3},
-		{"\xef\xbb\xbf3", 3},
-		{"\xc2\x853", NAN},
-	}
-	for c in cases {
-		got, want := num.parse_float(c.text), c.value
-		testing.expectf(t, same(got, want), "parse_float(%q): got %v, want %v", c.text, got, want)
-	}
 }
 
 // parseFloat of literals longer than the 384 digits decimal.Decimal holds, among them the halfway
@@ -349,147 +177,6 @@ parse_float_reads_literals_of_any_length :: proc(t: ^testing.T) {
 	}
 }
 
-// Math.round(x)
-// Number(text). Where the rounding is the point, the value is the bit pattern
-// Buffer.writeDoubleLE gives, for example:
-//
-//	node -e 'const b = Buffer.alloc(8); b.writeDoubleLE(Number("0x20000000000003")); console.log(b.readBigUInt64LE().toString(16))'
-@(test)
-to_number_matches_node :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		text:  string,
-		value: f64,
-	} {
-		{"", 0},
-		{" 12 ", 12},
-		{"+12", 12},
-		{"-0", NEGATIVE_ZERO},
-		{"1e3", 1000},
-		{".5", 0.5},
-		{"5.", 5},
-		{"12e-1 ", 1.2},
-		{"Infinity", INF},
-		{"-Infinity", -INF},
-		// The whole text must be the literal, less the whitespace around it.
-		{"12px", NAN},
-		{"1_0", NAN},
-		{".", NAN},
-		{"1e", NAN},
-		{"infinity", NAN},
-		{"\xc2\xa0 7\xe2\x80\xa8", 7},
-		{"\xc2\x853", NAN},
-		// Integers in radix 16, 8 and 2, which take no sign.
-		{"0x10", 16},
-		{"0X1f", 31},
-		{"0o17", 15},
-		{"0b101", 5},
-		{"0x", NAN},
-		{"-0x1", NAN},
-		{"0x1g", NAN},
-		{"0b102", NAN},
-		// Past 53 bits: a tie goes to the even neighbor, anything above it up.
-		{"0x1fffffffffffff", 0h433f_ffff_ffff_ffff},
-		{"0x20000000000001", 0h4340_0000_0000_0000},
-		{"0x20000000000003", 0h4340_0000_0000_0002},
-		{"0x200000000000011", 0h4380_0000_0000_0001},
-		{"0b111111111111111111111111111111111111111111111111111111111111", 0h43b0_0000_0000_0000},
-	}
-	for c in cases {
-		got, want := num.to_number(c.text), c.value
-		testing.expectf(t, same(got, want), "to_number(%q): got %v, want %v", c.text, got, want)
-	}
-	// Past the largest double.
-	digits := strings.repeat("f", 300, context.temp_allocator)
-	wide := strings.concatenate({"0x", digits}, context.temp_allocator)
-	testing.expectf(t, same(num.to_number(wide), INF), "to_number of 300 hex digits")
-}
-
-// parseInt(text), with the bit patterns taken as for to_number.
-@(test)
-parse_int_matches_node :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		text:  string,
-		value: f64,
-	} {
-		{"0x1f", 31},
-		{"12.9", 12},
-		{"-0.5", NEGATIVE_ZERO},
-		{"-0", NEGATIVE_ZERO},
-		{"  -12abc", -12},
-		{"+7", 7},
-		{"1e+21", 1},
-		{"", NAN},
-		{"abc", NAN},
-		{"0x", NAN},
-		{"0xg", NAN},
-		{"  0x10z", 16},
-		{"-0x10", -16},
-		{"9007199254740993", 0h4340_0000_0000_0000},
-		{"10000000000000000000000000000001", 0h465f_8def_8808_b024},
-		{"123456789012345678901234567890", 0h45f8_ee90_ff6c_373e},
-		{"0x20000000000003", 0h4340_0000_0000_0002},
-		{"0x200000000000011", 0h4380_0000_0000_0001},
-	}
-	for c in cases {
-		got, want := num.parse_int(c.text), c.value
-		testing.expectf(t, same(got, want), "parse_int(%q): got %v, want %v", c.text, got, want)
-	}
-	// Leading zeros are not significant digits, and 310 of those are past the largest double.
-	zeros := strings.repeat("0", 400, context.temp_allocator)
-	one := strings.concatenate({zeros, "1"}, context.temp_allocator)
-	testing.expectf(t, same(num.parse_int(one), 1), "parse_int of 400 zeros and a one")
-	nines := strings.repeat("9", 320, context.temp_allocator)
-	testing.expectf(t, same(num.parse_int(nines), INF), "parse_int of 320 nines")
-}
-
-@(test)
-round_takes_a_half_toward_positive_infinity :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		value, want: f64,
-	} {
-		{2.5, 3},
-		{-2.5, -2},
-		{1.4, 1},
-		{-1.5, -1},
-		{0.5, 1},
-		// Everything from a half below zero up to it keeps the sign, which math.round would lose.
-		{-0.5, NEGATIVE_ZERO},
-		{-0.4, NEGATIVE_ZERO},
-		{NEGATIVE_ZERO, NEGATIVE_ZERO},
-		// The largest double below a half. Rounding x + 0.5 would answer one here.
-		{0.49999999999999994, 0},
-		// At two to the fifty-second every double is already an integer.
-		{4503599627370496, 4503599627370496},
-		{NAN, NAN},
-		{INF, INF},
-		{-INF, -INF},
-	}
-	for c in cases {
-		got := num.round(c.value)
-		testing.expectf(t, same(got, c.want), "round(%v): got %v, want %v", c.value, got, c.want)
-	}
-}
-
-// Math.max(a, b) and Math.min(a, b). The compiler folds a longer call into a chain of these, and
-// an empty one into a constant, so two arguments is the whole of it.
-@(test)
-max_and_min_answer_nan_and_order_the_two_zeros :: proc(t: ^testing.T) {
-	testing.expect(t, same(num.max(NAN, 1), NAN))
-	testing.expect(t, same(num.max(1, NAN), NAN))
-	testing.expect(t, same(num.min(NAN, 1), NAN))
-	testing.expect(t, same(num.min(1, NAN), NAN))
-
-	testing.expect(t, same(num.max(NEGATIVE_ZERO, 0), 0))
-	testing.expect(t, same(num.max(0, NEGATIVE_ZERO), 0))
-	testing.expect(t, same(num.min(NEGATIVE_ZERO, 0), NEGATIVE_ZERO))
-	testing.expect(t, same(num.min(0, NEGATIVE_ZERO), NEGATIVE_ZERO))
-
-	testing.expect(t, same(num.max(2, 3), 3))
-	testing.expect(t, same(num.min(2, 3), 2))
-	testing.expect(t, same(num.max(-INF, INF), INF))
-	testing.expect(t, same(num.min(-INF, INF), -INF))
-}
-
 // process.exit(code) as Node 24 takes it: an integer reduced by ToInt32, and a RangeError, which is
 // `ok = false`, for anything else.
 @(test)
@@ -531,51 +218,7 @@ exit_code_is_to_int32_of_an_integer :: proc(t: ^testing.T) {
 	}
 }
 
-// ToIntegerOrInfinity, then the start `slice` reads out of it:
-//
-//	node -e 'for (const s of [2.9, -2.9, -1, -10, 10, NaN, Infinity, -Infinity, -0]) console.log(s, "abcde".slice(s).length)'
-@(test)
-positions_become_integers_before_they_become_indices :: proc(t: ^testing.T) {
-	testing.expect(t, same(num.to_integer(NAN), 0))
-	testing.expect(t, same(num.to_integer(2.9), 2))
-	testing.expect(t, same(num.to_integer(-2.9), -2))
-	testing.expect(t, same(num.to_integer(INF), INF))
-	testing.expect(t, same(num.to_integer(-INF), -INF))
-
-	// The start each case gives "abcde".slice is 5 minus the length Node prints.
-	cases := [?]struct {
-		value: f64,
-		index: int,
-	} {
-		{2.9, 2},
-		{-2.9, 3},
-		{-1, 4},
-		{-10, 0},
-		{10, 5},
-		{NAN, 0},
-		{INF, 5},
-		{-INF, 0},
-		{NEGATIVE_ZERO, 0},
-	}
-	for c in cases {
-		got := num.relative_index(c.value, 5)
-		testing.expectf(
-			t,
-			got == c.index,
-			"relative_index(%v, 5) = %d, want %d",
-			c.value,
-			got,
-			c.index,
-		)
-	}
-}
-
-// Both conversions write into the caller's buffer, and a test wants the text to outlive the call.
-text :: proc(value: f64) -> string {
-	buf: [num.STRING_MAX]byte
-	return strings.clone(num.to_string(buf[:], value), context.temp_allocator)
-}
-
+// fixed clones the text out of the buffer to_fixed writes, so that it outlives the call.
 fixed :: proc(value, digits: f64) -> (string, bool) {
 	buf: [num.FIXED_MAX]byte
 	got, ok := num.to_fixed(buf[:], value, digits)

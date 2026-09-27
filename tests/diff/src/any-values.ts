@@ -75,3 +75,38 @@ function classify(a: any, u: unknown): number {
 }
 
 console.log(classify(1, "ab"), classify(null, 1), classify("s", undefined), classify(true, 1));
+
+// Every kind a tagged value can hold, through typeof, truthiness and String. A function stays out
+// of String: Node prints its source, which tsnc does not keep, so it refuses at run time.
+function f(): void {}
+
+function g(): void {}
+
+function sumOf(a: number, b: number): number {
+  return a + b;
+}
+
+function glue(a: string, b: string): string {
+  return a + b;
+}
+
+const point = { x: 1 };
+const twin = { x: 1 };
+const tags: any[] = [undefined, null, false, true, 0, -0, NaN, 1, -1, Infinity, 5e-324, "", "0", " ", point, [1], f];
+for (const value of tags) {
+  console.log(typeof value, !value);
+}
+const printable: any[] = [undefined, null, true, false, -0, NaN, Infinity, -Infinity, 1e21, sumOf(0.1, 0.2), 1.5, point];
+console.log(printable.map((value) => String(value)));
+
+// === goes by the tag first: a number never equals a string or a boolean, and undefined never
+// equals null. Then a number by IEEE 754, a string by its units, and anything else by identity.
+const left: any[] = [NaN, -0, 1.5, sumOf(0.1, 0.2), Infinity, true, true, undefined, null, undefined, 0];
+const right: any[] = [NaN, 0, 1.5, 0.3, Infinity, true, false, undefined, null, null, false];
+left.push(1, 0, glue("a", "b"), "ab", "", "", point, point, f, f);
+right.push("1", undefined, "ab", "ac", glue("", ""), "ab", point, twin, f, g);
+const answers: boolean[] = [];
+for (let i = 0; i < left.length; i++) {
+  answers.push(same(left[i], right[i]), same(right[i], left[i]));
+}
+console.log(answers);

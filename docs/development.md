@@ -106,6 +106,7 @@ A new case goes into an existing program on its topic where one exists: a progra
 - The gate refuses some things tsnc accepts: a type imported without `import type`, a specifier without `.ts`, `===` between two literal types that cannot meet, and an operand that is truthy by its spelling alone, such as `!"a"` (TS2872). Pass such operands through parameters.
 - A type the program means to pin goes on an annotated binding, `const early: "a" | "b" = v`, so that the build fails when check answers another type. A `let` given a wider value later pins that an inferred type widened.
 - A program that prints must not end in `process.exit`: on macOS Node can lose the output written before it. Keep an exit path on a branch that never runs, and an exit code in 65..125, which `exit.ts` explains.
+- The runtime calls a sort comparator in another order than V8 does, so a comparator neither prints nor counts, and one that changes the array does it on its first call only.
 
 A program may start with two header lines, each at most once and in either order, and the runner applies both to the Node run and to the compiled one. `// env:` sets environment variables on top of the runner's own environment:
 

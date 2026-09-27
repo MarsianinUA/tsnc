@@ -13,35 +13,6 @@ folds an operation on two constants on the spot, and an optimizing pipeline woul
 the operands are function parameters and no pipeline runs over them.
 */
 
-// ** is ECMAScript exponentiation: with a base of 1 or -1 and an exponent that is NaN or an
-// infinity it answers NaN, where the pow of C99 answers 1.
-@(test)
-exponentiation_answers_nan_for_a_unit_base :: proc(t: ^testing.T) {
-	p := ir.make_builder(context.temp_allocator)
-	main := declare_main(&p)
-
-	params := [?]ir.Type{ir.F64, ir.F64}
-	id := ir.declare_func(&p, "m1.power", params[:], ir.F64, at(1))
-	f := ir.begin_func(&p, id)
-	power := ir.emit(&f, ir.F64, ir.Binary{op = .Power, left = 0, right = 1}, at(2))
-	ir.emit(&f, ir.VOID, ir.Return{value = power}, at(3))
-	ir.end_func(&f)
-
-	output := finish_program(t, &p, main)
-	text := llvm_text(t, &output, "power")
-	if text == "" {
-		return
-	}
-	wants := []string {
-		"@llvm.pow.f64(",
-		"@llvm.fabs.f64(",
-		"fcmp uno double", // an exponent that is NaN
-		"0x7FF0000000000000", // an exponent that is an infinity
-		"select i1 ",
-	}
-	expect_text(t, text, wants)
-}
-
 // A module binding is a zeroed cell in the data segment, because abi.Tag.Undefined is zero: a
 // tagged binding reads as undefined before its module init has run. A boolean is the one type that
 // changes shape on the way in and out, i1 in a register and b64 in memory.

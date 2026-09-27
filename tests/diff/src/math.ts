@@ -55,3 +55,15 @@ console.log(near(Math.tanh(1), 0.7615941559557649), near(Math.asinh(1), 0.881373
 console.log(near(Math.acosh(2), 1.3169578969248166), near(Math.atanh(0.5), 0.5493061443340548));
 console.log(near(Math.expm1(1), Math.E - 1), near(Math.log1p(1), Math.LN2));
 console.log(near(Math.cbrt(27), 3), near(Math.pow(9, 0.5), 3));
+
+// Math.round keeps the sign of anything from a half below zero up to zero, and the largest double
+// below a half rounds to 0, where adding 0.5 and taking the floor would give 1. max and min answer
+// NaN when either side is NaN and order the two zeros whichever comes first.
+console.log(Math.round(id(2.5)), Math.round(id(-2.5)), Math.round(id(1.4)), Math.round(id(-1.5)));
+console.log(Math.round(id(0.5)), Math.round(id(-0.5)), Math.round(id(-0.4)), Math.round(id(-0)));
+console.log(Math.round(id(0.49999999999999994)), Math.round(id(4503599627370496)));
+console.log(Math.round(id(NaN)), Math.round(id(Infinity)), Math.round(id(-Infinity)));
+console.log(Math.max(id(NaN), 1), Math.max(1, id(NaN)), Math.min(id(NaN), 1), Math.min(1, id(NaN)));
+console.log(Math.max(id(-0), 0), Math.max(0, id(-0)), Math.min(id(-0), 0), Math.min(0, id(-0)));
+console.log(Math.max(id(2), 3), Math.min(id(2), 3), Math.max(id(-Infinity), Infinity));
+console.log(Math.min(id(-Infinity), Infinity));

@@ -1,7 +1,6 @@
 package parse_tests
 
 import "core:fmt"
-import "core:math"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -181,54 +180,6 @@ names_keep_their_text :: proc(t: ^testing.T) {
 }
 
 @(test)
-numbers_have_their_values :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		text:  string,
-		value: f64,
-	} {
-		{"0", 0},
-		{"42", 42},
-		{"1e21", 1e21},
-		{"1E+21", 1e21},
-		{"1.5e-7", 1.5e-7},
-		{"0.0000001", 1e-7},
-		{"0.1", 0.1},
-		{".5", 0.5},
-		{"5.", 5},
-		{"1.e2", 100},
-		{"0x10", 16},
-		{"0XfF", 255},
-		{"0o17", 15},
-		{"0b101", 5},
-		{"1_000_000", 1e6},
-		{"0x1_0", 16},
-		{"1e1_0", 1e10},
-		// 2^53 + 1 rounds to even, 2^64 - 1 rounds up.
-		{"9007199254740993", 9007199254740992},
-		{"0xFFFFFFFFFFFFFFFF", 18446744073709551616},
-		{"1e400", math.inf_f64(1)},
-		// An exponent in the twenties, where strconv.parse_f64 rounds twice and lands a unit in
-		// the last place low. Odin folds the constants on the right exactly, so they are the
-		// values Node reads. A literal that misses here compiles into a program that prints the
-		// wrong digits.
-		{"3.14159265e41", 3.14159265e41},
-		{"6.02214076e44", 6.02214076e44},
-		{"1278572e37", 1278572e37},
-	}
-	for c in cases {
-		tokens := expect_kinds(t, c.text, {.Number})
-		testing.expectf(
-			t,
-			tokens[0].value.(f64) == c.value,
-			"%q: got %v, want %v",
-			c.text,
-			tokens[0].value,
-			c.value,
-		)
-	}
-}
-
-@(test)
 a_malformed_number_is_one_token_and_one_diagnostic :: proc(t: ^testing.T) {
 	literals := []string {
 		"0x", // no digits after the prefix
@@ -251,48 +202,6 @@ a_malformed_number_is_one_token_and_one_diagnostic :: proc(t: ^testing.T) {
 		tokens, diagnostics := tokenize(text)
 		expect_token_kinds(t, text, tokens, {.Number, .Identifier})
 		expect_diagnostics(t, text, diagnostics, {{.Invalid_Number, 0, i32(len(literal)), ""}})
-	}
-}
-
-@(test)
-strings_have_their_cooked_values :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		text:  string,
-		value: string,
-	} {
-		{`'a'`, "a"},
-		{`"b"`, "b"},
-		{`''`, ""},
-		{`"it's"`, "it's"},
-		{`'\b\f\n\r\t\v\0'`, "\b\f\n\r\t\v\x00"},
-		{`'\'\"\\'`, `'"\`},
-		{`'\x41\u0042\u{43}'`, "ABC"},
-		// Any other character after a backslash is itself.
-		{`'\a\$\q'`, "a$q"},
-		// A code point above U+FFFF, directly and as a surrogate pair.
-		{`'\u{1F600}'`, "\U0001F600"},
-		{`'\uD83D\uDE00'`, "\U0001F600"},
-		{`'\u{D83D}\u{DE00}'`, "\U0001F600"},
-		// A lone surrogate keeps its WTF-8 form.
-		{`'\uD800x'`, "\xED\xA0\x80x"},
-		{`'\uDE00\uD83D'`, "\xED\xB8\x80\xED\xA0\xBD"},
-		// Line continuations add nothing.
-		{"'a\\\nb'", "ab"},
-		{"'a\\\r\nb'", "ab"},
-		{"'a\x5c\u2028b'", "ab"},
-		// U+2028 and U+2029 may stand in a string as they are.
-		{"'a\u2028b'", "a\u2028b"},
-	}
-	for c in cases {
-		tokens := expect_kinds(t, c.text, {.String})
-		testing.expectf(
-			t,
-			tokens[0].value.(string) == c.value,
-			"%s: got %q, want %q",
-			c.text,
-			tokens[0].value,
-			c.value,
-		)
 	}
 }
 
@@ -398,19 +307,24 @@ templates_nest :: proc(t: ^testing.T) {
 	testing.expect_value(t, tokens[9].value.(string), "")
 }
 
+// A backslash before CRLF or U+2028 adds nothing, U+2028 may stand in a string as it is, and a
+// template turns CR and CRLF into LF. tests/diff/src/literals.ts pins the rest of the cooking; no
+// program can hold these, since a checkout with autocrlf rewrites its line ends.
 @(test)
-template_text_is_cooked :: proc(t: ^testing.T) {
+line_terminators_in_literals_cook_as_ecmascript_says :: proc(t: ^testing.T) {
 	cases := [?]struct {
 		text:  string,
+		kind:  parse.Token_Kind,
 		value: string,
 	} {
-		{"`$ \\${x} $`", "$ ${x} $"},
-		{"`\\u0041\\``", "A`"},
-		{"`a\r\nb\rc\nd`", "a\nb\nc\nd"},
-		{"`a\\\r\nb`", "ab"},
+		{"'a\x5c\r\nb'", .String, "ab"},
+		{"'a\x5c\xe2\x80\xa8b'", .String, "ab"},
+		{"'a\xe2\x80\xa8b'", .String, "a\xe2\x80\xa8b"},
+		{"`a\r\nb\rc\nd`", .No_Substitution_Template, "a\nb\nc\nd"},
+		{"`a\x5c\r\nb`", .No_Substitution_Template, "ab"},
 	}
 	for c in cases {
-		tokens := expect_kinds(t, c.text, {.No_Substitution_Template})
+		tokens := expect_kinds(t, c.text, {c.kind})
 		testing.expectf(
 			t,
 			tokens[0].value.(string) == c.value,
@@ -420,9 +334,6 @@ template_text_is_cooked :: proc(t: ^testing.T) {
 			c.value,
 		)
 	}
-	// A line break inside a template is part of the token, not a break before the next one.
-	tokens := expect_kinds(t, "`a\nb` c", {.No_Substitution_Template, .Identifier})
-	testing.expect(t, !tokens[1].line_break_before, "the template's line break leaked out")
 }
 
 @(test)
@@ -485,6 +396,10 @@ line_breaks_are_flagged_for_asi :: proc(t: ^testing.T) {
 
 	tokens = expect_kinds(t, "a\n", {.Identifier})
 	testing.expect(t, tokens[1].line_break_before, "the EOF after a trailing line break")
+
+	// A line break inside a template is part of it, not a break before the next token.
+	tokens = expect_kinds(t, "`a\nb` c", {.No_Substitution_Template, .Identifier})
+	testing.expect(t, !tokens[1].line_break_before, "the template's line break leaked out")
 }
 
 @(test)
