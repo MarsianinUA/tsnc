@@ -38,12 +38,16 @@ console.log(Number.isInteger(id(4)), Number.isInteger(id(4.5)), Number.isInteger
 console.log(Math.PI, Math.E, Math.LN2, Math.SQRT2);
 console.log(Math.LN10, Math.LOG2E, Math.LOG10E, Math.SQRT1_2);
 
-// Transcendental: a distance, not a digit.
-console.log(near(Math.sin(0), 0), near(Math.cos(0), 1), near(Math.tan(0), 0));
+// Transcendental: a distance, not a digit. No two of them answer alike at their argument, so a
+// function that reached the wrong libm name would print false; at zero half of them answer 0.
+console.log(near(Math.sin(1), 0.8414709848078965), near(Math.cos(1), 0.5403023058681398));
+console.log(near(Math.tan(1), 1.5574077246549023));
 console.log(near(Math.exp(1), Math.E), near(Math.log(Math.E), 1), near(Math.log2(8), 3));
 console.log(near(Math.log10(1000), 3), near(Math.atan2(1, 1), Math.PI / 4));
-console.log(near(Math.asin(1), Math.PI / 2), near(Math.acos(1), 0), near(Math.atan(0), 0));
-console.log(near(Math.sinh(0), 0), near(Math.cosh(0), 1), near(Math.tanh(0), 0));
-console.log(near(Math.asinh(0), 0), near(Math.acosh(1), 0), near(Math.atanh(0), 0));
-console.log(near(Math.expm1(0), 0), near(Math.log1p(0), 0));
+console.log(near(Math.asin(1), Math.PI / 2), near(Math.acos(0.5), Math.PI / 3));
+console.log(near(Math.atan(2), 1.1071487177940904));
+console.log(near(Math.sinh(1), 1.1752011936438014), near(Math.cosh(1), 1.5430806348152437));
+console.log(near(Math.tanh(1), 0.7615941559557649), near(Math.asinh(1), 0.881373587019543));
+console.log(near(Math.acosh(2), 1.3169578969248166), near(Math.atanh(0.5), 0.5493061443340548));
+console.log(near(Math.expm1(1), Math.E - 1), near(Math.log1p(1), Math.LN2));
 console.log(near(Math.cbrt(27), 3), near(Math.pow(9, 0.5), 3));

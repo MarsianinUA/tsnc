@@ -36,6 +36,7 @@ function values(head: Item | null): string {
 }
 
 console.log(sum(list(4)), sum(null), values(list(3)), values(null) === "");
+console.log(list(2));
 
 interface Options {
   name?: string;
@@ -67,7 +68,8 @@ function cut(text: string, end?: number): string {
   return text.slice(0, end);
 }
 
-console.log(first([5]), first([], 7), label(), label("b"), cut("hello", 2), cut("hello"));
+console.log(first([5]), first([], 7), label(), label(undefined), label("b"));
+console.log(cut("hello", 2), cut("hello"));
 
 type Handler = (x: number) => number;
 
@@ -89,3 +91,6 @@ let maybe: number | null = null;
 console.log(maybe ?? "none", maybe === null);
 maybe = 4;
 console.log(maybe ?? "none", maybe + 1);
+
+let seed: number | null = 3;
+console.log(seed + 1);

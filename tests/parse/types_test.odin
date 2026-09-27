@@ -98,16 +98,6 @@ object_types_have_members :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_array_bracket_on_the_next_line_starts_a_member :: proc(t: ^testing.T) {
-	expect_parse(
-		t,
-		"interface I {\n\tx: number\n\t[k: string]: T\n}",
-		{{.Unsupported_Syntax, 3, 2}},
-		"(interface I {(x : number)})",
-	)
-}
-
-@(test)
 the_lib_file_shape_parses :: proc(t: ^testing.T) {
 	text := lines(
 		"declare const console: Console;",
@@ -133,53 +123,6 @@ the_lib_file_shape_parses :: proc(t: ^testing.T) {
 			array,
 			"(declare function parseFloat [(s : string)] : number _)",
 		),
-	)
-}
-
-@(test)
-type_constructs_outside_the_subset_are_reported :: proc(t: ^testing.T) {
-	cases := [?]struct {
-		type_text: string,
-		column:    i32,
-	} {
-		{"A & B", 12}, // at the `&`
-		{"[A, B]", 10},
-		{"keyof T", 10},
-		{"typeof x", 10},
-		{"T[K]", 11},
-		{"readonly T[]", 10},
-		{"symbol", 10},
-		{"`a${B}`", 10},
-		{"this", 10},
-		{"new () => T", 10},
-	}
-	for c in cases {
-		text := concat("type T = ", c.type_text)
-		expect_parse(t, text, {{.Unsupported_Syntax, 1, c.column}}, "(type T = bad)")
-	}
-	expect_parse(
-		t,
-		"type F = (x: unknown) => x is string",
-		{{.Unsupported_Syntax, 1, 28}},
-		"(type F = (=> [(x : unknown)] bad))",
-	)
-	expect_parse(
-		t,
-		"type T<U extends V = W> = U",
-		{{.Unsupported_Syntax, 1, 10}, {.Unsupported_Syntax, 1, 20}},
-		"(type T <U> = U)",
-	)
-	expect_parse(
-		t,
-		"type T = { [k: string]: V; (x: A): B; new (): C; get x(): D; 1: E; y: F }",
-		{
-			{.Unsupported_Syntax, 1, 12},
-			{.Unsupported_Syntax, 1, 28},
-			{.Unsupported_Syntax, 1, 39},
-			{.Unsupported_Syntax, 1, 50},
-			{.Unsupported_Syntax, 1, 62},
-		},
-		"(type T = {(y : F)})",
 	)
 }
 

@@ -1,9 +1,10 @@
 // Modules (requirements 7): relative imports spelled with the file extension, values and functions
 // crossing the boundary, the order in which the top level of each module runs, and a module that
-// only types come out of, which never runs at all.
+// only types come out of, which never runs at all. greeting comes first in the imports but imports
+// counter itself, so counter still runs first: a module runs after everything it imports.
 
-import { start, step } from "./modules/counter.ts";
 import { banner, offset } from "./modules/greeting.ts";
+import { start, step } from "./modules/counter.ts";
 import type { Size } from "./modules/shapes.ts";
 
 console.log("main loads");

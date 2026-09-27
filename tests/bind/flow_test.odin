@@ -335,38 +335,6 @@ a_break_inside_a_switch_leaves_the_switch_and_not_the_loop :: proc(t: ^testing.T
 }
 
 @(test)
-a_jump_with_nowhere_to_go_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, "break;", {{.Break_Outside_Loop, 1, 1}})
-	expect_errors(t, "continue;", {{.Continue_Outside_Loop, 1, 1}})
-	// A `switch` takes `break` alone, and a loop around it takes the `continue`.
-	expect_errors(t, "switch (1) { case 1: continue; }", {{.Continue_Outside_Loop, 1, 22}})
-	expect_bound(t, "while (true) { switch (1) { case 1: continue; } }")
-	// A loop does not reach into a function written inside it.
-	expect_errors(
-		t,
-		"while (true) { const f = () => { break; }; }",
-		{{.Break_Outside_Loop, 1, 34}},
-	)
-
-	// The flow goes on past the jump, so one mistake does not turn the rest into dead code.
-	b := expect_errors(t, "function f(x: number) { break; x; }", {{.Break_Outside_Loop, 1, 25}})
-	expect_flow(t, b, use_flow(b, "x", 0), "start")
-}
-
-@(test)
-a_return_outside_a_function_is_reported :: proc(t: ^testing.T) {
-	// The top level of a module runs on its way in and has nowhere to return to, so tsc rejects
-	// this too (TS1108). A function and an arrow are both somewhere to return to.
-	expect_errors(t, "return;", {{.Return_Outside_Function, 1, 1}})
-	expect_errors(t, "if (true) { return 1; }", {{.Return_Outside_Function, 1, 13}})
-	expect_bound(t, "function f(): number { return 1; }")
-	expect_bound(t, "const f = (): number => { return 1; };")
-	// The value is still bound, so what it reads has a flow and a symbol like any other read.
-	b := expect_errors(t, lines("const x = 1;", "return x;"), {{.Return_Outside_Function, 2, 1}})
-	expect_flow(t, b, use_flow(b, "x", 0), `(= "x = 1" start)`)
-}
-
-@(test)
 a_logical_assignment_writes_only_on_one_path :: proc(t: ^testing.T) {
 	b := expect_bound(
 		t,

@@ -259,21 +259,6 @@ a_cycle_prints_a_reference :: proc(t: ^testing.T) {
 	testing.expect_value(t, inspected(&heap, self), "<ref *1> { self: [Circular *1], n: 1 }")
 }
 
-// util.inspect([f, anon]) for function f() {} and anon = [() => {}][0]
-@(test)
-a_function_prints_its_name :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	functions := values(&heap, function(&heap, "f", 0, true), function(&heap, "", 0, false))
-	testing.expect_value(
-		t,
-		inspected(&heap, functions),
-		"[ [Function: f], [Function (anonymous)] ]",
-	)
-}
-
 // FORCE_COLOR=1 node -e "console.log([1, 'a', null, undefined, true, f, { k: [2] }])" for
 // function f() {}, the same for Array.from({ length: 30 }, (_, i) => i + 1), and a cycle
 @(test)

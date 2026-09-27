@@ -37,6 +37,7 @@ console.log(same(1, 1), same(1, 2), differs(1, 2));
 
 // Nothing compares true with NaN, not even NaN itself.
 console.log(below(NaN, 1), above(NaN, 1), same(NaN, NaN), differs(NaN, NaN));
+console.log(atMost(NaN, 1), atLeast(1, NaN));
 
 // The zeros compare equal although the console tells them apart.
 console.log(same(0, -0), atMost(0, -0), atLeast(-0, 0));

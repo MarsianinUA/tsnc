@@ -1,6 +1,7 @@
 // Literal types (requirements 2.2): numeric, string and boolean literals as types, alone and in
 // unions, on parameters, fields, array elements and return types. At run time each is the plain
-// value; `switch` and `===` narrow a union of them down to one member.
+// value; `switch` and `===` narrow a union of them down to one member, and a conditional between
+// two literals is the union of the two.
 
 type Die = 1 | 2 | 3 | 4 | 5 | 6;
 type Answer = 42;
@@ -65,3 +66,7 @@ console.log(moves[1], position, flip("up"), flip(flip("up")));
 const answers: Answer[] = [42, 42];
 const directions: Direction[] = ["down", "up", "up"];
 console.log(answers, directions.join(), directions.filter((d) => d === "up").length);
+
+const both = position > 0 ? 1 : 2;
+const face: 1 | 2 = both;
+console.log(face);

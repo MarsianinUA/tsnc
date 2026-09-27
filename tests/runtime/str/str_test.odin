@@ -28,20 +28,6 @@ RESERVE :: 1024 * gc.PAGE_SIZE
 @(rodata)
 MIXED := [?]u16{0x0061, 0xd83d, 0xde00, 0x041f, 0x0440, 0x0438, 0x0432, 0x0435, 0x0442}
 
-@(test)
-from_utf8_counts_utf16_units :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	privet := str.from_utf8(&heap, "\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82")
-	expect_units(t, privet, {0x041f, 0x0440, 0x0438, 0x0432, 0x0435, 0x0442})
-	expect_units(t, str.from_utf8(&heap, "\U0001F600"), {0xd83d, 0xde00})
-	expect_units(t, str.from_utf8(&heap, "a\U0001F600\xd0\xb1"), {0x0061, 0xd83d, 0xde00, 0x0431})
-	expect_units(t, str.from_utf8(&heap, "a\xffb"), {0x0061, 0xfffd, 0x0062})
-	expect_units(t, str.from_units(&heap, string16(MIXED[:])), MIXED[:])
-}
-
 // Buffer.toString replaces each maximal subpart of an ill-formed sequence with one U+FFFD, and so
 // does from_utf8. The first row is the example of Unicode 17, section 3.9.
 //

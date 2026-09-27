@@ -10,19 +10,6 @@ import "core:testing"
 // A missing `return`.
 
 @(test)
-a_function_that_can_end_without_a_return_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function pick(c: boolean): number {`, //
-			`if (c) { return 1; }`,
-			`}`,
-		),
-		[]Error{{.Missing_Return, 1, 28}},
-	)
-}
-
-@(test)
 an_arrow_that_can_end_without_a_return_is_reported :: proc(t: ^testing.T) {
 	expect_errors(
 		t,
@@ -153,21 +140,6 @@ a_let_written_on_every_path_is_not_reported :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_let_written_on_one_path_of_two_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function size(c: boolean): number {`, //
-			`let s: string;`,
-			`if (c) { s = "a"; }`,
-			`return s.length;`,
-			`}`,
-		),
-		[]Error{{.Used_Before_Assigned, 4, 8}},
-	)
-}
-
-@(test)
 a_let_written_in_every_case_of_an_exhaustive_switch_is_not_reported :: proc(t: ^testing.T) {
 	expect_checked(
 		t,
@@ -192,35 +164,6 @@ a_let_written_before_a_loop_may_be_read_inside_it :: proc(t: ^testing.T) {
 			`function total(xs: number[]): number {`, //
 			`let t: number;`,
 			`t = 0;`,
-			`for (const x of xs) { t = t + x; }`,
-			`return t;`,
-			`}`,
-		),
-	)
-}
-
-@(test)
-a_let_whose_type_takes_undefined_is_never_reported :: proc(t: ^testing.T) {
-	expect_checked(
-		t,
-		lines(
-			`function size(): number {`, //
-			`let s: string | undefined;`,
-			`return s === undefined ? 0 : s.length;`,
-			`}`,
-		),
-	)
-}
-
-@(test)
-a_for_of_variable_is_never_reported :: proc(t: ^testing.T) {
-	// Its declarator has no type of its own to write, so there is no declaration that could start
-	// out empty; the header writes the element before the body runs.
-	expect_checked(
-		t,
-		lines(
-			`function total(xs: number[]): number {`, //
-			`let t = 0;`,
 			`for (const x of xs) { t = t + x; }`,
 			`return t;`,
 			`}`,

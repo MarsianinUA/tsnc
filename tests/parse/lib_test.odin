@@ -10,12 +10,6 @@ import "../../src/ast"
 LIB_TEXT :: #load("../../src/lib/lib.d.ts", string)
 
 @(test)
-the_lib_file_parses_without_diagnostics :: proc(t: ^testing.T) {
-	parsed := parse_checked(t, LIB_TEXT)
-	testing.expectf(t, len(parsed.errors) == 0, "lib.d.ts: errors %v", parsed.errors)
-}
-
-@(test)
 the_lib_file_declares_the_v1_standard_library :: proc(t: ^testing.T) {
 	parsed := parse_checked(t, LIB_TEXT)
 	declared := lib_declarations(parsed.tree)

@@ -12,6 +12,9 @@ const makeList = (): number[] => [1, 2];
 const quietly: () => void = makeList;
 console.log(quietly(), nothing());
 
+const idle = () => {};
+console.log(idle(), typeof idle());
+
 console.log([1].forEach((x: number): number => x), "y");
 console.log(console.log("inside"));
 

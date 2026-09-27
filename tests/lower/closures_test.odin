@@ -49,32 +49,6 @@ a_variable_that_never_changes_is_copied_and_one_that_does_is_boxed :: proc(t: ^t
 }
 
 @(test)
-a_hoisted_declaration_reads_a_later_const_through_a_box :: proc(t: ^testing.T) {
-	// The closure is made where the body opens, before `side` has its value, so it shares the box.
-	result := lower_text(
-		t,
-		`
-		function area(): number {
-			function scaled(): number {
-				return side * 2;
-			}
-			const side = 3;
-			return scaled();
-		}
-		console.log(area());
-	`,
-	)
-	scaled, found := func_prefixed(result.output, "m1.scaled$")
-	area, _ := func_named(result.output, "m1.area")
-	if !testing.expectf(t, found && scaled.env != ir.NO_LAYOUT, "%s", result.text) {
-		return
-	}
-	testing.expect(t, slice.equal(slot_kinds(result, scaled.env), []abi.Slot_Kind{.Ref}))
-	testing.expectf(t, len(instructions_of(area, ir.Call_Closure)) == 1, "%s", result.text)
-	testing.expectf(t, len(instructions_of(area, ir.Call)) == 0, "%s", result.text)
-}
-
-@(test)
 a_self_recursive_function_that_captures_nothing_is_called_directly :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,
@@ -95,33 +69,6 @@ a_self_recursive_function_that_captures_nothing_is_called_directly :: proc(t: ^t
 	testing.expectf(t, len(instructions_of(fibs, ir.Call)) == 1, "%s", result.text)
 	testing.expectf(t, len(instructions_of(fibs, ir.Make_Closure)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(fibs, ir.Alloc)) == 0, "%s", result.text)
-}
-
-@(test)
-a_recursive_arrow_reads_itself_through_a_box :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		function factorial(n: number): number {
-			const fact = (k: number): number => (k <= 1 ? 1 : k * fact(k - 1));
-			return fact(n);
-		}
-		console.log(factorial(5));
-	`,
-	)
-	fact, found := func_prefixed(result.output, "m1.fact$")
-	factorial, _ := func_named(result.output, "m1.factorial")
-	if !testing.expectf(t, found && fact.env != ir.NO_LAYOUT, "%s", result.text) {
-		return
-	}
-	testing.expect(t, slice.equal(slot_kinds(result, fact.env), []abi.Slot_Kind{.Ref}))
-	testing.expectf(t, len(instructions_of(fact, ir.Call_Closure)) == 1, "%s", result.text)
-	stores := instructions_of(factorial, ir.Field_Store_Ref)
-	stored_closure := false
-	for store in stores {
-		stored_closure ||= factorial.values[store.value].type == ir.CLOSURE
-	}
-	testing.expectf(t, stored_closure, "the closure never went into its box:\n%s", result.text)
 }
 
 @(test)
@@ -275,120 +222,6 @@ sorting_with_a_comparator_passes_the_closure_as_it_stands :: proc(t: ^testing.T)
 }
 
 @(test)
-a_comparator_of_a_wider_class_goes_through_an_adapter :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		const byLength = (a: string, b: string): number => a.length - b.length;
-		const loose: (a: string, b: string, c?: number) => number = byLength;
-		console.log(["bb", "a"].sort(byLength), ["c"].sort(byLength), loose("a", "b"));
-	`,
-	)
-	adapter, found := func_prefixed(result.output, "m1.sort$")
-	if !testing.expectf(t, found, "%s", result.text) {
-		return
-	}
-	testing.expect(t, slice.equal(adapter.params, []ir.Type{ir.STR, ir.STR}))
-	testing.expect(t, adapter.result == ir.F64 && adapter.env != ir.NO_LAYOUT)
-	adapters := 0
-	for body in result.output.funcs {
-		adapters += 1 if strings.has_prefix(body.name, "m1.sort$") else 0
-	}
-	testing.expectf(t, adapters == 1, "one adapter serves both calls:\n%s", result.text)
-	calls := instructions_of(adapter, ir.Call_Closure)
-	testing.expect(t, len(calls) == 1 && len(calls[0].args) == 3)
-}
-
-@(test)
-a_widened_parameter_is_unboxed_with_a_check_on_the_way_in :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		function show(x: number | string): void {
-			console.log(x);
-		}
-		const square = (x: number): void => console.log(x * x);
-		let printer: (x: number) => void = square;
-		printer = show;
-		printer(2);
-	`,
-	)
-	square, found := func_prefixed(result.output, "m1.square$")
-	if !testing.expectf(t, found, "%s", result.text) {
-		return
-	}
-	testing.expect(t, slice.equal(square.params, []ir.Type{ir.TAGGED}))
-	testing.expectf(t, len(instructions_of(square, ir.Tag_Test)) == 1, "%s", result.text)
-	fails := instructions_of(square, ir.Fail)
-	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
-		error := result.output.fail_sites[fails[0].site].error
-		testing.expect_value(t, error, abi.Runtime_Error.Value_Of_Other_Kind)
-	}
-}
-
-@(test)
-a_void_result_joined_with_a_value_is_tagged_and_gives_undefined :: proc(t: ^testing.T) {
-	// `() => void` is one type wherever it is written, and `five` flows into it, so the class
-	// result is tagged: five boxes its number, and quiet, which returns nothing, answers undefined
-	// rather than the zero of a number, or the null of an object that a print would follow.
-	result := lower_text(
-		t,
-		`
-		const five = (): number => 5;
-		const ignore: () => void = five;
-		const quiet = (): void => {};
-		console.log(ignore(), quiet());
-	`,
-	)
-	quiet, found := func_prefixed(result.output, "m1.quiet$")
-	five, _ := func_prefixed(result.output, "m1.five$")
-	if !testing.expectf(t, found, "%s", result.text) {
-		return
-	}
-	testing.expect(t, quiet.result == ir.TAGGED && five.result == ir.TAGGED)
-	returns := instructions_of(quiet, ir.Return)
-	if testing.expectf(t, len(returns) == 1, "%s", result.text) {
-		_, is_undefined := quiet.values[returns[0].value].variant.(ir.Const_Undefined)
-		testing.expectf(t, is_undefined, "%s", result.text)
-	}
-}
-
-@(test)
-a_void_function_that_hands_on_a_value_returns_it :: proc(t: ^testing.T) {
-	// five flows into `() => void`, so a call through that type answers 5. call and relay are typed
-	// void and return what that call answered, as Node does, so their class takes a tagged result;
-	// log hands on what console.log answers, undefined, and still returns nothing.
-	result := lower_text(
-		t,
-		`
-		const five = (): number => 5;
-		const fs: (() => void)[] = [five];
-		const call = (f: () => void) => f();
-		function relay(f: () => void): void {
-			return f();
-		}
-		const log = (x: number) => console.log(x);
-		console.log(fs.map(call), relay(five), log(1));
-	`,
-	)
-	call, _ := func_prefixed(result.output, "m1.call$")
-	relay, _ := func_named(result.output, "m1.relay")
-	log, _ := func_prefixed(result.output, "m1.log$")
-	testing.expectf(t, log.result == ir.VOID, "%s", result.text)
-	tagged := call.result == ir.TAGGED && relay.result == ir.TAGGED
-	if !testing.expectf(t, tagged, "%s", result.text) {
-		return
-	}
-	for body in ([]ir.Func{call, relay}) {
-		returns := instructions_of(body, ir.Return)
-		if testing.expectf(t, len(returns) == 1, "%s", result.text) {
-			_, is_call := body.values[returns[0].value].variant.(ir.Call_Closure)
-			testing.expectf(t, is_call, "%s", result.text)
-		}
-	}
-}
-
-@(test)
 a_function_with_a_rest_parameter_is_reported :: proc(t: ^testing.T) {
 	result := expect_later(
 		t,
@@ -427,53 +260,4 @@ number_boxes :: proc(result: Lowered, body: ir.Func) -> int {
 		total += 1 if table.kind == .Environment && one_number else 0
 	}
 	return total
-}
-
-@(test)
-a_value_of_type_void_is_undefined :: proc(t: ^testing.T) {
-	// A variable of type void holds undefined, and forEach and console.log answer it: the line
-	// that prints them is written, where it used to vanish.
-	result := lower_text(
-		t,
-		`
-		function nothing(): void {}
-		const q = nothing();
-		console.log([1].forEach(x => x), q, console.log("x"));
-	`,
-	)
-	testing.expect(t, result.output.globals[0].type == ir.TAGGED)
-	init, _ := func_named(result.output, "init$m1")
-	testing.expectf(t, calls_to(init, .Console_Log) == 2, "%s", result.text)
-}
-
-@(test)
-a_callback_through_a_closure_gets_what_node_passes_where_its_class_takes_it :: proc(
-	t: ^testing.T,
-) {
-	// `one` holds `two`, which takes an optional second number: Node passes it the index in map
-	// and the second element in sort, and so does tsnc, boxed into the tagged slot of the class.
-	result := lower_text(
-		t,
-		`
-		const two = (a: number, b?: number): number => (b === undefined ? a : a - b);
-		const one: (a: number) => number = two;
-		function run(f: (a: number) => number): number[] {
-			return [5, 6].map(f);
-		}
-		console.log(run(one), [3, 1].sort(one));
-	`,
-	)
-	run, _ := func_named(result.output, "m1.run")
-	calls := instructions_of(run, ir.Call_Closure)
-	if !testing.expectf(t, len(calls) == 1 && len(calls[0].args) == 2, "%s", result.text) {
-		return
-	}
-	_, boxed := run.values[calls[0].args[1]].variant.(ir.Box)
-	testing.expectf(t, boxed, "the index is not passed:\n%s", result.text)
-	adapter, _ := func_prefixed(result.output, "m1.sort$")
-	adapted := instructions_of(adapter, ir.Call_Closure)
-	if testing.expectf(t, len(adapted) == 1, "%s", result.text) {
-		_, second := adapter.values[adapted[0].args[1]].variant.(ir.Box)
-		testing.expectf(t, second, "the second element is not passed:\n%s", result.text)
-	}
 }

@@ -24,7 +24,7 @@ function change(): void {
 	value = 1;
 }
 change();
-console.log(typeof value, typeof value === "number");
+console.log(typeof value, typeof value === "number", value);
 switch (typeof value) {
 	case "number":
 		console.log("a number");

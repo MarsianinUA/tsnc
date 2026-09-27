@@ -51,14 +51,16 @@ Checked :: struct {
 	file_errors: []File_Error, // the same, one for one
 }
 
-// check_sources makes the lib file module zero and each source the next File_ID. A source names
-// another with the path check_sources gave it, `"./m2.ts"` or `"./m2"`, and make_edges resolves
-// both spellings the way driver does. Everything lives in the temp allocator, which the test
-// runner frees before each test, so a test frees nothing.
+// check_sources makes the lib file module zero and each source the next File_ID, named `m1.ts`,
+// `m2.ts` and on unless names says otherwise. A source names another by its path from its own
+// directory, `"./m2.ts"` or `"./m2"`, and make_edges resolves both spellings the way driver does.
+// Everything lives in the temp allocator, which the test runner frees before each test, so a test
+// frees nothing.
 check_sources :: proc(
 	t: ^testing.T,
 	sources: []string,
 	partition: []source.File_ID,
+	names: []string = nil,
 	loc := #caller_location,
 ) -> Checked {
 	texts := make([]string, len(sources) + 1, context.temp_allocator)
@@ -72,8 +74,9 @@ check_sources :: proc(
 	imports := make([][]program.Import_Edge, count, context.temp_allocator)
 
 	paths := make([]string, count, context.temp_allocator)
-	for i in 0 ..< count {
-		paths[i] = "lib.d.ts" if i == 0 else fmt.tprintf("m%d.ts", i)
+	paths[0] = "lib.d.ts"
+	for i in 1 ..< count {
+		paths[i] = names[i - 1] if names != nil else fmt.tprintf("m%d.ts", i)
 	}
 
 	for text, i in texts {
@@ -87,7 +90,7 @@ check_sources :: proc(
 		)
 		trees[i] = tree
 		bound[i], _ = bind.bind_file(&trees[i], context.temp_allocator)
-		imports[i] = make_edges(&trees[i], paths)
+		imports[i] = make_edges(&trees[i], path, paths)
 
 		// A test says what check does, so anything the layers under it report is a broken test.
 		testing.expectf(
@@ -128,7 +131,7 @@ every_source :: proc(count: int) -> []source.File_ID {
 }
 
 expect_program :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Checked {
-	c := check_sources(t, sources, every_source(len(sources)), loc)
+	c := check_sources(t, sources, every_source(len(sources)), loc = loc)
 	testing.expectf(t, len(c.file_errors) == 0, "%v: %v", sources, c.file_errors, loc = loc)
 	return c
 }
@@ -140,7 +143,7 @@ expect_program_errors :: proc(
 	expected: []File_Error,
 	loc := #caller_location,
 ) -> Checked {
-	c := check_sources(t, sources, every_source(len(sources)), loc)
+	c := check_sources(t, sources, every_source(len(sources)), loc = loc)
 	testing.expectf(
 		t,
 		slice.equal(c.file_errors, expected),
@@ -158,7 +161,11 @@ expect_program_errors :: proc(
 // name `m.ts`; here the file names are known, so the same two spellings are matched against them. A
 // specifier that names nothing gets no edge, which is what driver leaves behind after reporting it.
 @(private = "file")
-make_edges :: proc(tree: ^ast.File_AST, paths: []string) -> []program.Import_Edge {
+make_edges :: proc(
+	tree: ^ast.File_AST,
+	importer: string,
+	paths: []string,
+) -> []program.Import_Edge {
 	edges := make([dynamic]program.Import_Edge, 0, len(tree.imports), context.temp_allocator)
 	for request in tree.imports {
 		path, type_only := request_path(tree, request)
@@ -169,7 +176,7 @@ make_edges :: proc(tree: ^ast.File_AST, paths: []string) -> []program.Import_Edg
 		if !is_literal {
 			continue
 		}
-		module, found := module_named(literal.value, paths)
+		module, found := module_named(importer, literal.value, paths)
 		if !found {
 			continue
 		}
@@ -205,9 +212,21 @@ request_path :: proc(
 	return ast.NO_NODE, false
 }
 
+// module_named reads the specifier from the importer's directory, which is `""` for `m1.ts` and
+// `modules/` for `modules/counter.ts`.
 @(private = "file")
-module_named :: proc(specifier: string, paths: []string) -> (module: source.File_ID, found: bool) {
-	name := strings.trim_prefix(specifier, "./")
+module_named :: proc(
+	importer, specifier: string,
+	paths: []string,
+) -> (
+	module: source.File_ID,
+	found: bool,
+) {
+	directory := importer[:strings.last_index_byte(importer, '/') + 1]
+	name := strings.concatenate(
+		{directory, strings.trim_prefix(specifier, "./")},
+		context.temp_allocator,
+	)
 	for path, i in paths {
 		if path == name || path == strings.concatenate({name, ".ts"}, context.temp_allocator) {
 			return source.File_ID(i), true
@@ -221,7 +240,7 @@ module_named :: proc(specifier: string, paths: []string) -> (module: source.File
 check_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Checked {
 	one := [1]string{text}
 	partition := [1]source.File_ID{MAIN}
-	return check_sources(t, one[:], partition[:], loc)
+	return check_sources(t, one[:], partition[:], loc = loc)
 }
 
 expect_checked :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Checked {

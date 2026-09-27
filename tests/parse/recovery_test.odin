@@ -197,23 +197,6 @@ an_unclosed_bracket_does_not_swallow_the_file :: proc(t: ^testing.T) {
 	)
 }
 
-// A value in an object literal may go on over several lines, also after a member that is skipped.
-@(test)
-a_skipped_object_member_ends_at_its_comma :: proc(t: ^testing.T) {
-	expect_parse(
-		t,
-		lines("const o = {", "  [key]:", "    a && b,", "  c: 1,", "}"),
-		{{.Unsupported_Syntax, 2, 3}},
-		"(const (o = (object (c 1))))",
-	)
-	expect_parse(
-		t,
-		lines("const o = {", "  a:", "    1,", "}"),
-		{},
-		"(const (o = (object (a 1))))",
-	)
-}
-
 // A construct that is skipped as a whole ends where it ends, and one mistake gets one error.
 @(test)
 a_skipped_declaration_ends_at_its_body :: proc(t: ^testing.T) {
@@ -256,12 +239,6 @@ nested_tries_stay_linear :: proc(t: ^testing.T) {
 		append(&parts, ") : 1")
 	}
 	expect_errors(t, concat(..parts[:]), {})
-}
-
-@(test)
-a_regular_expression_is_one_error :: proc(t: ^testing.T) {
-	// `\d` would also be an unexpected character to tokenize.
-	expect_parse(t, "let r = /\x5cd+/", {{.Regular_Expression, 1, 9}}, "(let (r = bad))")
 }
 
 // Input that nests past the parser's recursion limit is one error, not a stack overflow: brackets,

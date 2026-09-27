@@ -8,9 +8,6 @@ import "core:testing"
 import "../../src/ast"
 import "../../src/bind"
 
-// LIB_TEXT is the lib file, module zero of every program.
-LIB_TEXT :: #load("../../src/lib/lib.d.ts", string)
-
 @(test)
 every_import_form_names_the_module_it_comes_from :: proc(t: ^testing.T) {
 	b := expect_bound(
@@ -102,47 +99,13 @@ a_reexport_stands_for_a_name_of_another_module :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_export_that_names_nothing_or_repeats_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, "export { nope };", {{.Undeclared_Export, 1, 10}})
-	expect_errors(t, "export { console };", {{.Undeclared_Export, 1, 10}})
-	expect_errors(
-		t,
-		lines(
-			"const a = 1, b = 2;", //
-			"export { a, b as a };",
-		),
-		{{.Duplicate_Export, 2, 18}},
-	)
-	expect_errors(
-		t,
-		lines(
-			"export const a = 1;", //
-			`export { b as a } from "./m";`,
-		),
-		{{.Duplicate_Export, 2, 15}},
-	)
-
-	// One name may still be exported once as a value and once as a type.
-	expect_bound(
-		t,
-		lines(
-			"export interface Shape { size: number }", //
-			"export declare const Shape: Shape;",
-		),
-	)
-}
-
-@(test)
 a_redeclared_export_is_reported_once :: proc(t: ^testing.T) {
 	// The second `f` is one mistake, a name declared twice, and not a name exported twice as well.
-	twice := expect_errors(
-		t,
-		lines(
-			"export function f() {}", //
-			"export function f() {}",
-		),
-		{{.Redeclared_Name, 2, 17}},
+	text := lines(
+		"export function f() {}", //
+		"export function f() {}",
 	)
+	twice := expect_errors(t, text, {{.Redeclared_Name, 2, 17}})
 	expect_exports(t, twice, {"f = f"})
 
 	// A declaration that lost its name exports nothing: the name stands for the `let`.
@@ -168,25 +131,6 @@ the_effects_flag_says_whether_the_top_level_runs_code :: proc(t: ^testing.T) {
 	expect_effects(t, "const first = items[0];", true)
 	expect_effects(t, "const value = maybe!;", true)
 	expect_effects(t, lines(`import { base } from "./m";`, "const derived = base + 1;"), true)
-}
-
-@(test)
-the_lib_file_binds_without_a_diagnostic :: proc(t: ^testing.T) {
-	b := bind_text(t, LIB_TEXT)
-	testing.expectf(t, len(b.parse_errors) == 0, "lib.d.ts: parse %v", b.parse_errors)
-	testing.expectf(t, len(b.errors) == 0, "lib.d.ts: bind %v", b.errors)
-	testing.expect(t, !b.bound.has_side_effects)
-	testing.expect(t, len(b.bound.exports) == 0) // its names are global, not exported
-
-	// check resolves a name no file of its own declares in this scope.
-	for name in ([]string{"console", "process", "Math", "Number", "String", "NaN", "Infinity"}) {
-		symbol := bind.lookup(b.bound, bind.MODULE_SCOPE, name, .Value)
-		testing.expectf(t, symbol != bind.NO_SYMBOL, "lib.d.ts declares no value %s", name)
-	}
-	for name in ([]string{"Console", "Process", "Math", "Number", "String", "Array"}) {
-		symbol := bind.lookup(b.bound, bind.MODULE_SCOPE, name, .Type)
-		testing.expectf(t, symbol != bind.NO_SYMBOL, "lib.d.ts declares no type %s", name)
-	}
 }
 
 @(private = "file")

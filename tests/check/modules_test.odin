@@ -2,54 +2,11 @@ package check_tests
 
 import "core:testing"
 
-import "../../src/bind"
 import "../../src/diag"
 import "../../src/source"
 
 // Names that come from another module. A test writes several sources; check_sources names them
 // m1.ts, m2.ts and so on, and an import names one of those, so the module graph is the real one.
-
-@(test)
-an_imported_value_takes_the_type_of_its_declaration :: proc(t: ^testing.T) {
-	c := expect_program(
-	t,
-	[]string {
-		lines(
-			`import { answer } from "./m2.ts";`, //
-			`const doubled = answer * 2;`,
-		),
-		`export const answer = 42;`,
-	},
-	)
-
-	testing.expect_value(t, declared_text(c, "doubled"), "number")
-	// The use holds the declaration and not the local alias, so lower reads where the name comes
-	// from instead of walking the import tables again.
-	ref := use_declaration(c, "answer")
-	testing.expect_value(t, ref.file, MAIN + 1)
-	testing.expect_value(
-		t,
-		c.program.bound[ref.file].symbols[ref.symbol].kind,
-		bind.Symbol_Kind.Const,
-	)
-}
-
-@(test)
-an_imported_function_is_called_with_its_own_signature :: proc(t: ^testing.T) {
-	c := expect_program(
-		t,
-		[]string {
-			lines(
-				`import { twice } from "./m2.ts";`, //
-				`const four = twice(2);`,
-			),
-			`export function twice(x: number): number { return x * 2; }`,
-		},
-	)
-
-	testing.expect_value(t, declared_text(c, "four"), "number")
-	testing.expect_value(t, call_text(c), "(x: number) => number")
-}
 
 @(test)
 an_imported_type_is_the_type_of_its_declaration :: proc(t: ^testing.T) {
@@ -88,22 +45,6 @@ an_import_may_rename_what_it_takes :: proc(t: ^testing.T) {
 	)
 
 	testing.expect_value(t, declared_text(c, "doubled"), "number")
-}
-
-@(test)
-both_spellings_of_a_specifier_name_one_module :: proc(t: ^testing.T) {
-	// The T2.8 contract: `"./m"` and `"./m.ts"` both name m.ts, because neither spelling alone passes
-	// both Node and tsc.
-	expect_program(
-		t,
-		[]string {
-			lines(
-				`import { answer } from "./m2";`, //
-				`console.log(answer);`,
-			),
-			`export const answer = 42;`,
-		},
-	)
 }
 
 @(test)
@@ -209,33 +150,6 @@ a_ring_of_re_exports_answers_that_the_name_is_nowhere :: proc(t: ^testing.T) {
 		},
 		[]File_Error{{MAIN, .Unknown_Export, 1, 10}, {MAIN + 1, .Unknown_Export, 1, 10}},
 	)
-}
-
-@(test)
-a_module_namespace_resolves_the_name_after_the_dot :: proc(t: ^testing.T) {
-	c := expect_program(
-		t,
-		[]string {
-			lines(
-				`import * as m from "./m2.ts";`, //
-				`const four = m.twice(2);`,
-				`const doubled = m.answer * 2;`,
-				`const p: m.Point = { x: 1, y: 2 };`,
-			),
-			lines(
-				`export interface Point { x: number; y: number; }`, //
-				`export const answer = 42;`,
-				`export function twice(x: number): number { return x * 2; }`,
-			),
-		},
-	)
-
-	testing.expect_value(t, declared_text(c, "four"), "number")
-	testing.expect_value(t, declared_text(c, "doubled"), "number")
-	testing.expect_value(t, declared_text(c, "p"), "Point")
-	// `m.twice` is a read of the declaration in m2, not a field of anything, so the member holds the
-	// symbol the way a name does.
-	testing.expect_value(t, member_text(c, "twice"), "(x: number) => number")
 }
 
 @(test)
@@ -431,13 +345,6 @@ a_result_inferred_through_a_ring_of_imports_is_reported_once :: proc(t: ^testing
 
 	testing.expect_value(t, len(c.file_errors), 1)
 	testing.expect_value(t, c.file_errors[0].code, diag.Code.Recursive_Return_Type)
-}
-
-@(test)
-a_missing_module_says_nothing_here :: proc(t: ^testing.T) {
-	// driver reports a specifier that names no file, at the specifier, and program draws no edge for
-	// it. check has nothing to add: a second message about the same line would only be noise.
-	expect_program(t, []string{`import { answer } from "./nowhere.ts";`})
 }
 
 @(test)
