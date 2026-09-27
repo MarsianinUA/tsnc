@@ -101,6 +101,12 @@ npm ci --prefix tests/diff
 
 A program in the corpus stays inside the part of the subset that is lowered, since one that does not compile is a failure rather than a skip. `tests/diff/src/modules/` holds modules that other programs import and that are never run on their own.
 
+A new case goes into an existing program on its topic where one exists: a program costs about 0.45 s per pass, and CI runs the corpus several times. When you write one, keep in mind:
+
+- The gate refuses some things tsnc accepts: a type imported without `import type`, a specifier without `.ts`, `===` between two literal types that cannot meet, and an operand that is truthy by its spelling alone, such as `!"a"` (TS2872). Pass such operands through parameters.
+- A type the program means to pin goes on an annotated binding, `const early: "a" | "b" = v`, so that the build fails when check answers another type. A `let` given a wider value later pins that an inferred type widened.
+- A program that prints must not end in `process.exit`: on macOS Node can lose the output written before it. Keep an exit path on a branch that never runs, and an exit code in 65..125, which `exit.ts` explains.
+
 A program may start with two header lines, each at most once and in either order, and the runner applies both to the Node run and to the compiled one. `// env:` sets environment variables on top of the runner's own environment:
 
 ```ts

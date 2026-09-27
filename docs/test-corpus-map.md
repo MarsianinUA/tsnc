@@ -2,7 +2,7 @@
 
 A working file for T5.11 to T5.16 of `tasks-tsnc.md`. It was made on September 27, 2026, by reading every `@(test)` procedure under `tests/` and every program of the three corpora. Each task strikes its own section when it is done, and T5.16 deletes the file.
 
-T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs. So is T5.13: its section went the same way, and `tests/negative` holds a program for every code of the `diag` registry.
+T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs. So is T5.13: its section went the same way, and `tests/negative` holds a program for every code of the `diag` registry. So is T5.14: the check and lower tests of its section are programs of `tests/diff/src` now, nine new ones and lines in ten others.
 
 The map is a reading, not a proof. Before a test goes, open the program named next to it and confirm that it reaches the same construct: the same built-in and corner, or the same diagnostic code on the same kind of construct. When it does not, the test moves instead of going.
 
@@ -16,39 +16,6 @@ Classes:
 - NODE-DIFFERS: visible in the output, but Node is not the reference (a runtime failure); it moves to `tests/expect`.
 - KEEP-STRATEGY: a lower test that guards a decision no program shows; it stays and gets rewritten in T5.16.
 - KEEP: needs internal state or more inputs than a program can hold; it stays.
-
-## Diff moves: check and lower
-
-T5.14. Every program passes the tsc gate: `import type` for a type, a `.ts` specifier, no comparison of two unrelated literal types.
-
-### New programs
-
-1. narrowing-flow.ts: narrowing a_negated_condition_narrows_the_other_way, the_right_side_of_and_knows_what_the_left_one_proved, the_right_side_of_a_coalesce_knows_the_left_one_was_nullish, a_write_inside_a_narrowing_is_measured_against_the_declared_type, a_write_to_another_name_keeps_what_was_known_about_a_field, a_narrowing_carries_into_an_arrow_made_inside_it; statements a_for_of_variable_of_a_union_element_narrows; expressions the_falsy_side_of_or_is_dropped. Check first that tsc narrows the left side of `??` inside its right operand; if not, the coalesce test stays.
-2. literal-narrowing.ts: arrays indexing_a_union_of_strings_gives_a_string; expressions not_takes_anything_and_gives_a_boolean; inference a_const_keeps_its_literal_type_and_a_let_widens; narrowing a_switch_groups_the_cases_that_share_one_body, a_default_clause_narrows_to_what_the_cases_left, a_default_clause_of_a_switch_that_leaves_a_member_keeps_it; types a_negative_zero_literal_type_is_the_zero_one (check that tsc takes `const z: 0 = -0`). Pin each narrowed type with an annotated binding, such as `const low: 1 | 2 = die`.
-3. returns.ts: inference a_return_type_is_inferred_from_the_body, a_body_that_can_run_off_its_end_also_gives_undefined, a_bare_return_beside_one_with_a_value_gives_undefined; reachability a_result_that_takes_undefined_may_end_without_a_return, a_body_that_ends_in_a_call_that_never_returns_needs_no_return, a_body_that_ends_in_an_endless_loop_needs_no_return; lower/control_flow a_loop_whose_body_always_returns_leaves_nothing_after_it, a_return_inside_a_switch_inside_a_loop, a_void_call_returned_as_a_tagged_value_is_undefined. Call each function only on a path that returns.
-4. definite-assignment.ts: reachability a_let_written_on_every_path_is_not_reported, a_let_written_in_every_case_of_an_exhaustive_switch_is_not_reported, a_let_written_before_a_loop_may_be_read_inside_it, a_plain_write_to_a_let_is_no_read, a_read_inside_an_arrow_made_after_the_write_is_not_reported.
-5. union-fields.ts: objects a_literal_picks_the_member_of_a_union_its_tag_names; narrowing an_optional_discriminant_survives_a_test_against_undefined; reachability a_body_that_is_an_exhaustive_switch_of_returns_needs_no_return, an_inferred_result_of_an_exhaustive_switch_holds_no_undefined; lower/arrays an_arrow_whose_switch_covers_every_case_runs_off_no_end; lower/unions an_optional_field_of_a_union_reads_as_a_tagged_value, the_length_of_a_string_or_an_array_reads_either, a_compound_assignment_reads_the_narrowed_value (the `u.x += 1` half).
-6. contextual-types.ts: arrays an_array_literal_reads_a_context_behind_undefined; assertions a_literal_takes_the_type_it_is_asserted_as (plus one T3020 line in neg/unrelated-assertion.ts); functions an_arrow_that_tests_an_optional_parameter_fits, an_arrow_reads_the_signature_of_an_optional_callback, the_expected_result_reaches_the_body_of_an_arrow; inference an_arrow_with_a_return_type_may_call_itself.
-7. structural-types.ts: objects two_interfaces_with_the_same_fields_are_compatible, two_interfaces_that_name_each_other_are_compatible_with_their_twins, readonly_does_not_change_what_a_type_fits.
-8. re-exports.ts, with a new modules/relay.ts, and an `export let` plus a function that bumps it in modules/counter.ts: modules an_imported_type_is_the_type_of_its_declaration, an_import_may_rename_what_it_takes, a_re_export_carries_a_name_through; lower/modules an_imported_binding_is_the_other_modules_global.
-9. compound-operators.ts: lower/control_flow every_arithmetic_and_bitwise_operator_lowers (`-= /= %= **= <<= >>= >>>= &= |= ^=` appear nowhere in the corpus); lower/objects the_place_is_evaluated_before_the_value (`a[i] = (i = 5)`).
-
-### Extensions
-
-- typeof-narrowing.ts: narrowing typeof_tells_a_function_value_from_a_reference; expressions typeof_gives_the_answers_it_can_produce (compare with "object" and "function"); subset a_union_that_may_hold_a_function_is_converted_at_run_time (the string arm).
-- any-values.ts: narrowing typeof_narrows_any_and_unknown_to_a_primitive.
-- comparisons.ts: expressions double_equals_between_one_type_is_allowed, strict_equality_accepts_two_unions_that_share_a_member.
-- logical.ts: expressions and_keeps_the_falsy_side_and_coalesce_keeps_the_rest.
-- never.ts: narrowing a_call_that_never_returns_ends_the_path_it_stands_on; lower/control_flow a_ternary_whose_arms_both_never_return_joins_nothing (declared, never called), a_never_right_side_of_a_short_circuit_leaves_the_left_one (`return n > 0 || process.exit(73)` and the `&&` form).
-- math.ts: lower/builtins math_pow_is_the_power_operator (`Math.pow(1, NaN)`), math_sign_answers_the_value_itself_at_zero.
-- process-argv.ts: lower/builtins process_argv_is_a_global_main_fills_first (`process.argv === process.argv`).
-- closure-loops.ts: lower/closures a_boxed_for_of_variable_and_a_boxed_callback_parameter_are_bound_per_pass.
-- callback-arguments.ts: lower/closures a_callback_through_a_closure_gets_the_index_only_where_its_class_can_hold_it.
-- widening.ts: lower/widening a_read_of_an_object_out_of_a_widened_slot_checks_its_layout, a_write_through_the_narrow_type_boxes_into_the_slot, two_objects_of_one_class_compare_and_assert_as_they_are.
-
-### Helpers left unused after the move
-
-check: `expect_program`, `use_declaration`, `member_text`. lower: `number_at`, `returned` and the `core:slice` import in control_flow.
 
 ## Diff moves: runtime and the rest
 
@@ -70,7 +37,7 @@ T5.15. What a program can call: `src/lib/lib.d.ts`. It has no `String.fromCharCo
 14. arithmetic.ts: codegen exponentiation_answers_nan_for_a_unit_base (`1 ** Infinity`, `(-1) ** ±Infinity`, `(-1) ** NaN`).
 15. any-values.ts: value typeof_answers_a_static_word_for_every_tag, strict_equality_goes_by_tag, truthiness_matches_node, to_string_matches_node.
 16. literals.ts (new): parse numbers_have_their_values (hex, octal, binary, `_` separators, `5.`, `1.e2`, `0xFFFFFFFFFFFFFFFF`, `1e400`, last-place rounding), strings_have_their_cooked_values, template_text_is_cooked. Leave out CRLF and U+2028 line continuations: autocrlf rewrites them.
-17. Module programs (new): module-ring.ts (program and check a_cycle_of_types_and_functions_is_allowed: a function called from a body across the ring, and a type alias read back through it), type-import-ring.ts (a_type_only_import_orders_nothing), self-import.ts (a_module_that_imports_itself_is_not_a_cycle).
+17. Module programs (new): module-ring.ts (program and check a_cycle_of_types_and_functions_is_allowed: a function called from a body across the ring, and a type alias read back through it), type-import-ring.ts (a_type_only_import_orders_nothing), self-import.ts (a_module_that_imports_itself_is_not_a_cycle). The cycle test is the last caller of `expect_program` in `tests/check/check_helpers.odin`, which goes with it.
 
 Also worth a program, though no test moves there: parse precedence and associativity (`2 ** 3 ** 2`, `a - b - c`, `a = b = c`), the compound assignment operators, `a.default.if`, automatic semicolons (`return\n1`, `a\n(b)`), `c?.5:1`; bind shadowing, a loop header scope, no T3024 after `while (true) {}`, renamed imports, a side-effect `import`, `export { x as y }`.
 

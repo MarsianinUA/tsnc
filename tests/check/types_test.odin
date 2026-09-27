@@ -138,14 +138,6 @@ a_function_type_prints_the_way_typescript_writes_it :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_negative_zero_literal_type_is_the_zero_one :: proc(t: ^testing.T) {
-	// parse folds the minus of `-0` into the value, while TypeScript has one literal type for both
-	// and `-0 === 0` at run time.
-	c := expect_checked(t, `const zero: 0 = -0;`)
-	testing.expect_value(t, declared_text(c, "zero"), "0")
-}
-
-@(test)
 the_result_outlives_the_scratch_of_the_check :: proc(t: ^testing.T) {
 	arena: virtual.Arena
 	testing.expect(t, virtual.arena_init_growing(&arena) == nil)

@@ -45,3 +45,26 @@ console.log(same(0, -0), atMost(0, -0), atLeast(-0, 0));
 console.log(below(-Infinity, 0), above(Infinity, 1e308), same(Infinity, Infinity));
 console.log(sameFlag(true, true), sameFlag(true, false), sameFlag(false, false));
 console.log(!same(1, 2), !!differs(1, 1));
+
+// `==` between values of one type, with null or undefined beside them, is `===`.
+function loose(a: number, b: number): boolean {
+  return a == b;
+}
+
+function looseText(a: string | undefined, b: string | undefined): boolean {
+  return a == b;
+}
+
+// Two unions that share a member may be compared, though neither fits the other.
+function shared(a: "a" | "b", b: "b" | "c"): boolean {
+  return a === b;
+}
+
+function wide(a: number | string, b: string | boolean): boolean {
+  return a === b;
+}
+
+const equal: boolean = loose(1, 1);
+console.log(equal, loose(1, 2), loose(NaN, NaN), loose(0, -0));
+console.log(looseText(undefined, undefined), looseText("a", undefined), looseText("a", "a"));
+console.log(shared("b", "b"), shared("a", "c"), wide("x", "x"), wide(1, true), wide("1", true));

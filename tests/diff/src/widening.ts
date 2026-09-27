@@ -45,3 +45,37 @@ console.log(scale(outer), loose, loose.inner === outer.inner);
 
 const list: Measure[] = [box, { width: "auto" }];
 console.log(list, list[0] === box);
+
+// A write through the narrow type goes into the slot the wide type shares, and an `as` back to
+// the narrow type answers the same object.
+function write(s: Size): void {
+  s.width = 2;
+}
+write(box);
+const back = same as Size;
+console.log(box, same.width, back === box, back.width + 1);
+
+interface Item {
+  v: number;
+}
+
+interface Holder {
+  item: Item;
+}
+
+interface Loose {
+  item: Item | null;
+}
+
+function loosen(h: Holder): Loose {
+  return h;
+}
+
+// Holder widens into Loose, so a read of item through Holder checks what the shared slot holds.
+function read(h: Holder): number {
+  return h.item.v;
+}
+
+const holder: Holder = { item: { v: 8 } };
+const loosened = loosen(holder);
+console.log(read(holder), loosened.item === holder.item, loosened);

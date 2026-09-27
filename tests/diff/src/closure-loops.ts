@@ -62,6 +62,19 @@ for (const f of kept) {
 }
 console.log(kept.length, total, kept[7](), kept[299]());
 
+// A `for...of` variable and a callback parameter that a closure captures and the body then changes
+// are new on every pass too, so each closure sees the write of its own pass only.
+const bumped: (() => number)[] = [];
+for (let x of [1, 2]) {
+  bumped.push(() => x);
+  x += 10;
+}
+[3, 4].forEach((y) => {
+  bumped.push(() => y);
+  y += 100;
+});
+console.log(bumped.map((f) => f()));
+
 // A `continue` still ends the pass, and the next one gets its own binding.
 const odds: (() => number)[] = [];
 for (let i = 0; i < 6; i++) {

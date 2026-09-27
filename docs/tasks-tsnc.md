@@ -358,7 +358,7 @@ Where: `test-corpus-map.md`, section "Negative moves"; requirements §10 "Negati
 After: T5.11.
 Done: every code of the `diag` registry has a negative program; the moved tests are gone; `development.md` gets the section on the negative corpus it lacks today.
 
-### [ ] T5.14 Front end behavior into diff programs
+### [x] T5.14 Front end behavior into diff programs
 
 What: the check and lower tests the map marks MOVE-DIFF become programs of `tests/diff/src`: nine new ones (`narrowing-flow`, `literal-narrowing`, `returns`, `definite-assignment`, `union-fields`, `contextual-types`, `structural-types`, `re-exports` with `modules/relay.ts`, `compound-operators`) and extensions of ten existing ones. A corpus program costs about 0.45 s per pass and CI runs ten passes, so a new case goes into an existing program on its topic where one exists. Every program still passes the tsc gate: `import type` for a type, a `.ts` specifier, no comparison of two unrelated literal types. The replaced tests and the helpers they leave unused go.
 Where: `test-corpus-map.md`, section "Diff moves: check and lower"; `development.md` "Differential tests".

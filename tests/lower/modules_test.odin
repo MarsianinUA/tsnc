@@ -5,7 +5,7 @@ import "core:testing"
 
 import "../../src/ir"
 
-// A name another module declares: what a function and a binding from there lower to.
+// A name another module declares: what a function from there lowers to.
 
 @(test)
 an_imported_function_is_called_directly :: proc(t: ^testing.T) {
@@ -29,23 +29,4 @@ an_imported_function_is_called_directly :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, slice.contains(names[:], "m2.double"), "%v", names[:])
-}
-
-@(test)
-an_imported_binding_is_the_other_modules_global :: proc(t: ^testing.T) {
-	result := lower_sources(
-		t,
-		{`import { size } from "./m2";
-		console.log(size);`, `export const size = 7;`},
-	)
-	init, found := func_named(result.output, "init$m1")
-	testing.expect(t, found, "the module has no init function")
-
-	read := false
-	for instruction in init.values {
-		if load, is_load := instruction.variant.(ir.Global_Load); is_load {
-			read ||= result.output.globals[load.global].name == "m2.size"
-		}
-	}
-	testing.expect(t, read, "the import did not read the global of the other module")
 }

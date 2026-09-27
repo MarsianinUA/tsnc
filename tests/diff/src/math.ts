@@ -28,6 +28,10 @@ console.log(Math.round(2.5), Math.round(-2.5), Math.round(2.4), Math.round(-0.5)
 console.log(Math.sqrt(16), Math.sqrt(2), Math.sqrt(-1));
 console.log(Math.pow(2, 10), Math.pow(2, -1));
 
+// Math.pow is the `**` operator, where libm's pow answers 1 for a base of 1 whatever the exponent.
+// Math.sign answers its argument itself at either zero and at NaN.
+console.log(Math.pow(id(1), NaN), Math.sign(id(-0)), Math.sign(id(0)), Math.sign(id(NaN)));
+
 // max and min take any number of arguments, and with none they answer their identity.
 console.log(Math.max(1, 2, 3), Math.min(1, 2, 3), Math.max(), Math.min());
 console.log(Math.max(1, NaN), Math.min(-0, 0), Math.max(-0, 0));

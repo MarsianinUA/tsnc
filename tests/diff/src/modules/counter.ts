@@ -7,3 +7,10 @@ export const start = 10;
 export function step(n: number): number {
   return n + start;
 }
+
+// The importers read this binding, not a copy of it, so they see every write bump makes.
+export let count = 0;
+
+export function bump(): void {
+  count += 1;
+}

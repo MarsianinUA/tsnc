@@ -35,3 +35,15 @@ function classify(x: number): number {
 }
 
 console.log(classify(-5), classify(0), classify(5));
+
+// `a && b` is `a` exactly where `a` is falsy, and `??` asks only about null and undefined, so a
+// zero on its left survives.
+const guard = 0 && "x";
+const kept: 0 | "x" = guard;
+
+function orZero(m: number | null): number {
+  const value: number = m ?? 0;
+  return value;
+}
+
+console.log(kept, orZero(null), orZero(0), orZero(5));

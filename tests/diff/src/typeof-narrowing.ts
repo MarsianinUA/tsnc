@@ -61,3 +61,26 @@ console.log(same(true, false), same(0, false), same(NaN, NaN), same("", undefine
 console.log(differ(2, 2), differ("2", 2), differ(undefined, 0));
 console.log(double(21), double("ab"));
 console.log(values.map((v) => typeof v).join(" "));
+
+// `typeof` tells a function value from a number, and the branch calls the one it proved.
+function run(v: (() => number) | number): number {
+  if (typeof v === "function") {
+    return v();
+  }
+  return v;
+}
+
+// `typeof` of a number is the word "number", but its type is every word `typeof` can answer, so
+// it may be compared with each of them.
+function words(n: number): boolean[] {
+  const word = typeof n;
+  return [word === "number", word === "object", word === "function"];
+}
+
+// A union that may hold a function becomes a string at run time, which would refuse the function;
+// only the string arm is taken here.
+function show(v: (() => number) | string): string {
+  return `${v}` + v + String(v);
+}
+
+console.log(run(() => 7), run(8), words(1), show("ab"));
