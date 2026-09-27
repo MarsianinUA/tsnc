@@ -211,8 +211,6 @@ class_arguments :: proc(
 	return args, true
 }
 
-// Callbacks.
-
 // Callback is what an array method calls for each element: an arrow written in the call, inlined
 // (inline_arrow), or anything else, called through call_target.
 @(private)

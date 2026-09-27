@@ -1,15 +1,10 @@
 /*
-Our own intermediate representation: the program with every TypeScript rule already resolved. lower
-builds a Program_IR, opt rewrites it in v2, codegen walks it with one exhaustive switch, the
--emit-ir dump prints it and verify answers whether it keeps to the rules below. Nothing here knows
-TypeScript. What the source leaves implicit becomes an
-instruction of its own: a tag check, a bounds check, a reference store, a runtime call.
-
-Shape: static single assignment. A Func keeps its blocks and its instructions in two flat arrays and
-every reference between them is a distinct index, never a pointer, so a function can be walked,
-printed and copied without chasing memory. A Value_ID is the instruction that defines the value.
+Our own intermediate representation, the Program_IR of
+docs/architecture-plan-tsnc.md#program_ir-package-ir. verify answers whether a program keeps to the
+rules below.
 
 IDs and sentinels:
+- A Value_ID is the instruction that defines the value.
 - Func_ID, Global_ID, Layout_ID, String_ID and Fail_Site_ID index the arrays of Program_IR.
   Block_ID and Value_ID index the arrays of one Func and mean nothing in another one.
 - NO_LAYOUT is layout 0, a reserved row, so a zero Type reads as Void and two types compare with ==.
@@ -21,14 +16,11 @@ IDs and sentinels:
   reader that wants every definition before its uses walks the blocks in reverse post-order rather
   than comparing two Value_ID values.
 
-Layouts are the GC type tables. lower interns a layout by the canonical shape of a cell and gets a
-Layout_ID; the rows are abi.Type_Table values, so what lower interns is exactly what codegen emits
-as static data and what the collector reads at run time. There is no second description of a cell.
-
-A table row is a layout row too, with the slots and offsets of one layout listed in another order:
-Node prints an object's properties in the order the literal wrote them, so `{a, b}` and `{b, a}` are
-one layout, one IR type, and two rows. Only the header of a cell names a table row, through
-Alloc.table; every type names the layout itself, which Program_IR.base gives for any row.
+Layouts are the GC type tables: the rows are abi.Type_Table values, so what lower interns is exactly
+what codegen emits as static data and what the collector reads at run time. A table row lists the
+slots of one layout in another order, because Node prints the properties in the order the literal
+wrote them: `{a, b}` and `{b, a}` are one layout, one IR type, and two rows. Only Alloc.table names
+a row; Program_IR.base gives the layout of any row.
 
 A function value is a Closure, a reference to an abi.Closure_Cell. Func_Ref answers the one static
 cell of a module-level function, Make_Closure a new cell holding the environment its caller built
@@ -40,9 +32,8 @@ Failure sites are resolved here rather than in codegen. abi.Fail_Site wants a pa
 column, and only source can turn a byte offset into a line and a column; codegen depends on ir, abi,
 target and llvm, not on source. So lower resolves the position and Program_IR carries the sites.
 
-Memory: everything in a Program_IR comes from the allocator its builder was made with, which is
-meant to be an arena, and ir never frees. Names and paths are borrowed from the caller and must
-outlive the result, the way ast borrows the source text.
+Memory: names and paths are borrowed from the caller and must outlive the result, the way ast
+borrows the source text.
 */
 package ir
 
@@ -60,7 +51,6 @@ Value_ID :: distinct u32
 // ENTRY is never the target of a jump.
 ENTRY :: Block_ID(0)
 
-// NO_LAYOUT takes row 0 of Program_IR.layouts, which is reserved for it.
 NO_LAYOUT :: Layout_ID(0)
 
 // NO_VALUE means an operand is absent, as in a Return with no result.

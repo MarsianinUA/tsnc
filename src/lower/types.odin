@@ -67,7 +67,6 @@ representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type
 	return shallow_kind(types, id)
 }
 
-// ir_type answers from the memo of the check result after the first call for a type.
 ir_type :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -282,8 +281,6 @@ object_layout :: proc(low: ^Lowering, types: []check.Type, object: check.Object)
 	return ir.object_layout(&low.builder, slots)
 }
 
-// Classes.
-
 // Classes is a union-find over string keys, each node holding a value. join_classes gives every
 // root the join of its class, and class_value answers it for any key of the class. The keys are
 // strings, so the Type_IDs of two checkers never meet.
@@ -422,8 +419,6 @@ slots_key :: proc(slots: []ir.Slot) -> string {
 	return strings.to_string(b)
 }
 
-// Signatures.
-
 // Signature is what a call of a function passes and gets back, in IR types.
 Signature :: struct {
 	params: []ir.Type,
@@ -495,7 +490,6 @@ signature_equal :: proc(a, b: Signature) -> bool {
 	return a.result == b.result && slice.equal(a.params, b.params)
 }
 
-// signature_node answers the node of a function type's signature.
 @(private)
 signature_node :: proc(
 	low: ^Lowering,
@@ -550,8 +544,6 @@ write_type_key :: proc(b: ^strings.Builder, type: ir.Type) {
 	strings.write_byte(b, ':')
 	strings.write_int(b, int(type.layout))
 }
-
-// Memos.
 
 // Type_Memo holds what ir_type and signature_of answered for the types of one check result, by
 // Type_ID: each would build slots, keys and signatures again on every call.

@@ -32,10 +32,7 @@ a new line that starts a statement, or to the end, over balanced brackets; an un
 skipped alone. Only the first syntax error (T1xxx) of a line is reported, since the next ones on
 that line are most likely its consequences, as in go/parser; T2xxx are always reported.
 
-Memory: the token array, the node array, every list, every allocated string and the diagnostics
-are allocated with the allocator passed in, which is meant to be an arena: parse never frees. Names
-and string values borrow the source text or tokenize's cooked values. Scratch data goes to
-context.temp_allocator.
+Memory: names and string values borrow the source text or tokenize's cooked values.
 */
 package parse
 
@@ -231,15 +228,12 @@ discard :: proc(p: ^Parser, m: Mark, start: i32) -> ast.Node_ID {
 	return add_node(p, start, ast.Bad{})
 }
 
-// Tokens.
-
 // peek past the end answers with the EOF token.
 @(private)
 peek :: proc(p: ^Parser, ahead := 0) -> Token {
 	return p.tokens[min(p.current + ahead, len(p.tokens) - 1)]
 }
 
-// advance never moves past EOF.
 @(private)
 advance :: proc(p: ^Parser) -> Token {
 	token := p.tokens[p.current]
@@ -376,8 +370,6 @@ skip_balanced :: proc(p: ^Parser) {
 	}
 }
 
-// Nodes.
-
 // add_node ends the node at the last consumed token. A node that consumed nothing is zero-width at
 // that end, like add_missing.
 @(private)
@@ -459,8 +451,6 @@ module_requests :: proc(
 	}
 	return requests[:]
 }
-
-// Diagnostics.
 
 // error_expected reports that what (a quoted token, "a name", "an expression") is missing before
 // the current token. When that token starts a new line, the error stands at the end of the line
@@ -578,8 +568,6 @@ quoted :: proc(p: ^Parser, text: string) -> string {
 	return strings.concatenate({"`", text, "`"}, p.allocator)
 }
 
-// Statements end.
-
 // end_statement accepts a missing `;` where automatic semicolon insertion puts one. Otherwise it
 // reports the `;` missing and skips to the next statement.
 @(private)
@@ -595,9 +583,6 @@ end_statement :: proc(p: ^Parser) {
 	skip_statement(p)
 }
 
-// skip_statement skips the rest of a broken statement: past the next `;`, or up to a closing
-// bracket of an enclosing construct, a token on a new line that starts a statement, or the end.
-// Brackets opened in between are skipped whole.
 @(private)
 skip_statement :: proc(p: ^Parser) {
 	for {

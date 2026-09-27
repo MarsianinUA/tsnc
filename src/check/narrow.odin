@@ -25,12 +25,11 @@ Answer :: struct {
 // argument Trail makes for fits.
 @(private)
 Narrowing :: struct {
-	// The answer already worked out for a flow node of this walk, cleared before the next one. It
-	// is read by key alone: Odin's map iteration order changes between runs, and a narrowed type
-	// reaches the output. Without it a run of branches would be walked once per path through it.
+	// The answer already worked out for a flow node of this walk, cleared before the next one, and
+	// read by key alone, as Table.by_key is. Without it a run of branches would be walked once per
+	// path through it.
 	answers:    map[bind.Flow_ID]Answer,
-	// The loop heads the walk is inside right now. A back edge that reaches one again contributes
-	// nothing, which is what makes the walk end.
+	// The loop heads the walk is inside right now.
 	loops:      [dynamic]bind.Flow_ID,
 	// The nodes whose kept answer carries a cut, in the order they were kept. loop_type drops the
 	// ones its own evaluation added.
@@ -61,8 +60,7 @@ make_narrowing :: proc(allocator := context.allocator) -> Narrowing {
 //
 // Every file the checker reads has fact tables, its own partition's or a scratch set (see Facts), so
 // the walk works the same in a file this call types and in one it only reads to learn the type of an
-// imported name. Without that, a result inferred from a narrowed value would come out one type in the
-// checker that owns the file and another in a checker that merely reads it.
+// imported name.
 @(private)
 narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Type_ID {
 	_, is_union := c.table.types[declared].(Union)
@@ -85,8 +83,6 @@ narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Typ
 	// whose members the tests on the way here have all ruled out, and it is let through.
 	return answer.type if answer.reached else declared
 }
-
-// The walk.
 
 // flow_type steps over the nodes that say nothing about this reference in a loop rather than by
 // recursion: a long run of writes to other names is the one shape that could otherwise grow the
@@ -236,8 +232,7 @@ settled_type :: proc(
 // its outer flow unreachable.
 //
 // The narrowing carries only for a name nothing writes to. A write anywhere in the file could
-// happen between the moment the arrow is made and the moment it runs, and bind's Assigned flag
-// covers the whole file, which is the question a closure has to ask.
+// happen between the moment the arrow is made and the moment it runs.
 @(private)
 start_type :: proc(
 	c: ^Checker,
@@ -321,8 +316,6 @@ loop_type :: proc(
 	}
 	return type, reached
 }
-
-// Writes.
 
 // written_type matches a declarator by symbol, because it writes to the name it declares rather
 // than to an expression; the other three write to a place spelled out in the source.
@@ -442,8 +435,6 @@ loop_declarator :: proc(c: ^Checker, declaration: ast.Node_ID) -> ast.Node_ID {
 	return node.declarators[0]
 }
 
-// Conditions.
-
 // condition_type reads a condition bind has already erased `!`, `&&`, `||` and `??` from, so the
 // condition node points at what is really tested; `??` is the one that asks about null and
 // undefined rather than about truth.
@@ -560,8 +551,6 @@ narrow_by_place :: proc(
 	return before
 }
 
-// The `switch` statement.
-
 // switch_clause_type reads a clause range as the cases that lead to one group of statements, so the
 // value is one of theirs; the empty range is the path taken when nothing matched, and rules out
 // every case at once.
@@ -628,8 +617,6 @@ case_unit :: proc(c: ^Checker, id: ast.Node_ID) -> (unit: Type_ID, ok: bool) {
 is_default :: proc(c: ^Checker, id: ast.Node_ID) -> bool {
 	return c.at.tree.nodes[id].variant.(ast.Case).value == ast.NO_NODE
 }
-
-// Reachability.
 
 // switch_exhausted asks both the subject and the place the subject tests: `switch (s.kind)` rules
 // out members of `s` rather than values of `s.kind`, and either one running out means no value is
@@ -742,8 +729,6 @@ walk_back :: proc(work: ^[dynamic]bind.Flow_ID, seen: []bool, flow: bind.Flow_ID
 	seen[flow] = true
 	append(work, flow)
 }
-
-// Filters over the members of a union.
 
 // narrow_by_unit lets a member wider than the value survive `!==`, because it can still hold
 // another one: `string | undefined` without `undefined` is `string`, while `string` without `"a"`
@@ -881,8 +866,6 @@ literal_text :: proc(c: ^Checker, id: Type_ID) -> (text: string, ok: bool) {
 	}
 	return literal.value.(string)
 }
-
-// Places.
 
 // same_reference is the check side of bind's is_narrowable: a name, a field of a place, or an
 // element of one at a fixed index.

@@ -427,8 +427,6 @@ creation_point :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, closure: as
 	return tree.nodes[bound.scopes[scope].node].span.start
 }
 
-// Making closures.
-
 // make_closure makes a new closure of a function this file declares: its environment first, a
 // copy of each value it captures or the box that value lives in, then the cell. A capture with no
 // value was refused where it is declared, and the closure is poison without another word.

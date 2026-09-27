@@ -17,9 +17,8 @@ Declare, then define. declare_func reserves a row before a body exists, so a cal
 function built later: two functions that call each other, or a module init calling a function
 declared below it.
 
-Memory: every row, list and key comes from the allocator make_builder was given, which is meant to
-be an arena. What the builder needs only while building, the two intern maps and the key buffer,
-goes back in finish; nothing else is ever freed. Names, paths and the slices inside a variant may be
+Memory: what the builder needs only while building, the intern maps and the key buffer, goes back
+in finish; nothing else is ever freed. Names, paths and the slices inside a variant may be
 scratch of the caller: emit copies what it keeps, and the package doc says which strings it borrows.
 */
 
@@ -33,8 +32,7 @@ Program_Builder :: struct {
 	// Program_IR calls this one strings; here that name belongs to the import.
 	string_pool: [dynamic][]u16,
 	fail_sites:  [dynamic]abi.Fail_Site,
-	// The interned rows by key. They are only ever read by key: Odin's map iteration order changes
-	// between runs, and nothing whose order reaches the output may come out of a map.
+	// The interned rows by key, only ever read by key: Table.by_key in check/types.odin says why.
 	layout_ids:  map[string]Layout_ID,
 	string_ids:  map[string]String_ID,
 	site_ids:    map[abi.Fail_Site]Fail_Site_ID,
@@ -152,8 +150,7 @@ intern_string :: proc(p: ^Program_Builder, text: string) -> String_ID {
 	return id
 }
 
-// add_global borrows name, which must outlive the program. A global is zero filled before any
-// module runs, so a Tagged one starts as undefined.
+// add_global borrows name, which must outlive the program.
 add_global :: proc(p: ^Program_Builder, name: string, type: Type) -> Global_ID {
 	id := Global_ID(len(p.globals))
 	append(&p.globals, Global{name = name, type = type})
@@ -376,7 +373,7 @@ only_phis :: proc(f: ^Func_Builder, block: Block_ID) -> bool {
 }
 
 // own copies the lists a variant points at into the program: a caller may have built them in its
-// own scratch. Only the variants that carry a list have anything to copy.
+// own scratch.
 @(private)
 own :: proc(p: ^Program_Builder, variant: Variant) -> Variant {
 	#partial switch v in variant {

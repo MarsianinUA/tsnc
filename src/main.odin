@@ -24,7 +24,6 @@ main :: proc() {
 	// sentence codegen already wrote.
 	context.logger = log.create_file_logger(os.stderr, opt = log.Options{})
 
-	// stderr only: stdout belongs to the compiled program under `tsnc run`.
 	// core:flags accepts every Target value, and a declared target may have no SPECS row yet.
 	if !target.supported(options.target) {
 		fmt.eprintfln("target %v is not supported yet", options.target)

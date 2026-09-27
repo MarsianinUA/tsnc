@@ -65,8 +65,6 @@ add_file :: proc(c: ^Closure, display, absolute, text: string) -> source.File_ID
 	append(&c.absolute, absolute)
 	append(&c.edges, make([dynamic]program.Import_Edge, c.arena))
 
-	// new, not append of a value: the task's arena allocator captures the task by pointer, and a
-	// dynamic array of tasks would move them as it grows.
 	task := new(File_Task, c.memory.allocator)
 	task.file = id
 	task.text = text

@@ -25,9 +25,8 @@ end of its line, a template or a block comment at the end of the file. A malform
 Number token, a name or a digit glued to its end included (`3in`, `10n`). Rules from strict mode
 hold, since every file is a module: no legacy octal numbers (`017`, `08`) and no octal escapes.
 
-Memory: the token array, the diagnostics and every cooked value that differs from its source text
-are allocated with the allocator passed in. Names, the other cooked values and the diagnostic
-arguments borrow the source text. Scratch data goes to context.temp_allocator.
+Memory: a cooked value that differs from its source text is allocated; names, the other cooked
+values and the diagnostic arguments borrow the source text.
 */
 
 import "base:runtime"

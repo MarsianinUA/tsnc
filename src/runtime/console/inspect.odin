@@ -706,7 +706,6 @@ append_meta :: proc(out: ^[dynamic]u16, unit: u16) {
 	}
 }
 
-// is_pair answers whether a high surrogate at `i` has its low one after it.
 @(private)
 is_pair :: proc(text: string16, i: int) -> bool {
 	high := 0xd800 <= text[i] && text[i] <= 0xdbff

@@ -8,8 +8,6 @@ import "../bind"
 import "../program"
 import "../source"
 
-// Named types.
-
 // Lib_Types are the declarations of the lib module that check has to find by name rather than by
 // use: `Array<T>`, which every `T[]` takes its members from, and the interfaces that hold what a
 // string and a number can do. They are looked up once, the first time anything asks.
@@ -85,7 +83,7 @@ named_type :: proc(c: ^Checker, ref: Symbol_Ref, args: []Type_ID, name: ast.Name
 	#partial switch symbol.kind {
 	case .Interface:
 		// `Array<T>` written as a type is the array type itself, so `number[]` and `Array<number>`
-		// are one type and, in T5.7, one layout. The interface behind the name holds the methods,
+		// are one type and, in lower, one layout. The interface behind the name holds the methods,
 		// which apparent_type reaches through instantiation.
 		if ref.file == program.LIB && ref.symbol == lib_types(c).array {
 			if !type_args_fit(c, name, len(args), 1) {
@@ -212,8 +210,6 @@ type_param_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Ty
 	return ERROR
 }
 
-// Type arguments.
-
 @(private)
 Restore :: struct {
 	decl:  Decl_Ref,
@@ -292,8 +288,6 @@ type_argument_text :: proc(c: ^Checker, count: int) -> string {
 	return strings.to_string(b)
 }
 
-// Object types.
-
 // object_fields puts the fields in canonical order, which is by name, as requirements 3.3 asks. A
 // name declared more than once is an overload when every declaration is a signature, which is how
 // the lib file writes `reduce`; anywhere else it is a mistake, and the first declaration stands.
@@ -371,8 +365,6 @@ sort_fields :: proc(fields: []Field) {
 		return a.name < b.name
 	})
 }
-
-// Reading an object.
 
 // apparent_type is the object whose fields a member lookup searches. A primitive borrows the members
 // the lib file declares for it, and an array borrows those of `Array<T>` instantiated with its

@@ -1,7 +1,6 @@
 /*
-The names of one file: symbols, scopes, the flow graph that check narrows with, the import and
-export tables and the top-level side effects flag. parse builds the tree, bind_file reads it once
-and returns a frozen Bound_File; check and lower read that and never change it.
+The names of one file, the Bound_File of the bind row of
+docs/architecture-plan-tsnc.md#package-boundaries-compiler.
 
 Tables:
 - symbols, scopes and flow hold the file's own data. Entry zero of each is the one that means
@@ -36,9 +35,7 @@ Where tsnc differs from tsc: a condition that narrows nothing still gets a node;
 immediately called arrow is not inlined; the growth of an array of unknown element type is not
 tracked, so check asks for an annotation; Assigned covers the whole file instead of a point in it.
 
-Memory: every table of the result, and the diagnostics, come from the allocator passed in, which is
-meant to be an arena: bind never frees. Names and texts are borrowed from the tree, so the result
-must not outlive it. Scratch data goes to context.temp_allocator.
+Memory: names and texts are borrowed from the tree, so the result must not outlive it.
 */
 package bind
 
@@ -63,7 +60,6 @@ MODULE_SCOPE :: Scope_ID(0)
 // Flow_ID indexes Bound_File.flow.
 Flow_ID :: distinct u32
 
-// UNREACHABLE is the flow of code no path reaches.
 UNREACHABLE :: Flow_ID(0)
 
 Bound_File :: struct {

@@ -136,8 +136,6 @@ switch_clause_flow :: proc(
 	)
 }
 
-// Conditions.
-
 // bind_condition binds an expression that is tested for being truthy, and records where each
 // answer leads. `!` only swaps the two answers, and `&&` and `||` pass them on to their sides, so
 // the condition node lands on what is really tested. `??` passes them on to its right side alone:
@@ -202,8 +200,6 @@ condition_flow :: proc(
 		},
 	)
 }
-
-// Logical operators.
 
 // Logical_Op is the operator behind `&&`, `||` and `??`, and behind their assignments.
 @(private)
@@ -319,8 +315,6 @@ bind_coalesce_left :: proc(
 	add_antecedent(b, true_label, condition_flow(b, left, .Truthy, true))
 	add_antecedent(b, false_label, condition_flow(b, left, .Truthy, false))
 }
-
-// References.
 
 // is_narrowable reports whether an expression names a place check can narrow: a variable, a field
 // of one, or an element at a fixed index.

@@ -670,8 +670,6 @@ add_identifier :: proc(p: ^Parser, token: Token) -> ast.Node_ID {
 	return add_node_at(p, token.span, ast.Ident{name = name})
 }
 
-// parse_template parses `a${x}b${y}c`: the text parts from the template tokens, the expressions
-// between them.
 parse_template :: proc(p: ^Parser) -> ast.Node_ID {
 	start := token_start(p)
 	head := advance(p)
@@ -922,8 +920,6 @@ parse_regular_expression :: proc(p: ^Parser) -> ast.Node_ID {
 	report_subset(p, .Regular_Expression, literal)
 	return add_node_at(p, literal, ast.Bad{})
 }
-
-// Arrow functions.
 
 // try_arrow returns NO_NODE and reads nothing when no arrow function starts at the current token.
 try_arrow :: proc(p: ^Parser) -> ast.Node_ID {

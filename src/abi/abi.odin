@@ -1,11 +1,7 @@
 /*
-The contract between generated code and the runtime: cell layouts, tags, the GC type table format,
-runtime exports and error codes. The compiler (lower, codegen) and the runtime (rt and its
-subpackages) both import this package, so every layout and name has exactly one definition. A change
-here is a change to both sides at once.
-
-The package holds data only and imports nothing, so the runtime can import it without pulling in the
-compiler or core.
+The contract between generated code and the runtime, as
+docs/architecture-plan-tsnc.md#abi-package-abi describes it. A change here is a change to both
+sides at once.
 
 v1 targets are 64-bit and the host is the target, so codegen takes sizes and offsets from size_of
 and offset_of of these structs. The #asserts at the end of this file pin what codegen maps to LLVM

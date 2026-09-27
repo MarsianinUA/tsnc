@@ -17,8 +17,7 @@ instruction ends with the line and the column it came from, and a function names
 lower builds one function out of one module.
 
 Deterministic by construction: everything printed is an array index or array order, and nothing here
-reads a map, whose iteration order changes between runs. Two runs of the same compiler over the same
-program write the same bytes, which is what the determinism test of milestone 6 asks of -emit-ir.
+reads a map. Two runs of the same compiler over the same program write the same bytes.
 
 The dump is ASCII. A string constant is UTF-16 and may hold a lone surrogate on purpose, so it
 prints unit by unit with everything outside printable ASCII as an escape, and no unit is lost to a

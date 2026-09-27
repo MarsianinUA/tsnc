@@ -6,8 +6,9 @@ Three names in Math are not the C function of the same name, so the compiler cal
 them instead of emitting an intrinsic: round takes a half toward positive infinity and keeps a
 negative zero, and max and min have their own rules for NaN and for the two zeros.
 
-Text and numbers meet in the other two files: format.odin writes Number::toString and toFixed,
-parse.odin reads the ToNumber grammar behind parseFloat.
+Text and numbers meet in the other three files: format.odin writes Number::toString and toFixed,
+parse.odin reads the ToNumber grammar behind parseFloat, and convert.odin reads text the way
+Number() and parseInt do.
 */
 package num
 

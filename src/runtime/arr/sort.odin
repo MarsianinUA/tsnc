@@ -252,9 +252,7 @@ less :: proc(state: ^Sort_State, a, b: int) -> bool {
 	return order < 0
 }
 
-// write_back stores the sorted elements, then the undefined ones, over the array from index 0. An
-// index at the array's length appends, which is the specification's Set on an array a comparator
-// shortened.
+// write_back stores the sorted elements, then the undefined ones, over the array from index 0.
 @(private)
 write_back :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, state: ^Sort_State) {
 	for index, i in state.order {

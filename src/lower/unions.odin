@@ -152,8 +152,6 @@ members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
 	return out
 }
 
-// `typeof`.
-
 // lower_typeof answers the word statically where the operand's value has a static representation,
 // and asks the runtime for the word of a tagged value. `typeof x === "number"` never gets here: it
 // is a tag test (lower_typeof_test).
@@ -302,7 +300,6 @@ lower_typeof_test :: proc(
 	return test, true
 }
 
-// typeof_is tests whether `typeof` of a tagged value answers the word.
 @(private)
 typeof_is :: proc(
 	s: ^Func_State,
@@ -396,8 +393,6 @@ typeof_case_test :: proc(
 	}
 	return typeof_is(s, subject.tagged, word, span), true
 }
-
-// Equality and truthiness.
 
 // compare_tagged is `===` or `!==` with a tagged side. Against a side whose value is null or
 // undefined itself (nullish_tags) it tests the tag of the other; anything else goes to the runtime,
@@ -495,8 +490,6 @@ nullish_or_reference :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 	}
 	return true
 }
-
-// `as`.
 
 // lower_as converts the way requirements 3.8 allows: a widening boxes or changes nothing, and a
 // narrowing of a tagged value checks what it holds, failing with Type_Assertion. An `any` or an
@@ -744,8 +737,6 @@ holds_function_in :: proc(
 	return false
 }
 
-// Fields of a union of objects.
-
 // Union_Field is how the members of one layout hold the field: its slot, and the type a read gives.
 @(private)
 Union_Field :: struct {
@@ -764,7 +755,6 @@ Union_Field_Place :: struct {
 	type:    ir.Type,
 }
 
-// is_object_union says whether a type is a union whose every member is an object type.
 @(private)
 is_object_union :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 	union_type, is_union := types[id].(check.Union)
