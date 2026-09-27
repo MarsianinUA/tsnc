@@ -27,7 +27,7 @@ const flags = [true, false, true, false];
 console.log(flags.sort((a, b) => (a ? 1 : 0) - (b ? 1 : 0)));
 
 const holes: (number | undefined)[] = [3, undefined, 1, undefined, 2];
-console.log(holes.sort((a, b) => 0));
+console.log(holes.sort((a, b) => (a ?? -1) - (b ?? -1)));
 
 function descending(a: number, b: number): number {
   return b - a;

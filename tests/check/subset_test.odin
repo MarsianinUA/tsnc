@@ -5,7 +5,7 @@ import "core:testing"
 
 // The rules of requirements 2.2 and 2.3 that only check can decide: `declare` and type parameters
 // belong to the lib file alone, and the prototype chain and `Symbol` belong to nothing at all. parse
-// rejects every "never" rule it can see without a type or a file, and tests/parse covers those.
+// rejects every "never" rule it can see without a type or a file, and tests/negative covers those.
 
 @(test)
 declare_outside_the_lib_file_is_rejected :: proc(t: ^testing.T) {
@@ -59,15 +59,6 @@ type_parameters_of_ones_own_are_rejected :: proc(t: ^testing.T) {
 		`interface Mapper { apply<U>(x: number): U; }`,
 		[]Error{{.Generic_Declaration, 1, 26}},
 	)
-}
-
-@(test)
-the_lib_file_keeps_its_generics :: proc(t: ^testing.T) {
-	// The rule is about the file, not about the syntax: `Array<T>` and `map<U>` live in the lib file
-	// and every program leans on them.
-	c := expect_checked(t, `const doubled = [1, 2].map(x => x * 2);`)
-
-	testing.expect_value(t, declared_text(c, "doubled"), "number[]")
 }
 
 @(test)
@@ -251,23 +242,4 @@ every_operation_on_any_that_needs_a_lookup_is_rejected :: proc(t: ^testing.T) {
 			{.Any_Operation, 13, 17},
 		},
 	)
-}
-
-@(test)
-any_joins_a_string_and_compares_without_a_conversion :: proc(t: ^testing.T) {
-	// ToString of a tagged value, `===`, truthiness, typeof and `??` all read the tag at run time.
-	c := expect_checked(
-		t,
-		lines(
-			`const a: any = 1;`, //
-			`const text = "n=" + a;`,
-			"const shown = `${a}`;",
-			`const same = a === 1;`,
-			`const truth = !a;`,
-			`const word = typeof a;`,
-			`const other = a ?? 2;`,
-		),
-	)
-	testing.expect_value(t, declared_text(c, "text"), "string")
-	testing.expect_value(t, declared_text(c, "other"), "any")
 }

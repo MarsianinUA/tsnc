@@ -6,48 +6,6 @@ import "core:testing"
 import "../../src/diag"
 
 @(test)
-a_chain_initializes_from_the_far_end :: proc(t: ^testing.T) {
-	b := build_graph(
-		{
-			{path = "lib.d.ts"},
-			{path = "main.ts", imports = {2}},
-			{path = "a.ts", imports = {3}},
-			{path = "b.ts"},
-		},
-	)
-
-	// main imports a and a imports b, so b has to run first: a module only runs once everything it
-	// imports has run.
-	testing.expect_value(
-		t,
-		slice.equal(order_names(b), []string{"lib.d.ts", "b.ts", "a.ts", "main.ts"}),
-		true,
-	)
-	expect_no_cycles(t, b)
-}
-
-@(test)
-a_diamond_initializes_the_shared_module_once :: proc(t: ^testing.T) {
-	b := build_graph(
-		{
-			{path = "lib.d.ts"},
-			{path = "main.ts", imports = {2, 3}},
-			{path = "a.ts", imports = {4}},
-			{path = "b.ts", imports = {4}},
-			{path = "c.ts"},
-		},
-	)
-
-	// a and b both import c. c runs first and once, then the two that share it, then main.
-	testing.expect_value(
-		t,
-		slice.equal(order_names(b), []string{"lib.d.ts", "c.ts", "a.ts", "b.ts", "main.ts"}),
-		true,
-	)
-	expect_no_cycles(t, b)
-}
-
-@(test)
 every_module_takes_one_place_in_the_order :: proc(t: ^testing.T) {
 	// c imports a back, so a, b and c share one place in the order.
 	b := build_graph(

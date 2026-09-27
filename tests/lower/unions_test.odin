@@ -1,6 +1,5 @@
 package lower_tests
 
-import "core:slice"
 import "core:testing"
 
 import "../../src/abi"
@@ -110,20 +109,6 @@ typeof_of_a_static_value_is_a_constant :: proc(t: ^testing.T) {
 }
 
 @(test)
-typeof_as_a_value_asks_the_runtime :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		function word(v: number | string): string {
-			return typeof v;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.word")
-	testing.expectf(t, calls_to(body, .Value_Typeof) == 1, "%s", result.text)
-}
-
-@(test)
 a_switch_over_typeof_tests_the_tag_of_each_case :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,
@@ -168,21 +153,6 @@ a_comparison_with_null_or_undefined_is_a_tag_test :: proc(t: ^testing.T) {
 		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Null})
 		testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Undefined})
 	}
-}
-
-@(test)
-any_other_comparison_with_a_tagged_side_asks_the_runtime :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		function same(a: number | string, b: number): boolean {
-			return a === b;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.same")
-	testing.expectf(t, calls_to(body, .Value_Equal) == 1, "%s", result.text)
-	testing.expectf(t, len(instructions_of(body, ir.Box)) == 1, "%s", result.text)
 }
 
 @(test)
@@ -233,25 +203,6 @@ a_non_null_assertion_fails_on_null_and_undefined :: proc(t: ^testing.T) {
 	testing.expect_value(t, error, abi.Runtime_Error.Non_Null_Assertion)
 	testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Object})
 	testing.expectf(t, len(instructions_of(body, ir.Layout_Test)) == 1, "%s", result.text)
-}
-
-@(test)
-as_to_a_member_of_a_union_checks_the_tag :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		function n(v: number | string): number {
-			return v as number;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.n")
-	fails := instructions_of(body, ir.Fail)
-	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
-		error := result.output.fail_sites[fails[0].site].error
-		testing.expect_value(t, error, abi.Runtime_Error.Type_Assertion)
-	}
-	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 1, "%s", result.text)
 }
 
 @(test)
@@ -326,32 +277,6 @@ const k = u as F;
 	)
 	for construct in result.constructs {
 		testing.expect_value(t, construct, "become a function")
-	}
-}
-
-@(test)
-a_field_of_a_union_dispatches_over_each_layout :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		SHAPES + `
-		function kind(s: Shape): string {
-			return s.kind;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.kind")
-	tests := instructions_of(body, ir.Tag_Test)
-	if testing.expectf(t, len(tests) == 1, "%s", result.text) {
-		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Object})
-	}
-	checks := instructions_of(body, ir.Layout_Test)
-	loads := instructions_of(body, ir.Field_Load)
-	testing.expectf(t, len(checks) == 3 && len(loads) == 3, "%s", result.text)
-	testing.expect(t, body.result == ir.STR)
-	fails := instructions_of(body, ir.Fail)
-	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
-		error := result.output.fail_sites[fails[0].site].error
-		testing.expect_value(t, error, abi.Runtime_Error.Tagged_Holds_Other_Kind)
 	}
 }
 
@@ -435,63 +360,6 @@ the_length_of_a_string_or_an_array_reads_either :: proc(t: ^testing.T) {
 }
 
 @(test)
-plus_with_an_object_asks_for_its_primitive_first :: proc(t: ^testing.T) {
-	result := lower_text(
-		t,
-		`
-		function show(p: { x: number }, v: number | string): string {
-			return "p=" + p + v;
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.show")
-	testing.expectf(t, calls_to(body, .Value_To_Primitive_String) == 2, "%s", result.text)
-	testing.expectf(t, calls_to(body, .Value_To_String) == 0, "%s", result.text)
-}
-
-@(test)
-a_short_circuit_unboxes_the_side_it_keeps_on_that_edge :: proc(t: ^testing.T) {
-	// `s ?? "none"` and `s || "none"` are strings, and s is one exactly where it is kept: the unbox
-	// has a block of its own, and the phi takes it from there.
-	result := lower_text(
-		t,
-		`
-		function coalesce(s: string | undefined): string {
-			return s ?? "none";
-		}
-		function either(s: string | undefined): string {
-			return s || "none";
-		}
-	`,
-	)
-	for name in ([?]string{"m1.coalesce", "m1.either"}) {
-		body, _ := func_named(result.output, name)
-		unboxes := 0
-		for instruction, id in body.values {
-			phi, is_phi := instruction.variant.(ir.Phi)
-			if !is_phi || instruction.type != ir.STR {
-				continue
-			}
-			for edge in phi.incoming {
-				if _, is_unbox := body.values[edge.value].variant.(ir.Unbox); !is_unbox {
-					continue
-				}
-				unboxes += 1
-				testing.expectf(
-					t,
-					block_of(body, edge.value) == edge.block,
-					"%s: the unbox of %%%d is not the edge of its phi\n%s",
-					name,
-					id,
-					result.text,
-				)
-			}
-		}
-		testing.expectf(t, unboxes == 1, "%s:\n%s", name, result.text)
-	}
-}
-
-@(test)
 a_compound_assignment_reads_the_narrowed_value :: proc(t: ^testing.T) {
 	// v is a number inside the test: it is unboxed, added to, and boxed back into its binding. A
 	// field of a union is read through one dispatch and written through another.
@@ -519,131 +387,4 @@ a_compound_assignment_reads_the_narrowed_value :: proc(t: ^testing.T) {
 	testing.expectf(t, len(instructions_of(bump, ir.Layout_Test)) == 4, "%s", result.text)
 	stores := instructions_of(bump, ir.Field_Store)
 	testing.expectf(t, len(stores) == 2, "%s", result.text)
-}
-
-@(test)
-console_log_of_a_narrowed_read_does_not_unbox :: proc(t: ^testing.T) {
-	// The runtime takes the tagged value as it is, so there is nothing to check.
-	result := lower_text(
-		t,
-		`
-		function show(v: number | string): void {
-			if (typeof v === "number") {
-				console.log(v);
-			}
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.show")
-	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 0, "%s", result.text)
-}
-
-@(test)
-a_binding_of_type_never_holds_nothing :: proc(t: ^testing.T) {
-	// The idiom that makes a switch exhaustive: s is `never` in the default, and the binding takes
-	// no value a join would have to reconcile.
-	result := lower_text(
-		t,
-		SHAPES +
-		`
-		function area(s: Shape): number {
-			switch (s.kind) {
-				case "circle":
-					return s.radius;
-				case "square":
-					return s.side;
-				case "rect":
-					return s.width * s.height;
-				default: {
-					const unreachable: never = s;
-					return unreachable;
-				}
-			}
-		}
-	`,
-	)
-	_, found := func_named(result.output, "m1.area")
-	testing.expect(t, found)
-}
-
-@(test)
-an_optional_number_argument_left_undefined_takes_the_stand_in :: proc(t: ^testing.T) {
-	// slice(0, undefined) is slice(0), whose end the runtime takes as +Infinity (abi.MISSING_END).
-	result := lower_text(
-		t,
-		`
-		function cut(s: string, end?: number): string {
-			return s.slice(0, end);
-		}
-	`,
-	)
-	body, _ := func_named(result.output, "m1.cut")
-	tests := instructions_of(body, ir.Tag_Test)
-	if testing.expectf(t, len(tests) == 2, "%s", result.text) {
-		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Undefined})
-	}
-	found := false
-	for instruction in body.values {
-		if constant, is_constant := instruction.variant.(ir.Const_Number); is_constant {
-			found ||= constant.value == abi.MISSING_END
-		}
-	}
-	testing.expectf(t, found, "%s", result.text)
-}
-
-// block_of answers the block an instruction stands in.
-@(private = "file")
-block_of :: proc(body: ir.Func, value: ir.Value_ID) -> ir.Block_ID {
-	for block, id in body.blocks {
-		if slice.contains(block.instructions, value) {
-			return ir.Block_ID(id)
-		}
-	}
-	return ir.NO_BLOCK
-}
-
-@(test)
-a_tagged_value_is_read_even_where_check_narrowed_it :: proc(t: ^testing.T) {
-	// check narrows `count` to undefined by its initializer and keeps the narrowing across the
-	// calls, as tsc does, but the variable holds a number by then. `??`, `===`, console.log and
-	// typeof read the value itself instead of trusting the narrowed type.
-	result := lower_text(
-		t,
-		`
-		let count: number | undefined = undefined;
-		function bump(): void {
-			count = (count ?? 0) + 1;
-		}
-		bump();
-		console.log(count ?? 0, count === undefined, count, typeof count);
-	`,
-	)
-	init, _ := func_named(result.output, "init$m1")
-	testing.expectf(t, calls_to(init, .Value_Typeof) == 1, "%s", result.text)
-	// `??` tests for null and undefined and then for the number it keeps; `===` tests for undefined.
-	tests := instructions_of(init, ir.Tag_Test)
-	testing.expectf(t, len(tests) == 3, "%s", result.text)
-	for test in tests {
-		_, is_constant := init.values[test.value].variant.(ir.Const_Undefined)
-		testing.expectf(t, !is_constant, "a tag test of the constant:\n%s", result.text)
-	}
-}
-
-@(test)
-an_any_given_to_a_union_is_checked_against_its_members :: proc(t: ^testing.T) {
-	// The union stays tagged, so no unbox would look at what the `any` holds: the flow tests the
-	// tag, and the layout of an object, and fails with Tagged_Holds_Other_Kind.
-	result := lower_text(
-		t,
-		"function f(a: any): number | undefined {\nconst n: number | undefined = a;\nreturn n;\n}\nf(1);\n",
-	)
-	body, _ := func_named(result.output, "m1.f")
-	tests := instructions_of(body, ir.Tag_Test)
-	fails := instructions_of(body, ir.Fail)
-	if !testing.expectf(t, len(tests) == 1 && len(fails) == 1, "%s", result.text) {
-		return
-	}
-	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number, .Undefined})
-	error := result.output.fail_sites[fails[0].site].error
-	testing.expect_value(t, error, abi.Runtime_Error.Tagged_Holds_Other_Kind)
 }

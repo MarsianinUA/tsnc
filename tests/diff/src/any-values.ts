@@ -45,6 +45,10 @@ console.log(same(1, 1), same("a", "a"), same(1, "1"), same(null, undefined), sam
 const implicit: any = 42;
 const n: number = implicit;
 console.log(n + 1, implicit ?? "missing", implicit === 42);
+const absent: any = undefined;
+const maybe: number | undefined = implicit;
+const empty: number | undefined = absent;
+console.log(maybe, empty);
 
 const text: any = "tagged";
 console.log((text as string).toUpperCase(), (text as string).length);

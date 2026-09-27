@@ -199,7 +199,12 @@ to_string_matches_node :: proc(t: ^testing.T) {
 	testing.expect_value(t, got, cell)
 }
 
-// Node prints a function's source text and calls an object's own toString; tsnc has neither.
+// Node prints a function's source text and calls an object's own toString; tsnc has neither. A
+// toString set to a value that is no function makes Node throw:
+//
+//	node -e 'try { String({toString: 1}) } catch (e) { console.log(e.name) }'
+//
+// prints `TypeError`.
 @(test)
 to_string_refuses_what_node_would_run :: proc(t: ^testing.T) {
 	heap: gc.Heap
@@ -214,6 +219,11 @@ to_string_refuses_what_node_would_run :: proc(t: ^testing.T) {
 	(^^abi.Cell_Header)(&([^]byte)(printable)[8])^ = closure
 	_, object_ok := value.to_string(&heap, object(printable))
 	testing.expect(t, !object_ok, "an object with its own toString converted")
+
+	set := gc.alloc(&heap, MAYBE_PRINTABLE, 24)
+	(^abi.Tagged)(&([^]byte)(set)[8])^ = number(1)
+	_, set_ok := value.to_string(&heap, object(set))
+	testing.expect(t, !set_ok, "a toString that is no function converted")
 }
 
 // load boxes a slot of each kind, and a reference takes the tag typeof would answer for its cell.
@@ -295,27 +305,4 @@ expect_ascii :: proc(
 		same &&= got[i] == u16(want[i])
 	}
 	testing.expectf(t, same, "got %x, want %q", raw_data(got)[:len(got)], want, loc = loc)
-}
-
-// An optional toString that was never set is no property at all, and ToString gives the object's
-// usual text; set to a value that is no function, it makes Node throw, and tsnc refuses it.
-//
-//	node -e 'const o = {}; console.log(String(o)); try { String({toString: 1}) } catch (e) { console.log(e.name) }'
-//
-// prints `[object Object]` and `TypeError`.
-@(test)
-to_string_passes_over_an_optional_to_string_that_was_never_set :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	unset := gc.alloc(&heap, MAYBE_PRINTABLE, 24)
-	got, ok := value.to_string(&heap, object(unset))
-	testing.expect(t, ok, "an object without a toString refused")
-	testing.expectf(t, str.equal(got, str.from_utf8(&heap, "[object Object]")), "%v", got)
-
-	set := gc.alloc(&heap, MAYBE_PRINTABLE, 24)
-	(^abi.Tagged)(&([^]byte)(set)[8])^ = number(1)
-	_, set_ok := value.to_string(&heap, object(set))
-	testing.expect(t, !set_ok, "a toString that is no function converted")
 }

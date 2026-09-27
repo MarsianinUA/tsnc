@@ -12,25 +12,6 @@ import "../../src/source"
 // typeof.
 
 @(test)
-typeof_picks_the_member_of_the_union :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`function size(v: string | number): number {`, //
-			`if (typeof v === "string") { return v.length; }`,
-			`return v;`,
-			`}`,
-		),
-	)
-
-	// Before the test the value is still both; inside it is a string, and the path that is left
-	// after the branch returned is the other one.
-	testing.expect_value(t, use_text(c, "v", 0), "number | string")
-	testing.expect_value(t, use_text(c, "v", 1), "string")
-	testing.expect_value(t, use_text(c, "v", 2), "number")
-}
-
-@(test)
 a_union_has_no_members_of_its_own_outside_a_narrowing :: proc(t: ^testing.T) {
 	expect_errors(
 		t,
@@ -62,15 +43,6 @@ typeof_tells_a_function_value_from_a_reference :: proc(t: ^testing.T) {
 // A literal field: discriminated unions.
 
 @(test)
-a_literal_field_picks_the_member_it_belongs_to :: proc(t: ^testing.T) {
-	c := expect_checked(t, SHAPES)
-
-	testing.expect_value(t, use_text(c, "s", 0), "Circle | Square")
-	testing.expect_value(t, use_text(c, "s", 1), "Circle")
-	testing.expect_value(t, use_text(c, "s", 2), "Square")
-}
-
-@(test)
 a_member_of_a_discriminated_union_is_not_readable_before_the_test :: proc(t: ^testing.T) {
 	expect_errors(
 		t,
@@ -82,26 +54,6 @@ a_member_of_a_discriminated_union_is_not_readable_before_the_test :: proc(t: ^te
 		),
 		[]Error{{.Field_Not_Found, 5, 10}},
 	)
-}
-
-@(test)
-a_switch_narrows_by_the_clause_it_took :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			SHAPE_TYPES, //
-			`function area(s: Shape): number {`,
-			`switch (s.kind) {`,
-			`case "circle": return s.r;`,
-			`case "square": return s.side;`,
-			`}`,
-			`return 0;`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "s", 1), "Circle")
-	testing.expect_value(t, use_text(c, "s", 2), "Square")
 }
 
 @(test)
@@ -146,58 +98,6 @@ a_case_the_value_can_never_equal_is_reported :: proc(t: ^testing.T) {
 // null and undefined.
 
 @(test)
-a_check_against_undefined_leaves_the_value :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`function size(s: string | undefined): number {`, //
-			`if (s === undefined) { return 0; }`,
-			`return s.length;`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "s", 0), "string | undefined")
-	testing.expect_value(t, use_text(c, "s", 1), "string")
-}
-
-@(test)
-a_check_against_null_leaves_the_value :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`function sum(n: number | null): number {`, //
-			`if (n === null) { return 0; }`,
-			`return n;`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "n", 1), "number")
-}
-
-@(test)
-an_optional_field_is_read_as_the_type_or_undefined :: proc(t: ^testing.T) {
-	// Requirements 3.4: a field written `x?: T` and a `T | undefined` are one representation, so a
-	// read of the slot answers with the union and a test against `undefined` takes it apart again.
-	c := expect_checked(
-		t,
-		lines(
-			`interface Opts { x?: number; }`, //
-			`function get(o: Opts): number {`,
-			`if (o.x !== undefined) { return o.x; }`,
-			`return 0;`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, member_text(c, "x", 0), "number | undefined")
-	testing.expect_value(t, member_text(c, "x", 1), "number")
-	// The field itself keeps its question mark: only the read of the slot names `undefined`.
-	testing.expect_value(t, declared_type_text(c, "Opts"), "Opts")
-}
-
-@(test)
 an_optional_field_read_without_a_test_does_not_fit_the_type :: proc(t: ^testing.T) {
 	expect_errors(
 		t,
@@ -212,21 +112,6 @@ an_optional_field_read_without_a_test_does_not_fit_the_type :: proc(t: ^testing.
 }
 
 // Truth, and the operators bind erases.
-
-@(test)
-a_value_used_as_a_condition_narrows_itself :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`function show(name: string | undefined): string {`, //
-			`if (name) { return name; }`,
-			`return "none";`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "name", 1), "string")
-}
 
 @(test)
 a_negated_condition_narrows_the_other_way :: proc(t: ^testing.T) {
@@ -277,19 +162,6 @@ the_right_side_of_a_coalesce_knows_the_left_one_was_nullish :: proc(t: ^testing.
 }
 
 // Assignments.
-
-@(test)
-an_assignment_narrows_to_what_it_wrote :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`let v: string | number = 1;`, //
-			`const n: number = v;`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "v", 0), "number")
-}
 
 @(test)
 a_write_inside_a_narrowing_is_measured_against_the_declared_type :: proc(t: ^testing.T) {
@@ -360,22 +232,6 @@ a_write_to_another_name_keeps_what_was_known_about_a_field :: proc(t: ^testing.T
 }
 
 // Loops.
-
-@(test)
-a_narrowing_holds_inside_the_body_of_a_loop :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`function size(s: string | undefined): number {`, //
-			`let n: number = 0;`,
-			`while (s !== undefined) { n = n + s.length; break; }`,
-			`return n;`,
-			`}`,
-		),
-	)
-
-	testing.expect_value(t, use_text(c, "s", 1), "string")
-}
 
 @(test)
 a_write_at_the_end_of_a_loop_reaches_the_top_of_the_next_turn :: proc(t: ^testing.T) {
@@ -540,26 +396,6 @@ a_default_clause_narrows_to_what_the_cases_left :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_default_clause_narrows_a_discriminated_union :: proc(t: ^testing.T) {
-	expect_checked(
-		t,
-		lines(
-			SHAPE_TYPES, //
-			`function area(s: Shape): number {`,
-			`switch (s.kind) {`,
-			`case "circle": return s.r;`,
-			`case "square": return s.side;`,
-			`default: {`,
-			`const unreachable: never = s;`,
-			`return unreachable;`,
-			`}`,
-			`}`,
-			`}`,
-		),
-	)
-}
-
-@(test)
 a_default_clause_of_a_switch_that_leaves_a_member_keeps_it :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -621,21 +457,10 @@ a_narrowing_reads_the_same_in_every_partition :: proc(t: ^testing.T) {
 	testing.expect_value(t, use_text(one, "v", 2), use_text(both, "v", 2))
 }
 
-// Sources several tests share.
-
 @(private = "file")
 SHAPE_TYPES :: `interface Circle { kind: "circle"; r: number; }
 interface Square { kind: "square"; side: number; }
 type Shape = Circle | Square;`
-
-@(private = "file")
-SHAPES ::
-	SHAPE_TYPES +
-	`
-function area(s: Shape): number {
-if (s.kind === "circle") { return s.r; }
-return s.side;
-}`
 
 // `any` and `unknown`.
 

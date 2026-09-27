@@ -90,15 +90,6 @@ to_string_matches_node_over_random_doubles :: proc(t: ^testing.T) {
 	testing.expect_value(t, h, 0xe48b7a26)
 }
 
-// Odin folds an untyped constant expression exactly and rounds it once, so a tenth plus a fifth
-// written in the table above would be the double nearest three tenths. The sum every article about
-// floating point opens with needs two doubles first.
-@(test)
-a_tenth_plus_a_fifth_is_not_three_tenths :: proc(t: ^testing.T) {
-	tenth, fifth := f64(0.1), f64(0.2)
-	testing.expect_value(t, text(tenth + fifth), "0.30000000000000004")
-}
-
 // STRING_MAX is a promise to every caller, and console makes its buffer that size. Rather than
 // trust the arithmetic behind it, sweep the whole exponent range with the mantissas that produce
 // the most digits, all of them negative so that the sign counts too.

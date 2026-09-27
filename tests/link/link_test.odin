@@ -27,19 +27,6 @@ RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:s
 // about the front end.
 HELLO :: "Hello, world!"
 
-// TAGGED_ANSWERS is what Node prints for the questions tagged_program asks, one per line:
-//
-//	for (const v of [typeof 1.5, typeof undefined, String(-0), String("abc"), String(true),
-//		NaN === NaN, -0 === 0, "12" === String(12), !!"", !!1.5, !!null]) console.log(v)
-TAGGED_ANSWERS :: "number\nundefined\n0\nabc\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\n"
-
-// ARRAY_ANSWERS is what Node prints for the steps of array_program, one per line:
-//
-//	const pieces = "c,a,b".split(",");
-//	for (const v of [pieces.pop(), pieces.push("d"), pieces.indexOf("a"), pieces.includes("z"),
-//		pieces.slice(1).join("-"), String(pieces.sort()), pieces.slice(0, 0).pop()]) console.log(String(v))
-ARRAY_ANSWERS :: "b\n3\n1\nfalse\na-d\na,c,d\nundefined\n"
-
 // ARGUMENTS reach process.argv as they were passed: the Cyrillic one in UTF-16, which on Windows
 // means from the wide command line, and the quotes as the command line escaped them.
 ARGUMENTS :: []string{"a", "\xd0\xb1 \xd0\xb2", "\"q\""}
@@ -67,8 +54,6 @@ console_answers :: proc(name: string) -> string {
 	)
 }
 
-NAN :: 0h7ff8_0000_0000_0000
-INF :: 0h7ff0_0000_0000_0000
 NEGATIVE_ZERO :: 0h8000_0000_0000_0000
 
 SPAN :: source.Span {
@@ -97,36 +82,6 @@ hello_world_links_and_runs :: proc(t: ^testing.T) {
 	}
 }
 
-// A tagged value crosses into the runtime as two words (abi.C_Type.Tagged). Only a program that
-// codegen built and the linker joined to the runtime shows that both sides pass those words the
-// same way, on each target CI runs.
-@(test)
-tagged_values_cross_into_the_runtime :: proc(t: ^testing.T) {
-	output := tagged_program()
-	state, stdout, stderr, ran := build_and_run(t, &output, "link-tagged")
-	if !ran {
-		return
-	}
-	testing.expect_value(t, stdout, TAGGED_ANSWERS)
-	testing.expect_value(t, stderr, "")
-	testing.expect_value(t, state.exit_code, 0)
-}
-
-// Arrays cross in both directions: an element goes in as a tagged value and comes out of pop through
-// the slot codegen passes (abi.C_Type.Tagged), and the runtime finds the program's `string[]` table
-// for split among the ones codegen wrote.
-@(test)
-arrays_cross_into_the_runtime :: proc(t: ^testing.T) {
-	output := array_program()
-	state, stdout, stderr, ran := build_and_run(t, &output, "link-arrays")
-	if !ran {
-		return
-	}
-	testing.expect_value(t, stdout, ARRAY_ANSWERS)
-	testing.expect_value(t, stderr, "")
-	testing.expect_value(t, state.exit_code, 0)
-}
-
 // console_program prints process.argv, run with ARGUMENTS, as console.log(argv) and as
 // argv.join("\n"), then a split array and tagged values on one line and a format string on stderr.
 // Each statement is one runtime call that takes its values on the caller's stack.
@@ -138,25 +93,6 @@ console_and_process_argv_cross_into_the_runtime :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expect_value(t, stdout, console_answers("link-console"))
-	testing.expect_value(t, stderr, "n=42%\n")
-	testing.expect_value(t, state.exit_code, 0)
-}
-
-// The same program in GC stress mode, which collects before every allocation: process.argv is
-// built one cell at a time, and every cell has to survive the allocation of the next.
-@(test)
-console_and_process_argv_survive_a_collection_at_every_allocation :: proc(t: ^testing.T) {
-	output := console_program()
-	environment, _ := os.environ(context.temp_allocator)
-	stress := make([dynamic]string, context.temp_allocator)
-	append(&stress, ..environment)
-	append(&stress, "TSNC_GC_STRESS=1")
-	name := "link-console-stress"
-	state, stdout, stderr, ran := build_and_run(t, &output, name, ARGUMENTS, stress[:])
-	if !ran {
-		return
-	}
-	testing.expect_value(t, stdout, console_answers(name))
 	testing.expect_value(t, stderr, "n=42%\n")
 	testing.expect_value(t, state.exit_code, 0)
 }
@@ -285,88 +221,6 @@ hello_program :: proc() -> ir.Program_IR {
 	return ir.finish(&p, main, nil)
 }
 
-// tagged_program asks each question of TAGGED_ANSWERS through the Value exports, with one tagged
-// argument and with two, and prints each answer as its own line. A boolean answer goes back into a
-// tagged value, so Value_To_String spells it.
-@(private = "file")
-tagged_program :: proc() -> ir.Program_IR {
-	p := ir.make_builder(context.temp_allocator)
-	abc := ir.intern_string(&p, "abc")
-	twelve := ir.intern_string(&p, "12")
-	empty := ir.intern_string(&p, "")
-	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
-	f := ir.begin_func(&p, main)
-
-	nan := boxed_number(&f, NAN)
-	negative_zero := boxed_number(&f, NEGATIVE_ZERO)
-	zero := boxed_number(&f, 0)
-	one_and_a_half := boxed_number(&f, 1.5)
-	undefined := ir.emit(&f, ir.TAGGED, ir.Const_Undefined{}, SPAN)
-	null := ir.emit(&f, ir.TAGGED, ir.Const_Null{}, SPAN)
-	yes := box(&f, ir.emit(&f, ir.BOOL, ir.Const_Bool{value = true}, SPAN))
-	abc_text := box(&f, ir.emit(&f, ir.STR, ir.Const_String{text = abc}, SPAN))
-	twelve_text := box(&f, ir.emit(&f, ir.STR, ir.Const_String{text = twelve}, SPAN))
-	empty_text := box(&f, ir.emit(&f, ir.STR, ir.Const_String{text = empty}, SPAN))
-
-	write_line(&f, call(&f, .Value_Typeof, ir.STR, one_and_a_half))
-	write_line(&f, call(&f, .Value_Typeof, ir.STR, undefined))
-	write_line(&f, call(&f, .Value_To_String, ir.STR, negative_zero))
-	write_line(&f, call(&f, .Value_To_String, ir.STR, abc_text))
-	write_line(&f, call(&f, .Value_To_String, ir.STR, yes))
-	write_boolean(&f, call(&f, .Value_Equal, ir.BOOL, nan, nan))
-	write_boolean(&f, call(&f, .Value_Equal, ir.BOOL, negative_zero, zero))
-	// A static cell against one the runtime built: equal by content.
-	computed := box(&f, call(&f, .Value_To_String, ir.STR, boxed_number(&f, 12)))
-	write_boolean(&f, call(&f, .Value_Equal, ir.BOOL, twelve_text, computed))
-	write_boolean(&f, call(&f, .Value_To_Boolean, ir.BOOL, empty_text))
-	write_boolean(&f, call(&f, .Value_To_Boolean, ir.BOOL, one_and_a_half))
-	write_boolean(&f, call(&f, .Value_To_Boolean, ir.BOOL, null))
-
-	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
-	ir.end_func(&f)
-	return ir.finish(&p, main, nil)
-}
-
-// array_program takes each step of ARRAY_ANSWERS through the String_Split and Array exports and
-// prints what it answers.
-@(private = "file")
-array_program :: proc() -> ir.Program_IR {
-	p := ir.make_builder(context.temp_allocator)
-	strings_type := ir.ref(ir.array_layout(&p, .Ref))
-	cab := ir.intern_string(&p, "c,a,b")
-	comma := ir.intern_string(&p, ",")
-	dash := ir.intern_string(&p, "-")
-	a := ir.intern_string(&p, "a")
-	d := ir.intern_string(&p, "d")
-	z := ir.intern_string(&p, "z")
-	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
-	f := ir.begin_func(&p, main)
-
-	text := ir.emit(&f, ir.STR, ir.Const_String{text = cab}, SPAN)
-	separator := ir.emit(&f, ir.STR, ir.Const_String{text = comma}, SPAN)
-	no_limit := number(&f, abi.MISSING_LIMIT)
-	zero := number(&f, 0)
-	pieces := call(&f, .String_Split, strings_type, text, separator, no_limit)
-
-	write_line(&f, call(&f, .Value_To_String, ir.STR, call(&f, .Array_Pop, ir.TAGGED, pieces)))
-	pushed := call(&f, .Array_Push, ir.F64, pieces, boxed_string(&f, d))
-	write_line(&f, call(&f, .Number_To_String, ir.STR, pushed))
-	found := call(&f, .Array_Index_Of, ir.F64, pieces, boxed_string(&f, a), zero)
-	write_line(&f, call(&f, .Number_To_String, ir.STR, found))
-	write_boolean(&f, call(&f, .Array_Includes, ir.BOOL, pieces, boxed_string(&f, z), zero))
-	tail := call(&f, .Array_Slice, strings_type, pieces, number(&f, 1), number(&f, INF))
-	joiner := ir.emit(&f, ir.STR, ir.Const_String{text = dash}, SPAN)
-	write_line(&f, call(&f, .Array_Join, ir.STR, tail, joiner))
-	sorted := call(&f, .Array_Sort_Default, strings_type, pieces)
-	write_line(&f, call(&f, .Value_To_String, ir.STR, box(&f, sorted)))
-	empty := call(&f, .Array_Slice, strings_type, pieces, zero, zero)
-	write_line(&f, call(&f, .Value_To_String, ir.STR, call(&f, .Array_Pop, ir.TAGGED, empty)))
-
-	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, SPAN)
-	ir.end_func(&f)
-	return ir.finish(&p, main, nil)
-}
-
 // console_program is the program console_answers describes, built by hand, so that the test pins
 // the calls into the runtime whatever lower makes of the source; tests/diff/src/arrays.ts prints
 // process.argv from TypeScript.
@@ -446,14 +300,4 @@ call :: proc(
 	args: ..ir.Value_ID,
 ) -> ir.Value_ID {
 	return ir.emit(f, type, ir.Call_Runtime{export = export, args = args}, SPAN)
-}
-
-@(private = "file")
-write_line :: proc(f: ^ir.Func_Builder, text: ir.Value_ID) {
-	call(f, .Log_String, ir.VOID, text)
-}
-
-@(private = "file")
-write_boolean :: proc(f: ^ir.Func_Builder, answer: ir.Value_ID) {
-	write_line(f, call(f, .Value_To_String, ir.STR, box(f, answer)))
 }

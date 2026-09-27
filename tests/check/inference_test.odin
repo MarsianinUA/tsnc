@@ -27,25 +27,6 @@ a_const_keeps_its_literal_type_and_a_let_widens :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_annotation_wins_over_the_initializer :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const kept: number = 42;`, //
-			`let given: string | undefined = "a";`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "kept"), "number")
-	testing.expect_value(t, declared_text(c, "given"), "string | undefined")
-}
-
-@(test)
-a_value_that_does_not_fit_its_annotation_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, `const count: number = "a";`, []Error{{.Type_Mismatch, 1, 23}})
-}
-
-@(test)
 a_return_type_is_inferred_from_the_body :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -91,43 +72,8 @@ a_bare_return_beside_one_with_a_value_gives_undefined :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_arrow_is_a_value_with_a_signature :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const double = (n: number) => n * 2;`, //
-			`const greet = (name: string): string => name;`,
-			`const idle = () => {};`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "double"), "(n: number) => number")
-	testing.expect_value(t, declared_text(c, "greet"), "(name: string) => string")
-	testing.expect_value(t, declared_text(c, "idle"), "() => void")
-}
-
-@(test)
 a_return_is_checked_against_the_declared_result :: proc(t: ^testing.T) {
 	expect_errors(t, `function count(): number { return "a"; }`, []Error{{.Type_Mismatch, 1, 35}})
-}
-
-@(test)
-a_recursive_return_type_needs_an_annotation :: proc(t: ^testing.T) {
-	// The body would have to know what the function gives back in order to say what it gives back.
-	expect_errors(
-		t,
-		`function endless() { return endless(); }`,
-		[]Error{{.Recursive_Return_Type, 1, 10}},
-	)
-}
-
-@(test)
-an_annotated_recursive_function_is_fine :: proc(t: ^testing.T) {
-	// The annotation answers before the body is read, so the call inside it finds the answer.
-	expect_checked(
-		t,
-		`function countdown(n: number): number { return n > 0 ? countdown(n - 1) : 0; }`,
-	)
 }
 
 @(test)
@@ -168,13 +114,6 @@ a_recursive_arrow_without_a_return_type_needs_an_annotation :: proc(t: ^testing.
 		`const fact = (n: number) => n <= 1 ? 1 : n * fact(n - 1);`,
 		[]Error{{.Recursive_Return_Type, 1, 7}},
 	)
-}
-
-@(test)
-a_variable_whose_initializer_names_itself_is_reported :: proc(t: ^testing.T) {
-	// The words are about the initializer and not about a return type: a variable has neither. With
-	// an annotation the type is known, and the read is a use before the declaration instead.
-	expect_errors(t, `let step = step + 1;`, []Error{{.Circular_Initializer, 1, 5}})
 }
 
 @(test)

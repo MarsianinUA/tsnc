@@ -32,7 +32,6 @@ Everything lives in the temp allocator, which the test runner frees between test
 LIB_TEXT :: #load("../../src/lib/lib.d.ts", string)
 
 LIB :: source.File_ID(0)
-MAIN :: source.File_ID(1)
 
 // Error is a diagnostic the way a user reads it.
 Error :: struct {
@@ -202,28 +201,6 @@ calls_to :: proc(body: ir.Func, export: abi.Runtime_Proc) -> int {
 number_at :: proc(body: ir.Func, value: ir.Value_ID) -> (number: f64, ok: bool) {
 	constant := body.values[value].variant.(ir.Const_Number) or_return
 	return constant.value, true
-}
-
-init_names :: proc(output: ir.Program_IR) -> []string {
-	names := make([]string, len(output.init_order), context.temp_allocator)
-	for id, i in output.init_order {
-		names[i] = output.funcs[id].name
-	}
-	return names
-}
-
-// pool_words reads the string pool as text, by String_ID. The pool holds UTF-16, and a test that
-// looks into it spells its words in ASCII, so one byte per unit says everything.
-pool_words :: proc(output: ir.Program_IR) -> []string {
-	words := make([]string, len(output.strings), context.temp_allocator)
-	for units, id in output.strings {
-		text := make([]byte, len(units), context.temp_allocator)
-		for unit, i in units {
-			text[i] = byte(unit)
-		}
-		words[id] = string(text)
-	}
-	return words
 }
 
 dump :: proc(files: []source.File, output: ir.Program_IR) -> string {

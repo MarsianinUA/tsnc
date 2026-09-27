@@ -2,44 +2,8 @@ package check_tests
 
 import "core:testing"
 
-import "../../src/bind"
 import "../../src/check"
 import "../../src/source"
-
-@(test)
-a_name_of_the_lib_module_resolves_from_another_file :: proc(t: ^testing.T) {
-	// bind leaves a name its own file does not declare as NO_SYMBOL and says check decides. The lib
-	// module is not in this partition, so this also proves a checker reads a file it does not type.
-	c := expect_checked(t, `const doubled = NaN * 2;`)
-
-	testing.expect_value(t, declared_text(c, "doubled"), "number")
-
-	ref := use_declaration(c, "NaN")
-	testing.expect_value(t, ref.file, LIB)
-	testing.expectf(t, ref.symbol != bind.NO_SYMBOL, "NaN resolved to nothing")
-
-	declared := c.program.bound[LIB].symbols[ref.symbol]
-	testing.expect_value(t, declared.name.text, "NaN")
-}
-
-@(test)
-undefined_is_a_name_that_no_file_declares :: proc(t: ^testing.T) {
-	// The grammar has a literal for `null` but none for `undefined`, which arrives as an ordinary
-	// name, and the lib file does not declare it either.
-	c := expect_checked(t, `const missing = undefined;`)
-	testing.expect_value(t, declared_text(c, "missing"), "undefined")
-}
-
-@(test)
-an_unknown_name_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, `const answer = nowhere;`, []Error{{.Cannot_Find_Name, 1, 16}})
-}
-
-@(test)
-a_variable_with_no_type_and_no_value_is_reported :: proc(t: ^testing.T) {
-	// Requirements 5 takes the type of a variable from its initializer, and there is none.
-	expect_errors(t, `let empty;`, []Error{{.Missing_Annotation, 1, 5}})
-}
 
 @(test)
 a_parameter_with_no_type_is_reported :: proc(t: ^testing.T) {
@@ -50,33 +14,6 @@ a_parameter_with_no_type_is_reported :: proc(t: ^testing.T) {
 		`function twice(n): number { return 1; }`,
 		[]Error{{.Missing_Annotation, 1, 16}},
 	)
-}
-
-@(test)
-assigning_to_a_const_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`const fixed = 1;`, //
-			`fixed = 2;`,
-		),
-		[]Error{{.Assign_To_Const, 2, 1}},
-	)
-}
-
-@(test)
-a_use_records_the_declaration_it_names :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const counter = 1;`, //
-			`const doubled = counter * 2;`,
-		),
-	)
-
-	ref := use_declaration(c, "counter")
-	testing.expect_value(t, ref.file, MAIN)
-	testing.expect_value(t, c.program.bound[MAIN].symbols[ref.symbol].name.text, "counter")
 }
 
 @(test)

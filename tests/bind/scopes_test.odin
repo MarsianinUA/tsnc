@@ -115,50 +115,6 @@ a_name_no_file_declares_stays_unresolved :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_second_declaration_of_a_name_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, "let x = 1; let x = 2;", {{.Redeclared_Name, 1, 16}})
-	expect_errors(t, "let f = 1; function f() {}", {{.Redeclared_Name, 1, 21}})
-	expect_errors(t, "function f(a: number, a: number) {}", {{.Redeclared_Name, 1, 23}})
-	expect_errors(t, "function f(a: number) { let a = 1; }", {{.Redeclared_Name, 1, 29}})
-	expect_errors(
-		t,
-		"interface P { x: number } interface P { y: number }",
-		{{.Redeclared_Name, 1, 37}},
-	)
-	expect_errors(t, "function f<T, T>(x: T): T { return x }", {{.Redeclared_Name, 1, 15}})
-	expect_errors(
-		t,
-		lines(
-			`import { a } from "./m";`, //
-			"const a = 1;",
-		),
-		{{.Redeclared_Name, 2, 7}},
-	)
-	expect_errors(
-		t,
-		"switch (1) { case 1: let a = 1; break; case 2: let a = 2; }",
-		{{.Redeclared_Name, 1, 52}},
-	)
-
-	// A name of another scope, or of the other meaning, is free.
-	expect_bound(t, "let x = 1; { let x = 2; }")
-	expect_bound(t, "for (let i = 0; i < 3; i++) { let i = 9; }")
-	expect_bound(t, "type T = number; const T = 1;")
-	expect_bound(t, "function f(x: number) { { let x = 1; } }")
-}
-
-@(test)
-a_name_parse_could_not_read_declares_nothing :: proc(t: ^testing.T) {
-	// Destructuring is outside the subset: parse keeps the declarator with an empty name, and two
-	// of them must not collide with each other.
-	b := bind_text(t, lines("const { a } = point;", "const { b } = point;"))
-	testing.expectf(t, len(b.errors) == 0, "bind %v", b.errors)
-	for symbol in b.bound.symbols[1:] {
-		testing.expectf(t, symbol.name.text != "", "declared the empty name %v", symbol)
-	}
-}
-
-@(test)
 the_body_of_a_function_reads_the_scope_that_holds_its_names :: proc(t: ^testing.T) {
 	b := expect_bound(t, "function f(x: number) { let y = 1; }")
 	body := b.tree.nodes[symbol_of(b, "f").declaration].variant.(ast.Function_Decl).body

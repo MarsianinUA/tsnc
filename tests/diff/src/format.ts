@@ -1,7 +1,6 @@
 // Format strings (requirements 3.9): a string first argument of console.log is read the way Node's
-// util.format reads it, and every specifier converts its argument the way Node does. Only
-// primitives appear here: a program cannot build an array or an object yet, and the runtime unit
-// tests hold those.
+// util.format reads it, and every specifier converts its argument the way Node does. Most lines
+// pass primitives; the last two pass arrays and an object.
 
 function show(value: string | number | boolean | null | undefined): void {
   console.log("%s|%d|%i|%f|%j|%o|%O", value, value, value, value, value, value, value);
@@ -47,3 +46,7 @@ console.log("%o", "no line end but still a long string that is well past eighty 
 
 // %j of a string is JSON: control characters as \u00XX, a lone surrogate escaped.
 console.log("%j", "q\"\\\b\f\n\r\t\u0001\ud800");
+
+// The number specifiers read an array through its string: "1,2,3" parses as 1.
+console.log("%d %i %f", [5], [1, [2, 3]], [-1.5]);
+console.log("%j|%O", { a: 1 }, [1]);

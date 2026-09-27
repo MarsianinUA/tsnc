@@ -29,7 +29,6 @@ POINT :: NUMBERS + 4
 PRINTABLE :: NUMBERS + 5
 CLOSURE :: NUMBERS + 6
 VALUE_OF :: NUMBERS + 7
-PLAIN_VALUE_OF :: NUMBERS + 8
 
 TABLES := []abi.Type_Table {
 	{kind = .Array, size = size_of(abi.Array_Cell), element = .Number},
@@ -40,29 +39,6 @@ TABLES := []abi.Type_Table {
 	{kind = .Object, size = 16, fields = {{name = "toString", offset = 8, kind = .Ref}}},
 	{kind = .Closure, size = size_of(abi.Closure_Cell)},
 	{kind = .Object, size = 16, fields = {{name = "valueOf", offset = 8, kind = .Ref}}},
-	{kind = .Object, size = 24, fields = {{name = "valueOf", offset = 8, kind = .Tagged}}},
-}
-
-@(test)
-push_grows_the_buffer_and_keeps_the_order :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	array := arr.new_array(&heap, NUMBERS, 0)
-	testing.expect_value(t, array.capacity, 0)
-	testing.expect(t, array.elements == nil, "an empty array with a buffer")
-
-	for i in 0 ..< 1000 {
-		testing.expect_value(t, arr.push(&heap, array, number(f64(i))), i + 1)
-	}
-	testing.expect_value(t, array.length, 1000)
-	testing.expect(t, array.capacity >= 1000, "room for every element")
-	for i in 0 ..< 1000 {
-		expect_tagged(t, arr.element_at(&heap, array, i), number(f64(i)))
-	}
-	problem, _ := gc.verify(&heap)
-	testing.expect_value(t, problem, gc.Heap_Problem.None)
 }
 
 // An array literal and the result of map start at their final length, each element the zero of its
@@ -93,54 +69,6 @@ new_zeroed_has_its_length_and_zero_elements :: proc(t: ^testing.T) {
 	testing.expect(t, empty.elements == nil, "an empty array with a buffer")
 	problem, _ := gc.verify(&heap)
 	testing.expect_value(t, problem, gc.Heap_Problem.None)
-}
-
-// const p = [1, 2]; console.log(p.push(3), p.pop(), p.pop(), p.pop(), p.pop(), p.length)
-@(test)
-pop_takes_from_the_end_and_answers_undefined_when_empty :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	p := numbers(&heap, 1, 2)
-	testing.expect_value(t, arr.push(&heap, p, number(3)), 3)
-	expect_tagged(t, arr.pop(&heap, p), number(3))
-	expect_tagged(t, arr.pop(&heap, p), number(2))
-	expect_tagged(t, arr.pop(&heap, p), number(1))
-	expect_tagged(t, arr.pop(&heap, p), abi.Tagged{})
-	testing.expect_value(t, p.length, 0)
-}
-
-// An element leaves the array as a tagged value whose tag is what typeof would say of it.
-@(test)
-an_element_takes_the_tag_of_its_value :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	word := str.from_utf8(&heap, "a")
-	point := gc.alloc(&heap, POINT, 16)
-	inner := arr.new_array(&heap, NUMBERS, 0)
-	closure := gc.alloc(&heap, CLOSURE, size_of(abi.Closure_Cell))
-	refs := arr.new_array(&heap, REFS, 0)
-	arr.push(&heap, refs, text(word))
-	arr.push(&heap, refs, object(point))
-	arr.push(&heap, refs, object(inner))
-	arr.push(&heap, refs, function(closure))
-	expect_tagged(t, arr.element_at(&heap, refs, 0), text(word))
-	expect_tagged(t, arr.element_at(&heap, refs, 1), object(point))
-	expect_tagged(t, arr.element_at(&heap, refs, 2), object(inner))
-	expect_tagged(t, arr.pop(&heap, refs), function(closure))
-
-	flags := arr.new_array(&heap, BOOLEANS, 0)
-	arr.push(&heap, flags, boolean(true))
-	expect_tagged(t, arr.pop(&heap, flags), boolean(true))
-
-	values := arr.new_array(&heap, VALUES, 0)
-	arr.push(&heap, values, null())
-	arr.push(&heap, values, abi.Tagged{})
-	expect_tagged(t, arr.element_at(&heap, values, 0), null())
-	expect_tagged(t, arr.element_at(&heap, values, 1), abi.Tagged{})
 }
 
 // const a = [10, 20, 30, 40, 50]; for (const [s, e] of cases) console.log(a.slice(s, e))

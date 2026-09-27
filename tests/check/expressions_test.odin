@@ -4,63 +4,6 @@ import "core:strings"
 import "core:testing"
 
 @(test)
-addition_adds_two_numbers_and_joins_a_string_to_anything :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const sum = 1 + 2;`, //
-			`const joined = "a" + "b";`,
-			`const labelled = "a" + 1;`,
-			`const prefixed = 1 + "a";`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "sum"), "number")
-	testing.expect_value(t, declared_text(c, "joined"), "string")
-	testing.expect_value(t, declared_text(c, "labelled"), "string")
-	testing.expect_value(t, declared_text(c, "prefixed"), "string")
-}
-
-@(test)
-addition_of_two_values_that_are_neither_is_reported :: proc(t: ^testing.T) {
-	expect_errors(t, `const bad = true + 1;`, []Error{{.Addition_Operands, 1, 13}})
-}
-
-@(test)
-arithmetic_needs_numbers :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const product = 6 * 7;`, //
-			`const rest = 7 % 2;`,
-			`const raised = 2 ** 8;`,
-		),
-	)
-	testing.expect_value(t, declared_text(c, "product"), "number")
-	testing.expect_value(t, declared_text(c, "rest"), "number")
-	testing.expect_value(t, declared_text(c, "raised"), "number")
-
-	expect_errors(t, `const worse = "a" * 2;`, []Error{{.Operand_Not_Number, 1, 15}})
-}
-
-@(test)
-bitwise_operators_give_a_number :: proc(t: ^testing.T) {
-	// Requirements 3.1 puts the conversion to int32 in the semantics, not in the type.
-	c := expect_checked(
-		t,
-		lines(
-			`const masked = 6 & 3;`, //
-			`const shifted = 1 << 5;`,
-			`const flipped = ~0;`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "masked"), "number")
-	testing.expect_value(t, declared_text(c, "shifted"), "number")
-	testing.expect_value(t, declared_text(c, "flipped"), "number")
-}
-
-@(test)
 comparisons_order_two_numbers_or_two_strings :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -201,33 +144,6 @@ typeof_gives_the_answers_it_can_produce :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_ternary_gives_the_union_of_its_branches :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const pick: number | string = true ? 1 : "a";`, //
-			`const both = true ? 1 : 2;`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "pick"), "number | string")
-	testing.expect_value(t, declared_text(c, "both"), `1 | 2`)
-}
-
-@(test)
-a_template_string_is_a_string :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`const count = 2;`, //
-			"const text = `there are ${count} of them`;",
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "text"), "string")
-}
-
-@(test)
 update_operators_need_a_number :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
@@ -304,17 +220,5 @@ an_assertion_between_two_unions_that_merely_overlap_is_reported :: proc(t: ^test
 		t,
 		`function pick(a: "a" | "b"): "b" | "c" { return a as "b" | "c"; }`,
 		[]Error{{.Unrelated_Assertion, 1, 49}},
-	)
-}
-
-@(test)
-a_write_to_a_function_declaration_is_reported :: proc(t: ^testing.T) {
-	expect_errors(
-		t,
-		lines(
-			`function one(): number { return 1; }`, //
-			`one = (): number => 2;`,
-		),
-		[]Error{{.Assign_To_Function, 2, 1}},
 	)
 }

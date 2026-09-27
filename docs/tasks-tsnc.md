@@ -1,6 +1,6 @@
 # Task board: tsnc
 
-Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 20, 2026.
+Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 27, 2026.
 
 Purpose. The operator gives the agent a task number. The agent reads the shared handoff kit and the task kit, makes a detailed plan and writes the code. Tasks do not change the architecture. If a task runs into a key block from the section [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the work stops and the question goes back to the operator.
 
@@ -337,6 +337,55 @@ Where: [Milestones](architecture-plan-tsnc.md#milestones), row 5; [Package bound
 After: T5.9, T5.2.
 Done: the whole corpus is green on three OSes in normal, stress and ASan mode.
 
+### [x] T5.11 Tests: delete the unit tests the corpora already cover
+
+What: the first of T5.11 to T5.16, which move behavior tests out of Odin unit tests and into program corpora. A unit test stays only where a program cannot show the behavior (internal tables, hand-built IR, GC internals, a lowering decision) or where an algorithm needs more inputs than a program can hold. `test-corpus-map.md` lists every test with its class and the corpus program that covers it. This task deletes the DUP tests (check 95, lower 58, the other packages 57), the lower DROP tests (24 exact instruction counts that guard no decision), the five lower tests whose failure a `tests/driver/projects` fixture already pins, and the helpers and imports they leave unused: about 4,950 lines. Before a test goes, open the program the map names and confirm it reaches the same construct; when it does not, the test moves to T5.14 or T5.15 instead. Where a deleted diagnostic test also pinned more sites of its error, those sites become `// expect:` lines in the negative program the map names. `check_typed` then runs over fewer inputs, so one new test in `tests/check` runs `check_sources` and `check_typed` over every program of `tests/diff/src`.
+Where: `test-corpus-map.md`, sections "Delete: check and lower" and "Delete: the other packages"; requirements §10.
+After: T5.10.
+Done: every unit test and runner mode is green, under stress and ASan too; a mutation check per deleted group (break the compiler on that path, watch the corpus fail, revert), about ten, listed in the PR description.
+
+### [ ] T5.12 `tests/runner expect`: programs with their expected output
+
+What: a runner mode and a corpus `tests/expect/*.ts` for behavior where Node is not the reference by design, which requirements §3.8 keeps out of the differential tests: a failed `x!` or `as`, a read before initialization, `reduce` of an empty array, a string index past the end. The header holds the expectation: one `// stdout: <line>` or `// stderr: <line>` per output line in order, a bare `// stdout:` for an empty line, and exactly one `// exit: <n>`. The runner builds each program by its relative path, so a fail message reads `tests/expect/<name>.ts:L:C` on every OS. It builds at `-o:none` and `-o:speed`, passes `-sanitize:address` on and inherits `TSNC_GC_STRESS`, as `diff` does: the build, run and compare steps of `diff.odin` become one procedure both modes call, with the reference as its input. The tsc gate covers the corpus through the `include` list of `tests/diff/tsconfig.json`, so a program imports nothing. Programs: the eight runs of `expect_failure` in `tests/driver/build_test.odin` with their fixtures (`non-null`, `any-union`, `early-read`), then the failure paths no test runs yet, listed in the map. The replaced tests go: `expect_failure` and its callers, the lower tests the map marks NODE-DIFFERS, the run-time half of the reachability test. CI runs `expect` wherever it runs `diff`.
+Where: `test-corpus-map.md`, section "Expected-output corpus"; [Package boundaries: tests and tools](architecture-plan-tsnc.md#package-boundaries-tests-and-tools); requirements §3.8, §10; `development.md` "Differential tests", "CI".
+After: T5.11.
+Done: the corpus is green in all three CI passes on every OS; one changed word of a message in `src/runtime/fail`, a changed `// exit:` value or a dropped `// stdout:` line fails it; requirements §10, the architecture plan rows for `tests/runner` and the corpus, and `development.md` describe the mode.
+
+### [ ] T5.13 `tests/runner negative`: build, files, text; the remaining diagnostics
+
+What: three runner changes. It runs `tsnc build <file> -out:dist/negative-<stem>` instead of `tsnc check`: a build with check errors stops before lower (`build` in `src/driver/build.odin`), so every current program prints what it prints now, and the lower codes T2027 and T2029 become reachable. An expectation may name a file relative to `tests/negative`, `// expect: T4009 modules/relay.ts:1:10`, in print order: the program first, then its modules. And it may end in a quoted text, `// expect: T3001 4:23 "text"`, which must occur in the message or its hint; the text runs to the last `"` of the line. Then the moves the map lists: the check and lower diagnostic tests become `// expect:` lines, one program per code as today, with `type-mismatch.ts` split into three (values and calls, function types, flow); the tests that read a message or a hint, and those with diagnostics in two files, move through the new syntax; T1001 to T1012 get a program per code plus recovery programs, which reverses the earlier choice that the lexer and parser codes stay in `tests/parse` alone (a parse test that also checks the recovered tree or token spans stays); `not-lowered.ts` covers T2027 and `any-to-function.ts` T2029.
+Where: `test-corpus-map.md`, section "Negative moves"; requirements §10 "Negative tests"; `tests/runner/negative.odin`.
+After: T5.11.
+Done: every code of the `diag` registry has a negative program; the moved tests are gone; `development.md` gets the section on the negative corpus it lacks today.
+
+### [ ] T5.14 Front end behavior into diff programs
+
+What: the check and lower tests the map marks MOVE-DIFF become programs of `tests/diff/src`: nine new ones (`narrowing-flow`, `literal-narrowing`, `returns`, `definite-assignment`, `union-fields`, `contextual-types`, `structural-types`, `re-exports` with `modules/relay.ts`, `compound-operators`) and extensions of ten existing ones. A corpus program costs about 0.45 s per pass and CI runs ten passes, so a new case goes into an existing program on its topic where one exists. Every program still passes the tsc gate: `import type` for a type, a `.ts` specifier, no comparison of two unrelated literal types. The replaced tests and the helpers they leave unused go.
+Where: `test-corpus-map.md`, section "Diff moves: check and lower"; `development.md` "Differential tests".
+After: T5.12, T5.13.
+Done: the corpus is green in all passes; a mutation check per new program.
+
+### [ ] T5.15 Runtime behavior into diff programs
+
+What: the tests of `tests/runtime/{arr,console,str,num,value}`, `tests/codegen`, `tests/parse` and `tests/program` the map marks MOVE-DIFF become programs: extensions of `arrays`, `sort-comparator`, `strings`, `numbers`, `number-methods`, `format`, `colors`, `math`, `arithmetic` and `any-values`, and new `array-join`, `sort-default`, `string-units`, `string-case`, `inspect`, `literals`, `module-ring`, `type-import-ring` and `self-import`. A comparator that changes the array does so on its first call only, so the output does not depend on the order V8 calls it in. What no program reaches stays a unit test: the sweeps over every code point and over 300,000 doubles, comparator call counts, invalid UTF-8, color depth per environment, objects with their own `toString`, the string length limit. One stale text goes with it: the risk item of the architecture plan that has `tests/link` prove objects and arrays until milestone 5.
+Where: `test-corpus-map.md`, section "Diff moves: runtime and the rest"; [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions).
+After: T5.11.
+Done: the corpus is green in all passes; the replaced tests and the helpers they leave unused are gone.
+
+### [ ] T5.16 `lower` tests pin the decision, not the count
+
+What: the lower tests the map marks KEEP-STRATEGY guard a lowering decision no program shows: map, filter, forEach and reduce inlined, a box per pass for a `let` of a `for` header, a union of one representation left untagged, a direct call with no environment, and the rest in the map. Today they assert `len(...) == N` and emission order, so a refactor that keeps the decision still breaks them. Each one gets rewritten to assert the decision itself: no runtime call, one box per pass, a tag test and no call. `lower_helpers.odin` keeps what they use. The `@(private)` above the doc comment of `Local_Place` in `src/lower/expressions.odin` moves between the comment and the declaration. `test-corpus-map.md` is deleted.
+Where: `test-corpus-map.md`, section "Lower decisions"; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `lower`.
+After: T5.14, T5.15.
+Done: a refactor that keeps a decision passes its test and one that changes it fails; the map is gone.
+
+### [ ] T5.17 Comments in `src/` say only what the code cannot
+
+What: a pass over `src/` by the comment rule of `$code-conventions` section 10: a comment gives the why, a constraint or a short example, and one that restates the code goes. An audit of 35% of the comment lines found about 12% to remove, some 600 lines. That means restatements, the 63 section dividers such as `// Names.` and the grammar labels of `ast` and `parse` (about 230 lines). It means package headers that retell the architecture plan (about 300 lines: `driver/driver.odin`, `abi/abi.odin`, the thirteen "Memory:" paragraphs), cut to their own facts and a link to the plan section. It means one constraint written in several places, kept in one: the arena that captures the task by pointer (five places), Odin's map iteration order (four), the error type assignable both ways (four). Task numbers such as "from T6.2" give way to the fact they stand for. Why-comments of three to ten lines get cut where one or two carry the reason. Left alone: `src/lib/lib.d.ts`, `src/llvm`, and every comment that records a measured fact or a trap (the `strconv.parse_f64` ulp, `os.same_file` on Windows, the 2^N walk in `check/narrow.odin`).
+Where: `$code-conventions` section 10, `$direct-taste` section 3; [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may).
+After: T5.10.
+Done: the text of `src/` with comments stripped is the same before and after; odinfmt and `odin check` are clean; every test and runner mode is green. T6.1 waits for it, since it rewrites the same `driver` comments.
+
 ## Milestone 6: parallelism and determinism
 
 Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 6.
@@ -345,7 +394,7 @@ Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 6.
 
 What: `core:thread.Pool`; a task per file with its own arena (`pool_add_task` with the task allocator); the import closure loop in waves (all known files in parallel, then the new ones); `File_ID` in breadth-first order regardless of the order in which tasks finish; `-j:N`, defaulting to the number of cores; `codegen.init_global_options` before the pool. Two leftovers of T2.8 belong here. A task arena commits 1 MiB for every file, the default of `core:mem/virtual`, which is 1 GiB for a thousand files: size it by the file instead. And an import whose spelling differs from the file name on disk only by case resolves on Windows and macOS but not on Linux: report it, as tsc does under `forceConsistentCasingInFileNames`, so that a program which passes on one OS passes on all of them.
 Where: [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), row `driver`; [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), rules 4 and 5; [Interaction map](architecture-plan-tsnc.md#interaction-map), the "Determinism" paragraph; requirements §8.
-After: T5.10.
+After: T5.16, T5.17.
 Done: a test: the same project at `-j:1` and `-j:8` gives the same `File_ID` values and the same diagnostic order.
 
 ### [ ] T6.2 `driver`: N checkers over partitions
@@ -383,4 +432,4 @@ An actionable v2 task cannot be written before the v1 code exists. Each epic sta
 
 T1.1 → T1.3 → T1.5 → T1.6 → T1.7 → T1.8 → T1.9 → T2.2 → T2.3 → T2.4 → T2.5 → T2.7 → T2.8 → T3.1 → T3.2 → T3.3 → T3.4 → T3.5 → T3.6 → T4.1 → T4.2 → T4.3 → T4.4 → T4.5 → T4.7 → T5.1 → T5.2 → T5.3 → T5.4 → T5.5 → T5.7 → T5.8 → T5.9 → T5.10 → T6.1 → T6.2.
 
-Running in parallel with the critical path: T1.2 and T1.4 (after T1.1), T2.1 and T2.6, T4.6 (after T1.5), T5.6, T6.3.
+Running in parallel with the critical path: T1.2 and T1.4 (after T1.1), T2.1 and T2.6, T4.6 (after T1.5), T5.6, T6.3. T5.11 to T5.17 run between T5.10 and T6.1: they change tests, the runner and comments, not what the compiler does.

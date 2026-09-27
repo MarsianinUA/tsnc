@@ -25,32 +25,10 @@ runtime export takes them. Every expected order came out of Node 24:
 // Stub is the environment a stub comparator reads: not a heap cell, which the sort does not mind,
 // since it only hands the pointer on.
 Stub :: struct {
-	sign:          f64,
-	calls:         int,
-	saw_undefined: bool,
-	heap:          ^gc.Heap,
-	array:         ^abi.Array_Cell, // the array under sort, for the stubs that change it
-}
-
-@(test)
-a_comparator_gets_its_environment_and_both_numbers :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	up := Stub {
-		sign = 1,
-	}
-	a := numbers(&heap, 3, 1, 2)
-	arr.sort(&heap, a, &abi.Closure_Cell{code = rawptr(by_difference), env = environment(&up)})
-	expect_numbers(t, &heap, a, {1, 2, 3})
-	testing.expect(t, up.calls > 0, "the comparator was never called")
-
-	down := Stub {
-		sign = -1,
-	}
-	arr.sort(&heap, a, &abi.Closure_Cell{code = rawptr(by_difference), env = environment(&down)})
-	expect_numbers(t, &heap, a, {3, 2, 1})
+	sign:  f64,
+	calls: int,
+	heap:  ^gc.Heap,
+	array: ^abi.Array_Cell, // the array under sort, for the stubs that change it
 }
 
 @(test)
@@ -67,47 +45,6 @@ equal_elements_keep_their_order :: proc(t: ^testing.T) {
 	b := numbers(&heap, 3, 1, 2)
 	arr.sort(&heap, b, &abi.Closure_Cell{code = rawptr(always_nan)})
 	expect_numbers(t, &heap, b, {3, 1, 2})
-}
-
-@(test)
-every_element_kind_reaches_the_comparator_in_its_own_shape :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	flags := arr.new_array(&heap, BOOLEANS, 0)
-	for b in ([?]bool{true, false, true}) {
-		arr.push(&heap, flags, boolean(b))
-	}
-	arr.sort(&heap, flags, &abi.Closure_Cell{code = rawptr(false_first)})
-	for want, i in ([?]bool{false, true, true}) {
-		expect_tagged(t, arr.element_at(&heap, flags, i), boolean(want))
-	}
-
-	words := arr.new_array(&heap, REFS, 0)
-	for word in ([?]string{"b", "a", "c"}) {
-		arr.push(&heap, words, text(str.from_utf8(&heap, word)))
-	}
-	arr.sort(&heap, words, &abi.Closure_Cell{code = rawptr(by_units)})
-	for want, i in ([?]string{"a", "b", "c"}) {
-		expect_ascii(t, (^abi.String_Cell)(arr.element_at(&heap, words, i).payload.ref), want)
-	}
-
-	// A tagged element arrives as its two words, and undefined never arrives at all.
-	values := arr.new_array(&heap, VALUES, 0)
-	for v in ([?]abi.Tagged{number(3), {}, number(1), {}, number(2)}) {
-		arr.push(&heap, values, v)
-	}
-	seen: Stub
-	arr.sort(
-		&heap,
-		values,
-		&abi.Closure_Cell{code = rawptr(tagged_numbers), env = environment(&seen)},
-	)
-	testing.expect(t, !seen.saw_undefined, "undefined reached the comparator")
-	for want, i in ([?]abi.Tagged{number(1), number(2), number(3), {}, {}}) {
-		expect_tagged(t, arr.element_at(&heap, values, i), want)
-	}
 }
 
 // Node sorts the elements it saw when the sort began and sets them over the array from index 0: a
@@ -373,27 +310,6 @@ by_integer_part :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
 
 always_nan :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {
 	return NAN
-}
-
-false_first :: proc "c" (env: ^abi.Environment_Cell, a, b: b64) -> f64 {
-	return f64(u64(a)) - f64(u64(b))
-}
-
-by_units :: proc "c" (env: ^abi.Environment_Cell, a, b: ^abi.Cell_Header) -> f64 {
-	x, y := (^abi.String_Cell)(a), (^abi.String_Cell)(b)
-	return f64(str.compare_units(str.units(x), str.units(y)))
-}
-
-tagged_numbers :: proc "c" (
-	env: ^abi.Environment_Cell,
-	a_tag: abi.Tag,
-	a_payload: u64,
-	b_tag: abi.Tag,
-	b_payload: u64,
-) -> f64 {
-	stub := (^Stub)(env)
-	stub.saw_undefined ||= a_tag == .Undefined || b_tag == .Undefined
-	return transmute(f64)a_payload - transmute(f64)b_payload
 }
 
 push_nine_once :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64 {

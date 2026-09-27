@@ -9,22 +9,6 @@ import "core:testing"
 // `as`.
 
 @(test)
-as_narrows_a_union_and_widens_a_value :: proc(t: ^testing.T) {
-	// The two conversions requirements 3.8 allows. Narrowing is the one lower turns into a tag
-	// check; widening needs no check at all, since every value of the source is one of the target.
-	c := expect_checked(
-		t,
-		lines(
-			`type Both = string | number;`, //
-			`function pick(u: Both): string { return u as string; }`,
-			`const widened: Both = 1 as Both;`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "widened"), "number | string")
-}
-
-@(test)
 as_any_is_rejected :: proc(t: ^testing.T) {
 	// Requirements 2.1 puts changing an object's shape through `as any` in the level that is never
 	// supported, and 3.8 names the assertion itself.
@@ -77,19 +61,6 @@ a_literal_takes_the_type_it_is_asserted_as :: proc(t: ^testing.T) {
 }
 
 // `x!`.
-
-@(test)
-non_null_leaves_the_value_that_is_there :: proc(t: ^testing.T) {
-	c := expect_checked(
-		t,
-		lines(
-			`function size(s: string | undefined): number { return s!.length; }`, //
-			`function keep(s: string | undefined): string { const v = s!; return v; }`,
-		),
-	)
-
-	testing.expect_value(t, declared_text(c, "v"), "string")
-}
 
 @(test)
 non_null_on_a_value_that_is_always_there_is_rejected :: proc(t: ^testing.T) {

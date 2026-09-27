@@ -8,26 +8,6 @@ import "../../../src/abi"
 import "../../../src/runtime/console"
 import "../../../src/runtime/gc"
 
-// util.format('%s|%d|%i|%f|%j|%O|%c|%%|%', 'str', '42', '12.9', '1.5e3', { a: 1 }, [1], 'css')
-@(test)
-every_specifier_takes_one_argument :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	args := [?]abi.Tagged {
-		text(&heap, "%s|%d|%i|%f|%j|%O|%c|%%|%"),
-		text(&heap, "str"),
-		text(&heap, "42"),
-		text(&heap, "12.9"),
-		text(&heap, "1.5e3"),
-		object(&heap, A, number(1)),
-		numbers(&heap, 1),
-		text(&heap, "css"),
-	}
-	expect_line(t, &heap, args[:], "str|42|12|1500|{\"a\":1}|[ 1 ]||%|%")
-}
-
 // util.format('%c|%x|%%|%', 'css', 1), util.format('%s %s', 'only'), util.format('%s', 'a', 'b',
 // 1), util.format('100%', 1), util.format('%% %s') and util.format(1, '%s', 'x')
 @(test)
