@@ -1,7 +1,7 @@
 // A narrow object where a wider object type is expected (requirements 3.3): the value that flows is
 // the same object, not a copy, so a write through the wide type shows through the narrow one and
 // `===` holds. The write here keeps to the narrow type; one that did not would fail the read through
-// the narrow type at run time (requirements 3.8), which is no program for this corpus.
+// the narrow type at run time (requirements 3.8), which tests/expect/field-other-kind.ts runs.
 
 interface Size {
   width: number;

@@ -29,13 +29,14 @@ odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsn
 # the same runtime with AddressSanitizer, for `tsnc build -sanitize:address`
 odin build src/runtime -build-mode:obj -use-single-module -o:speed -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style
 
-# test runs (smoke from T1.8, negative from T2.9, diff from T4.7); smoke links against the
-# runtime object in dist/ and the other two run dist/tsnc.exe, so build both first
+# test runs (smoke from T1.8, negative from T2.9, diff from T4.7, expect from T5.12); smoke
+# links against the runtime object in dist/ and the others run dist/tsnc.exe, so build both first
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
 
-# the diff corpus needs Node 24 and TypeScript, installed once from tests/diff/package.json
+# diff and expect need Node 24 and TypeScript, installed once from tests/diff/package.json
 npm ci --prefix tests/diff
 ```
 
@@ -93,6 +94,24 @@ A program may start with two header lines, each at most once and in either order
 
 `tests/diff/src/process-argv.ts` reads them from `process.argv`, a Cyrillic word and a character outside the BMP among them. It prints nothing from the first two entries, the executable and the script, since those differ between Node and the build.
 
+## Expected-output tests
+
+Requirements 3.8 turns some things Node accepts into runtime errors: a failed `x!` or `as`, a read before initialization, `reduce` of an empty array, an index out of range. A compiled program writes one line to stderr and exits with code 1, where Node answers `undefined` or throws, so Node cannot be the reference. `tests/expect/` holds one program per such failure path, and `tests/runner expect` compares each with the output its header states:
+
+```ts
+// `x!` on a value that turns out undefined: the program prints what it wrote before the check,
+// then fails at the start of `x!` with exit code 1 (requirements 3.8), where Node prints undefined.
+// stdout: 4
+// stderr: error: non-null assertion failed at tests/expect/non-null.ts:8:41
+// exit: 1
+```
+
+The header is the run of comment and blank lines at the top of the file. Each `// stdout:` or `// stderr:` line is one line of that stream, in order, and a bare `// stdout:` is an empty line. A stream the header gives no line must stay empty, and `// exit:` appears exactly once. Other comments are prose. A line that names one of the three keys but is spelled another way fails the program instead of being read as prose.
+
+The runner builds each program by its path relative to the repository root, so the location in the message reads the same on every OS. The rest works as in `diff`: the tsc gate (`tests/diff/tsconfig.json` includes `tests/expect/*.ts`, so a program imports nothing), builds at `-o:none` and `-o:speed`, `-sanitize:address` when given, and `TSNC_GC_STRESS` passed on from the runner's environment.
+
+Node never runs these programs, but their prose says what Node does instead, and `node tests/expect/<name>.ts` shows it. Work out the line and column of a new program's failure from the source, the start of the expression that fails, and then check the build against them rather than copying what it printed.
+
 ## GC stress mode
 
 A compiled program runs its collector in stress mode when the environment variable `TSNC_GC_STRESS` is `1`, with no rebuild. It then collects before every allocation and checks the whole heap after every collection. A broken heap ends the program with exit code 1 and the address of the cell, page or free list where the check stopped:
@@ -103,10 +122,11 @@ error: internal error: heap check failed: dangling reference: 0x1f2c0010040
 
 The runtime reads the variable once, at startup. Every check walks the whole heap, so a program that allocates a lot runs far slower in this mode.
 
-To run the differential corpus in this mode, set the variable for the runner; the programs it builds inherit it, and Node and tsc ignore it. CI runs the corpus both ways.
+To run the differential or the expected-output corpus in this mode, set the variable for the runner; the programs it builds inherit it, and Node and tsc ignore it. CI runs both corpora both ways.
 
 ```sh
 TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
 ```
 
 Three programs of the corpus exist for the collector: `gc-objects.ts`, `gc-closures.ts` and `gc-large.ts` allocate enough to collect at least three times in the normal mode, where the first collection waits for 4 MiB. Each builds its bytes out of few allocations, long strings by doubling and whole arrays, so that under stress, where every allocation collects and checks the heap, a build still runs in about two seconds.
@@ -124,7 +144,7 @@ ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc -out:dis
 TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address
 ```
 
-The define makes the first command fail if the build lost the sanitizer, where every ASan test would pass with nothing checked. The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both.
+The define makes the first command fail if the build lost the sanitizer, where every ASan test would pass with nothing checked. The second command runs the differential corpus against the ASan runtime in stress mode, where every allocation collects, so each cell is poisoned the moment it dies. CI runs both, and the expected-output corpus the way the second one runs.
 
 `-sanitize:address` works on Windows and Linux. On macOS tsnc refuses it before linking anything, since the link would fail: `cc` is Xcode's clang, whose ASan runtime names its version check after Apple's clang, while the runtime object is instrumented by LLVM 20 and asks for `___asan_version_mismatch_check_v8`. Linking through the clang of Homebrew's `llvm@20` instead was tried in CI: the program died with SIGILL on the Intel image and hung on arm64 macOS 26, as [llvm-project issue 200447](https://github.com/llvm/llvm-project/issues/200447) reports for a one-line C program. So CI builds and runs ASan on Windows and Linux only, the way CPython runs ASan on Linux only and `go build -asan` exists only on Linux. The poisoning is the same code on every OS.
 
@@ -171,7 +191,7 @@ After a version change, update the hash in `tests/runtime/console/width_test.odi
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential corpus three times: as it is, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The ASan runtime object and the two ASan runs skip both macOS images, for the reason under [AddressSanitizer](#addresssanitizer). The commands are the ones above.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `dev` and on every pull request, on four images: `windows-latest`, `ubuntu-latest`, `macos-latest` (arm64) and `macos-26-intel` (x64). Each job builds the compiler and both runtime objects, type-checks the case and width table generators and the benchmark runner, runs `odin test` on every package under `tests/`, then the smoke test, the negative corpus and, after installing Node 24 and TypeScript, the differential and the expected-output corpora three times each: as they are, under GC stress, and against the ASan runtime under GC stress. The gc unit tests run once more under ASan. The ASan runtime object and the ASan runs skip both macOS images, for the reason under [AddressSanitizer](#addresssanitizer). The commands are the ones above.
 
 - Odin: the release `dev-2026-09`, built from commit `a2fb372`, the version the project pins. To move to a newer Odin, change the tag in the workflow. Odin stopped building for Intel Macs after `dev-2026-09`, so a newer Odin on `macos-26-intel` has to be built from source.
 - LLVM 20: `llvm-20-dev` from the Ubuntu archive; on macOS the images already carry Homebrew's `llvm@20`. The workflow does not run `brew install`: Homebrew stopped building prebuilt packages for Intel Macs, so on `macos-26-intel` it would build LLVM from source.
@@ -198,7 +218,7 @@ src/ir/       our own IR: SSA blocks in flat arrays, interned layouts, the build
 src/lower/    the typed syntax tree to our IR
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
-tests/        unit tests (one folder per src package), test runner, negative and diff corpora
+tests/        unit tests (one folder per src package), test runner, negative, diff and expect corpora
 bench/        benchmarks: the hello world starter and its runner
 docs/         requirements, architecture plan, task board, this development guide
 dist/         build output, not in git

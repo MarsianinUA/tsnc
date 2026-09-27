@@ -1,6 +1,6 @@
-# Build, unit tests, the smoke test and the negative and differential corpora on every v1 platform
-# (requirements 9 and 10), the corpus also under GC stress and with the runtime built with
-# AddressSanitizer.
+# Build, unit tests, the smoke test and the negative, differential and expected-output corpora on
+# every v1 platform (requirements 9 and 10), the last two also under GC stress and with the runtime
+# built with AddressSanitizer.
 name: CI
 
 on:
@@ -134,6 +134,12 @@ jobs:
       - name: Diff
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
 
+      # The runtime failures of requirements 3.8, which Node cannot be the reference for: every
+      # program in tests/expect/ is compared with the output its header states. It needs what Diff
+      # needs, the gate included.
+      - name: Expect
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
+
       # The same corpus with the collector in stress mode (docs/development.md), which the compiled
       # programs inherit from the runner: every allocation collects first and checks the heap
       # after, so a cell generated code still needs, kept where the collector does not look, fails
@@ -142,6 +148,11 @@ jobs:
         env:
           TSNC_GC_STRESS: "1"
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+
+      - name: Expect under GC stress
+        env:
+          TSNC_GC_STRESS: "1"
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
 
       # Under ASan the collector poisons the heap a program may not touch: slot slack, freed cells
       # past their free list link, page tails and free pages (src/runtime/gc/heap.odin). The test
@@ -166,3 +177,9 @@ jobs:
         env:
           TSNC_GC_STRESS: "1"
         run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address
+
+      - name: Expect under ASan
+        if: runner.os != 'macOS'
+        env:
+          TSNC_GC_STRESS: "1"
+        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect -sanitize:address

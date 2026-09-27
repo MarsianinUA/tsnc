@@ -36,7 +36,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 
 // NEGATIVE_CORPUS is relative to the current directory, as the compiler path in runner.odin is:
@@ -303,21 +302,6 @@ parse_diagnostic :: proc(line: string) -> (printed: Expected, file: string, ok: 
 	}
 	printed.number = parse_number(tail[:close]) or_return
 	return printed, file, true
-}
-
-// parse_number reads a whole string of digits. strconv stops at the first byte it does not
-// understand, and a test must never read `5x` as 5.
-@(private = "file")
-parse_number :: proc(text: string) -> (value: int, ok: bool) {
-	if text == "" {
-		return 0, false
-	}
-	for index in 0 ..< len(text) {
-		if text[index] < '0' || text[index] > '9' {
-			return 0, false
-		}
-	}
-	return strconv.parse_int(text, 10)
 }
 
 @(private = "file")

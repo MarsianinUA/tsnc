@@ -2,7 +2,6 @@ package lower_tests
 
 import "core:testing"
 
-import "../../src/abi"
 import "../../src/ir"
 
 // Bindings: where a name lives, and what it holds before anything is written to it. The zero before
@@ -76,80 +75,6 @@ a_union_of_one_representation_needs_no_tag :: proc(t: ^testing.T) {
 	for instruction in body.values {
 		_, boxed := instruction.variant.(ir.Box)
 		testing.expectf(t, !boxed, "a union of numbers was boxed: %s", result.text)
-	}
-}
-
-@(test)
-a_local_read_early_through_a_closure_is_checked_in_its_box :: proc(t: ^testing.T) {
-	// get is made before `a` and `k` have their values, so both live in a box and get tests them:
-	// the array for null, the number by the ready flag in the box's second slot. The arrow inlined
-	// into forEach runs where it stands, before `m` is declared, so its read simply fails.
-	result := lower_text(
-		t,
-		`
-		function outer(): number {
-			const get = (): number => a.length + k;
-			[1].forEach(x => console.log(x + m));
-			const a = [1];
-			const k = 2;
-			const m = 3;
-			return get() + m;
-		}
-		console.log(outer());
-	`,
-	)
-	get, _ := func_prefixed(result.output, "m1.get$")
-	testing.expectf(t, len(instructions_of(get, ir.Null_Test)) == 1, "%s", result.text)
-	testing.expectf(t, len(instructions_of(get, ir.Fail)) == 2, "%s", result.text)
-	outer, _ := func_named(result.output, "m1.outer")
-	boxes := 0
-	for alloc in instructions_of(outer, ir.Alloc) {
-		fields := result.output.layouts[alloc.layout].fields
-		is_number_box := len(fields) == 2 && fields[0].kind == .Number
-		boxes += 1 if is_number_box && fields[1].kind == .Boolean else 0
-	}
-	testing.expectf(t, boxes == 1, "%s", result.text)
-	always := 0
-	for fail in instructions_of(outer, ir.Fail) {
-		error := result.output.fail_sites[fail.site].error
-		always += 1 if error == .Read_Before_Initialization else 0
-	}
-	testing.expectf(t, always == 1, "%s", result.text)
-}
-
-@(test)
-a_let_read_in_a_later_case_of_its_switch_is_checked_in_its_box :: proc(t: ^testing.T) {
-	// A jump to case 1 skips `let y`, and Node throws a ReferenceError at the read there, so y lives
-	// in a box whose second slot says whether the declaration ran. The read in case 0 follows the
-	// declaration on every path and is not checked.
-	result := lower_text(
-		t,
-		`
-		function pick(n: number): number {
-			switch (n) {
-				case 0:
-					let y = 1;
-					console.log(y);
-				case 1:
-					return y + 1;
-			}
-			return 0;
-		}
-		console.log(pick(0));
-	`,
-	)
-	pick, _ := func_named(result.output, "m1.pick")
-	boxes := 0
-	for alloc in instructions_of(pick, ir.Alloc) {
-		fields := result.output.layouts[alloc.layout].fields
-		is_number_box := len(fields) == 2 && fields[0].kind == .Number
-		boxes += 1 if is_number_box && fields[1].kind == .Boolean else 0
-	}
-	testing.expectf(t, boxes == 1, "%s", result.text)
-	fails := instructions_of(pick, ir.Fail)
-	if testing.expectf(t, len(fails) == 1, "%s", result.text) {
-		error := result.output.fail_sites[fails[0].site].error
-		testing.expect_value(t, error, abi.Runtime_Error.Read_Before_Initialization)
 	}
 }
 
