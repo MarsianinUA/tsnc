@@ -519,8 +519,8 @@ build_branch :: proc(fault: Edge_Fault) -> (ir.Program_IR, ir.Func_ID) {
 
 @(test)
 the_cells_generated_code_fills_itself_pass :: proc(t: ^testing.T) {
-	// A string goes into a Ref slot and comes back out as a Str, a Str takes a bounds check, and
-	// a cell names a table row that lists its own layout's fields in another order.
+	// A string goes into a Ref slot and comes back out as a Str, a Str takes a bounds check and a
+	// unit load, and a cell names a table row that lists its own layout's fields in another order.
 	expect_none(t, ir.verify(build_heap(.None), context.temp_allocator))
 }
 
@@ -539,6 +539,9 @@ a_heap_instruction_of_the_wrong_kind_is_a_violation :: proc(t: ^testing.T) {
 		// lower gives two objects one layout wherever check lets them meet, so a comparison of two
 		// layouts is a join that went missing.
 		{.Refs_Of_Two_Layouts, .Operand_Type},
+		{.Unit_Unchecked, .Unchecked_Index},
+		{.Ascii_Of_Number, .Operand_Type},
+		{.Same_Cell_Of_Object, .Operand_Type},
 	}
 	for c in cases {
 		found := ir.verify(build_heap(c.fault), context.temp_allocator)
@@ -666,6 +669,9 @@ Heap_Fault :: enum {
 	Null_Test_Of_Number,
 	Array_Of_Object,
 	Refs_Of_Two_Layouts,
+	Unit_Unchecked,
+	Ascii_Of_Number, // a unit that no Unit_Load answered
+	Same_Cell_Of_Object,
 }
 
 @(private = "file")
@@ -711,6 +717,11 @@ build_heap :: proc(fault: Heap_Fault) -> ir.Program_IR {
 	if fault == .Element_Of_Str {
 		ir.emit(&f, ir.F64, ir.Element_Load{array = text, index = checked}, at(1))
 	}
+	loaded := zero if fault == .Unit_Unchecked else checked
+	unit := ir.emit(&f, ir.F64, ir.Unit_Load{text = text, index = loaded}, at(1))
+	ir.emit(&f, ir.STR, ir.Ascii_Cell{unit = zero if fault == .Ascii_Of_Number else unit}, at(1))
+	compared := object if fault == .Same_Cell_Of_Object else read
+	ir.emit(&f, ir.BOOL, ir.Same_Cell{a = compared, b = text}, at(1))
 	ir.emit(&f, ir.F64 if fault == .Null_Number else ir.ref(cell), ir.Const_Null{}, at(1))
 	// A string binding holds null only as the mark of a declaration that has not run yet.
 	unset := ir.emit(&f, ir.STR, ir.Const_Null{}, at(1))

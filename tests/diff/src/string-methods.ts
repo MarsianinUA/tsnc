@@ -27,6 +27,13 @@ compare("same", "same");
 compare("Z", "a");
 compare("", "a");
 compare("\u00e9", "e\u0301");
+compare("ab", ["a", "b"].join(""));
+
+// A literal of one unit or none on either side: a unit past ASCII, half a pair, a longer string
+// that starts with the unit.
+for (const c of ["a", "b", "", "ab", "ba", "\xe9", "e\u0301", "\u{1F600}"[0]]) {
+  console.log(c === "a", "a" !== c, c === "", "" !== c, c === "\xe9", "\uD83D" === c);
+}
 
 console.log(joined[0], joined[joined.length - 1], name.charCodeAt(1), name.charCodeAt(9));
 console.log(joined.slice(7), joined.slice(-6, -1), joined.slice(3, 1), joined.slice());

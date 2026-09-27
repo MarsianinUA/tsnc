@@ -184,6 +184,49 @@ the_dump_spells_the_closure_instructions :: proc(t: ^testing.T) {
 }
 
 @(test)
+the_dump_spells_the_string_instructions :: proc(t: ^testing.T) {
+	table := file_table()
+	p := ir.make_builder(context.temp_allocator)
+	site := ir.fail_site(&p, {file = "main.ts", line = 2, column = 1, error = .Index_Out_Of_Range})
+	params := [?]ir.Type{ir.STR, ir.STR}
+	read := ir.declare_func(&p, "read", params[:], ir.VOID, at(table, 2))
+
+	f := ir.begin_func(&p, read)
+	text, other := ir.Value_ID(0), ir.Value_ID(1)
+	zero := ir.emit(&f, ir.F64, ir.Const_Number{value = 0}, at(table, 3))
+	check := ir.Bounds_Check {
+		array        = text,
+		index        = zero,
+		not_integer  = site,
+		out_of_range = site,
+	}
+	checked := ir.emit(&f, ir.F64, check, at(table, 3))
+	unit := ir.emit(&f, ir.F64, ir.Unit_Load{text = text, index = checked}, at(table, 3))
+	ir.emit(&f, ir.STR, ir.Ascii_Cell{unit = unit}, at(table, 3))
+	ir.emit(&f, ir.BOOL, ir.Same_Cell{a = text, b = other}, at(table, 3))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(table, 3))
+	ir.end_func(&f)
+	program := ir.finish(&p, read, nil)
+
+	expect_dump(
+		t,
+		func_dump(table, program, read),
+		{
+			"func 0 read(str, str) -> void at main.ts:2:1",
+			"  b0:",
+			"    %0 = param 0 : str ; 2:1",
+			"    %1 = param 1 : str ; 2:1",
+			"    %2 = const 0 : f64 ; 3:1",
+			"    %3 = bounds_check %0[%2] not_integer 0 out_of_range 0 : f64 ; 3:1",
+			"    %4 = unit_load %0[%3] : f64 ; 3:1",
+			"    %5 = ascii_cell %4 : str ; 3:1",
+			"    %6 = same_cell %0, %1 : bool ; 3:1",
+			"    return ; 3:1",
+		},
+	)
+}
+
+@(test)
 a_number_prints_as_the_shortest_form_that_reads_back :: proc(t: ^testing.T) {
 	// The sign bit alone is negative zero: an Odin constant -0.0 folds to positive zero, and the
 	// dump has to tell the two apart.

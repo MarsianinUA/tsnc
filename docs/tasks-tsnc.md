@@ -415,7 +415,7 @@ Done: v1 results are recorded.
 
 The v1 numbers in `bench/RESULTS.md` show three places where tsnc lags Node for a reason the compiler can remove. The tasks change speed, not output: the differential and expected-output corpora are their tests, and `bench/runner` measures each before and after. They run before the v2 waves, in the order below, which is the order of what they are likely to gain.
 
-### [ ] T6.4 `s[i]` and string `===` without a runtime call
+### [x] T6.4 `s[i]` and string `===` without a runtime call
 
 What: `chars` takes 0.669 s against Node's 0.208. Every `s[i]` is a call to `String_At` (`load_element` in `src/lower/arrays.odin`), every `for...of` step over a string one to `String_Code_Point_At` (`src/lower/statements.odin`), and every string `===` or `!==` one to `String_Equal` (`src/lower/strings.odin`). Each call builds an Odin context and a temp arena guard (`src/runtime/exports.odin`), where V8 does the same work inline. After the bounds check lower already emits, the unit is one load. Candidates the plan picks from: compare against a one-unit string literal as a length and a unit, not a call; answer `s[i]` below U+0080 from the runtime's static table (`src/runtime/str/ascii.odin`), which means an `abi` row for a data symbol generated code may address; put the identity and length tests of `===` in front of the call. Strings stay immutable, and a result may still be a static cell (`src/runtime/str/str.odin`, header).
 Where: requirements §3.2, §3.7; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `lower` and `abi`; `bench/ts/chars.ts`, `bench/ts/strings.ts`.

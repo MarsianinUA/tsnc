@@ -535,6 +535,19 @@ verify_instruction :: proc(c: ^Checker) {
 		}
 		expect_result(c, VOID)
 
+	case Unit_Load:
+		expect_operand(c, v.text, STR)
+		expect_checked_index(c, v.index, v.text)
+		expect_result(c, F64)
+
+	case Ascii_Cell:
+		if _, known := operand(c, v.unit); known {
+			if _, loaded := c.body.values[v.unit].variant.(Unit_Load); !loaded {
+				report(c, .Operand_Type)
+			}
+		}
+		expect_result(c, STR)
+
 	case Layout_Test:
 		if type, known := operand(c, v.cell); known && type.kind != .Ref {
 			report(c, .Operand_Type)
@@ -548,6 +561,14 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Null_Test:
 		if type, known := operand(c, v.value); known && !is_reference(type) {
+			report(c, .Operand_Type)
+		}
+		expect_result(c, BOOL)
+
+	case Same_Cell:
+		a, a_known := operand(c, v.a)
+		b, b_known := operand(c, v.b)
+		if a_known && b_known && (a != STR || b != STR) {
 			report(c, .Operand_Type)
 		}
 		expect_result(c, BOOL)

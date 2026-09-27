@@ -157,11 +157,7 @@ load_element :: proc(s: ^Func_State, place: ^Element_Place, span: source.Span) -
 		place.checked = true
 	}
 	if value_type(s, place.array) == ir.STR {
-		call := ir.Call_Runtime {
-			export = .String_At,
-			args   = {place.array, place.index},
-		}
-		return ir.emit(&s.fb, ir.STR, call, span)
+		return string_piece(s, place.array, place.index, .String_At, span)
 	}
 	load := ir.Element_Load {
 		array = place.array,

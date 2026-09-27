@@ -99,12 +99,34 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Element_Store_Ref:
 		store(m, body, v.value, element_address(m, body, v.array, v.index))
 
+	case ir.Unit_Load:
+		units := byte_offset(m, body.values[v.text], int(offset_of(abi.String_Cell, units)))
+		position := llvm.LLVMBuildFPToSI(m.builder, body.values[v.index], m.types.int64, "")
+		address := llvm.LLVMBuildInBoundsGEP2(m.builder, m.types.int16, units, &position, 1, "")
+		unit := llvm.LLVMBuildLoad2(m.builder, m.types.int16, address, "")
+		body.values[value] = llvm.LLVMBuildUIToFP(m.builder, unit, m.types.double, "")
+
+	case ir.Ascii_Cell:
+		row := llvm.LLVMBuildFPToSI(m.builder, body.values[v.unit], m.types.int64, "")
+		body.values[value] = llvm.LLVMBuildInBoundsGEP2(
+			m.builder,
+			string_cell_type(m, 1),
+			ascii_cells(m),
+			&row,
+			1,
+			"",
+		)
+
 	case ir.Layout_Test:
 		body.values[value] = build_layout_test(m, body.values[v.cell], v.layout)
 
 	case ir.Null_Test:
 		reference, null := body.values[v.value], llvm.LLVMConstNull(m.types.ptr)
 		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, reference, null, "")
+
+	case ir.Same_Cell:
+		a, b := body.values[v.a], body.values[v.b]
+		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, a, b, "")
 
 	case ir.Tag_Test:
 		body.values[value] = build_tag_test(m, body.values[v.value], v.tags)
