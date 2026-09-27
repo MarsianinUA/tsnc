@@ -99,21 +99,6 @@ a_reexport_stands_for_a_name_of_another_module :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_redeclared_export_is_reported_once :: proc(t: ^testing.T) {
-	// The second `f` is one mistake, a name declared twice, and not a name exported twice as well.
-	text := lines(
-		"export function f() {}", //
-		"export function f() {}",
-	)
-	twice := expect_errors(t, text, {{.Redeclared_Name, 2, 17}})
-	expect_exports(t, twice, {"f = f"})
-
-	// A declaration that lost its name exports nothing: the name stands for the `let`.
-	lost := expect_errors(t, "let f = 1; export function f() {}", {{.Redeclared_Name, 1, 28}})
-	expect_exports(t, lost, {})
-}
-
-@(test)
 the_effects_flag_says_whether_the_top_level_runs_code :: proc(t: ^testing.T) {
 	expect_effects(t, "export function f() { console.log(1); }", false)
 	expect_effects(t, "export interface P { x: number }\nexport type Q = P;", false)

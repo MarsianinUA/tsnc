@@ -250,7 +250,7 @@ tsnc build src/main.ts -sanitize:address            # link the runtime built wit
 - **Differential tests.** Each test is a `.ts` file. The reference is `node test.ts` (Node 24 strips types without flags; the v1 subset is fully "erasable"). The test compares stdout, stderr, and the exit code byte for byte with `dist/test.exe`. Size: two to three dozen programs of our own, one per construct from section 2; each new feature adds its own test. For `enum` in v2 the reference goes through `tsc` → JS → `node`.
 - **Checks on third-party code.** Once per version, several real small TS programs run through `tsnc check` to show what the subset rejects in practice.
 - **Gate.** Each test first passes `tsc --noEmit --strict`; TypeScript is a dev dependency in the tests folder.
-- **Negative tests.** A file with an expected compile error: the test checks the error code, line, and column.
+- **Negative tests.** A file with an expected compile error: the test checks the error code, the file, the line and the column, and a part of the message where it matters.
 - **Expected-output tests.** A `.ts` file for each runtime failure of section 3.8, where Node is no reference by design. Its header comment states stdout and stderr line by line and the exit code, and the test compares them byte for byte with the built program's, under the same gate, optimization levels, GC stress mode and ASan run as the differential tests.
 - **Unit tests.** Lexer, parser, checker, number formatting, GC through `odin test`.
 - **GC stress mode.** A runtime flag that runs a collection on every allocation and checks heap integrity after each collection. The differential tests also run in this mode.

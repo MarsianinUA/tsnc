@@ -3,8 +3,6 @@ package program_tests
 import "core:slice"
 import "core:testing"
 
-import "../../src/diag"
-
 @(test)
 every_module_takes_one_place_in_the_order :: proc(t: ^testing.T) {
 	// c imports a back, so a, b and c share one place in the order.
@@ -45,51 +43,6 @@ a_cycle_of_types_and_functions_is_allowed :: proc(t: ^testing.T) {
 	testing.expect_value(t, slice.equal(cycle_names(b, 0), []string{"a.ts", "b.ts"}), true)
 	testing.expect_value(t, b.program.cycles[0].has_effects, false)
 	testing.expect_value(t, len(b.diagnostics), 0)
-}
-
-@(test)
-a_cycle_with_side_effects_is_reported_at_the_import_that_closes_it :: proc(t: ^testing.T) {
-	b := build_graph(
-		{
-			{path = "lib.d.ts"},
-			{path = "main.ts", imports = {2}},
-			{path = "a.ts", imports = {3}, effects = true},
-			{path = "b.ts", imports = {2}},
-		},
-	)
-
-	testing.expect_value(t, len(b.program.cycles), 1)
-	testing.expect_value(t, b.program.cycles[0].has_effects, true)
-	testing.expect_value(t, len(b.diagnostics), 1)
-	if len(b.diagnostics) != 1 {
-		return
-	}
-
-	// The message stands on a.ts's import of b.ts, the first request of the ring's first module
-	// that points back into the ring, and names every module of the ring.
-	d := b.diagnostics[0]
-	testing.expect_value(t, d.code, diag.Code.Cycle_With_Side_Effects)
-	testing.expect_value(t, d.span, request_span(2, 0))
-	testing.expect_value(t, d.args[0], "`a.ts`, `b.ts`")
-}
-
-@(test)
-one_ring_of_three_modules_is_one_message :: proc(t: ^testing.T) {
-	b := build_graph(
-		{
-			{path = "lib.d.ts"},
-			{path = "main.ts", imports = {2}},
-			{path = "a.ts", imports = {3}},
-			{path = "b.ts", imports = {4}},
-			{path = "c.ts", imports = {2}, effects = true},
-		},
-	)
-
-	// One ring is one mistake, wherever in it the code that runs happens to sit.
-	testing.expect_value(t, len(b.program.cycles), 1)
-	testing.expect_value(t, slice.equal(cycle_names(b, 0), []string{"a.ts", "b.ts", "c.ts"}), true)
-	testing.expect_value(t, len(b.diagnostics), 1)
-	testing.expect_value(t, b.diagnostics[0].args[0], "`a.ts`, `b.ts`, `c.ts`")
 }
 
 @(test)

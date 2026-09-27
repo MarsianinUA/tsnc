@@ -8,30 +8,6 @@ import "../../src/driver"
 import "../../src/source"
 
 @(test)
-errors_of_every_file_come_out_in_file_id_order :: proc(t: ^testing.T) {
-	c := check_project("multi", "main.ts")
-	defer driver.destroy(&c.report)
-
-	// One pass reports every file's errors, sorted by (File_ID, offset, code): main.ts is 1
-	// because it is the entry, then a.ts and b.ts in the order main.ts imports them. main.ts
-	// spells one import `./a` and the other `./b.ts`, and both resolve.
-	testing.expect_value(t, c.err.kind, driver.Error_Kind.None)
-	testing.expectf(
-		t,
-		slice.equal(
-			c.errors,
-			[]Error {
-				{"main.ts", .Expected_Token, 3, 9},
-				{"a.ts", .Expected_Token, 1, 26},
-				{"b.ts", .Var_Declaration, 1, 1},
-			},
-		),
-		"errors %v",
-		c.errors,
-	)
-}
-
-@(test)
 the_lib_is_module_zero :: proc(t: ^testing.T) {
 	c := check_project("clean", "main.ts")
 	defer driver.destroy(&c.report)
@@ -77,30 +53,6 @@ two_runs_of_one_project_agree :: proc(t: ^testing.T) {
 	// must not depend on the order a directory happens to hand its entries back in.
 	testing.expect_value(t, slice.equal(first_names, file_names(second)), true)
 	testing.expect_value(t, slice.equal(first_errors, second.errors), true)
-}
-
-@(test)
-the_types_of_every_file_are_checked :: proc(t: ^testing.T) {
-	c := check_project("types", "main.ts")
-	defer driver.destroy(&c.report)
-
-	// The checker runs over the whole program, not over the entry file alone, and its diagnostics
-	// join the rest before the sort: the two from main.ts come before the one from util.ts, and a
-	// type error sits next to a name error by position.
-	testing.expect_value(t, c.err.kind, driver.Error_Kind.None)
-	testing.expectf(
-		t,
-		slice.equal(
-			c.errors,
-			[]Error {
-				{"main.ts", .Type_Mismatch, 3, 22},
-				{"main.ts", .Cannot_Find_Name, 5, 27},
-				{"util.ts", .Type_Mismatch, 5, 23},
-			},
-		),
-		"errors %v",
-		c.errors,
-	)
 }
 
 @(test)

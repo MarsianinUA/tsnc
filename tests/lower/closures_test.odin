@@ -221,16 +221,6 @@ sorting_with_a_comparator_passes_the_closure_as_it_stands :: proc(t: ^testing.T)
 	testing.expectf(t, !adapted, "an adapter for a comparator that needs none:\n%s", result.text)
 }
 
-@(test)
-a_function_with_a_rest_parameter_is_reported :: proc(t: ^testing.T) {
-	result := expect_later(
-		t,
-		"function sum(...xs: number[]): number {\nreturn xs.length;\n}\nconsole.log(sum(1));\n",
-		{{.Not_Lowered, 1, 10}},
-	)
-	testing.expect(t, slice.equal(result.constructs, []string{"rest parameters"}))
-}
-
 // func_prefixed finds a function whose name starts with the prefix, for a nested function or an
 // arrow, whose name ends in a node number.
 func_prefixed :: proc(output: ir.Program_IR, prefix: string) -> (ir.Func, bool) {

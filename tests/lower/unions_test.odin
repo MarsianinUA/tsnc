@@ -183,53 +183,6 @@ a_nullable_reference_is_truthy_by_its_tag_alone :: proc(t: ^testing.T) {
 }
 
 @(test)
-an_any_nested_in_a_flow_never_becomes_a_function :: proc(t: ^testing.T) {
-	// The `any` stands in a parameter, a field, the result of an inlined arrow and the element an
-	// inlined callback takes. The first called 41 through a closure of another signature.
-	result := expect_later(
-		t,
-		`type NF = (n: number) => number;
-const k: (x: any) => number = (x: NF): number => x(41);
-function f(a: any, anys: any[]): void {
-const loose: { f: any } = { f: a };
-const tight: { f: NF } = loose;
-const made = [1, 2].map((x: number): NF => a);
-anys.forEach((g: NF) => g(1));
-}
-`,
-		{
-			{.Any_Operation, 2, 7},
-			{.Any_Operation, 5, 7},
-			{.Any_Operation, 6, 14},
-			{.Any_Operation, 7, 1},
-		},
-	)
-	for construct in result.constructs {
-		testing.expect_value(t, construct, "become a function")
-	}
-}
-
-@(test)
-any_never_becomes_a_function :: proc(t: ^testing.T) {
-	// Only the tag of a closure out of `any` could be checked, never its signature. The flow is
-	// refused where it happens: an `as`, a declarator, and a union that holds a function.
-	result := expect_later(
-		t,
-		`type F = (x: number) => number;
-function f(a: any, u: unknown): void {
-const g = a as F;
-let h: F | undefined = a;
-const k = u as F;
-}
-`,
-		{{.Any_Operation, 3, 11}, {.Any_Operation, 4, 5}, {.Any_Operation, 5, 11}},
-	)
-	for construct in result.constructs {
-		testing.expect_value(t, construct, "become a function")
-	}
-}
-
-@(test)
 members_of_one_layout_share_one_arm :: proc(t: ^testing.T) {
 	// A and B have one shape, so one layout test serves both; they agree on v, which is read as a
 	// number. P and Q have one shape too, and there the members disagree on v, which is read as a

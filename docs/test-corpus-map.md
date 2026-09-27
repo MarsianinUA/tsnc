@@ -2,7 +2,7 @@
 
 A working file for T5.11 to T5.16 of `tasks-tsnc.md`. It was made on September 27, 2026, by reading every `@(test)` procedure under `tests/` and every program of the three corpora. Each task strikes its own section when it is done, and T5.16 deletes the file.
 
-T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs.
+T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs. So is T5.13: its section went the same way, and `tests/negative` holds a program for every code of the `diag` registry.
 
 The map is a reading, not a proof. Before a test goes, open the program named next to it and confirm that it reaches the same construct: the same built-in and corner, or the same diagnostic code on the same kind of construct. When it does not, the test moves instead of going.
 
@@ -16,133 +16,6 @@ Classes:
 - NODE-DIFFERS: visible in the output, but Node is not the reference (a runtime failure); it moves to `tests/expect`.
 - KEEP-STRATEGY: a lower test that guards a decision no program shows; it stays and gets rewritten in T5.16.
 - KEEP: needs internal state or more inputs than a program can hold; it stays.
-
-## Negative moves
-
-T5.13.
-
-### From tests/check
-
-Each test becomes `// expect:` lines in the program named, one per site; `x2` and so on count the sites. Tests marked [msg] also need the quoted text of the new syntax. The six tests whose diagnostic comes from lower are under "Build mode" below.
-
-- arrays: an_element_that_does_not_fit_the_context_is_reported -> type-mismatch.ts, T3001
-- arrays: indexing_with_something_other_than_a_number_is_reported -> type-mismatch.ts, T3001
-- arrays: arrays_of_different_elements_do_not_fit_each_other -> type-mismatch.ts, T3001
-- arrays: two_array_members_leave_an_empty_literal_without_a_context -> empty-array-literal.ts, T3017
-- assertions: as_unknown_as_a_type_is_rejected_at_its_first_half -> unsafe-assertion.ts, T3019 x2
-- assertions: non_null_after_a_narrowing_has_nothing_left_to_check -> needless-non-null.ts, T3021
-- expressions: comparisons_order_two_numbers_or_two_strings -> comparison-operands.ts, T3005
-- expressions: double_equals_on_a_type_of_several_kinds_asks_for_triple_equals -> loose-equality.ts, T3002 x4
-- expressions: update_operators_need_a_number -> operand-not-number.ts, T3003
-- expressions: assignment_checks_the_declared_type -> type-mismatch.ts, T3001
-- expressions: compound_assignment_follows_its_operator -> operand-not-number.ts, T3003
-- expressions: an_assertion_between_two_unions_that_merely_overlap_is_reported -> unrelated-assertion.ts, T3020
-- functions: a_call_checks_the_type_of_each_argument -> type-mismatch.ts, T3001
-- functions: a_call_checks_how_many_arguments_it_passes -> argument-count.ts, T3007 (the too-few case)
-- functions: a_function_that_asks_for_more_does_not_fit -> type-mismatch.ts, T3001
-- functions: a_function_result_that_does_not_fit_is_reported -> type-mismatch.ts, T3001
-- functions: a_positional_array_does_not_fit_a_rest_parameter -> type-mismatch.ts, T3001
-- functions: a_required_parameter_does_not_fit_an_optional_one -> type-mismatch.ts, T3001
-- functions: an_arrow_parameter_from_an_optional_one_may_be_undefined -> addition-operands.ts, T3004
-- generics: an_arrow_parameter_that_does_not_fit_is_reported -> type-mismatch.ts, T3001
-- generics: an_arrow_outside_a_call_still_needs_its_annotations -> missing-annotation.ts, T3008
-- generics: a_body_that_does_not_fit_the_signature_is_reported -> type-mismatch.ts, T3001
-- generics: the_wrong_number_of_arguments_is_reported -> argument-count.ts, T3007
-- inference: a_return_is_checked_against_the_declared_result -> type-mismatch.ts, T3001
-- inference: mutually_recursive_functions_need_an_annotation -> recursive-return-type.ts, T3010
-- inference: a_recursive_arrow_without_a_return_type_needs_an_annotation -> recursive-return-type.ts, T3010
-- inference: a_variable_read_from_a_function_that_types_it_is_reported -> circular-initializer.ts, T3027
-- members: a_misspelled_member_is_reported -> field-not-found.ts, T3011
-- members: a_member_of_the_wrong_type_is_reported -> type-mismatch.ts, T3001
-- modules: a_name_the_other_module_does_not_export_is_reported -> unknown-export.ts, T4009 (needs a declared, unexported const in modules/values.ts)
-- modules: a_module_namespace_is_not_a_value_of_its_own -> namespace-as-value.ts, T2026 (the type position)
-- modules: a_name_a_module_namespace_does_not_have_is_reported -> unknown-export.ts, T4009
-- modules: an_imported_type_is_not_a_value -> type-used-as-value.ts, T4010 x3 and T4008 (needs a module that re-exports a type only)
-- modules: an_imported_binding_cannot_be_assigned_to -> assign-to-const.ts, T3009
-- modules: a_binding_reached_through_a_namespace_cannot_be_assigned_to -> assign-to-const.ts, T3009 (the `++` case)
-- names: a_parameter_with_no_type_is_reported -> missing-annotation.ts, T3008
-- names: a_name_used_above_its_declaration_is_typed_once -> operand-not-number.ts, T3003 (one line proves "once")
-- names: a_mistake_inside_a_rejected_construct_is_still_found -> prototype.ts, T2024 and T3003
-- names: a_mistake_inside_a_nested_function_is_reported_once -> operand-not-number.ts, T3003
-- narrowing: a_union_has_no_members_of_its_own_outside_a_narrowing -> field-not-found.ts, T3011
-- narrowing: a_member_of_a_discriminated_union_is_not_readable_before_the_test -> field-not-found.ts, T3011
-- narrowing: a_case_the_value_can_never_equal_is_reported -> no-overlap.ts, T3022
-- narrowing: an_optional_field_read_without_a_test_does_not_fit_the_type -> type-mismatch.ts, T3001
-- narrowing: a_write_of_the_wrong_type_is_still_reported_inside_a_narrowing -> type-mismatch.ts, T3001
-- narrowing: a_write_to_the_object_drops_what_was_known_about_its_field -> type-mismatch.ts, T3001
-- narrowing: a_write_at_the_end_of_a_loop_reaches_the_top_of_the_next_turn -> field-not-found.ts, T3011
-- narrowing: a_narrowing_does_not_carry_into_an_arrow_when_the_name_is_written_to -> field-not-found.ts, T3011
-- narrowing: a_break_out_of_a_loop_carries_what_the_body_left -> type-mismatch.ts, T3001
-- narrowing: a_read_after_a_call_that_never_returns_keeps_the_declared_type -> field-not-found.ts, T3011 (the unreachable read is still reported, once)
-- narrowing: a_write_to_a_field_of_a_union_fits_every_member -> type-mismatch.ts, T3001 (the accepted half goes to union-fields.ts in T5.14)
-- objects: an_unknown_type_name_is_reported -> cannot-find-name.ts, T4008 (the type position)
-- objects: a_generic_of_ones_own_is_rejected_at_its_declaration -> generic-declaration.ts, T2023 (reported once)
-- objects: a_field_whose_type_does_not_fit_is_reported -> type-mismatch.ts, T3001
-- objects: two_object_types_with_different_fields_do_not_fit -> field-not-found.ts, T3011
-- objects: a_value_that_is_not_a_literal_needs_the_same_set_of_fields -> missing-field.ts, T3012
-- objects: a_literal_whose_tag_fits_no_member_is_reported_once -> type-mismatch.ts, T3001
-- objects: a_tag_written_as_a_name_falls_back_to_the_field_names -> type-mismatch.ts, T3001
-- reachability: an_arrow_that_can_end_without_a_return_is_reported -> missing-return.ts, T3024
-- reachability: a_switch_that_leaves_a_case_out_still_needs_a_return -> missing-return.ts, T3024
-- reachability: a_let_read_before_any_write_is_reported -> used-before-assigned.ts, T3025
-- reachability: a_compound_assignment_reads_the_target_before_it_writes -> used-before-assigned.ts, T3025 x2
-- reachability: a_read_inside_a_function_declaration_is_reported -> used-before-assigned.ts, T3025
-- reachability: a_read_inside_an_arrow_made_before_the_write_is_reported -> used-before-assigned.ts, T3025
-- reachability: an_exported_let_with_no_initializer_is_reported_at_its_declaration -> used-before-assigned.ts, T3025 (see "Diagnostics in two files")
-- reachability: a_name_used_where_it_stands_before_its_declaration_is_reported -> used-before-declaration.ts, T3028 x4
-- statements: looping_over_something_that_is_no_sequence_is_reported -> not-iterable.ts, T3023 (the object and union cases)
-- statements: a_for_of_variable_cannot_be_written_to -> assign-to-const.ts, T3009
-- subset: declare_outside_the_lib_file_is_rejected -> declare.ts, T2022 (function, interface, type)
-- subset: type_parameters_of_ones_own_are_rejected -> generic-declaration.ts, T2023 x4
-- subset: the_prototype_chain_is_rejected -> prototype.ts, T2024 x3
-- subset: the_prototype_chain_is_rejected_on_a_value_the_rules_gave_up_on -> prototype.ts, T2024
-- subset: symbol_is_rejected_by_name -> symbol.ts, T2025 x3 and T4008
-- subset: changing_the_shape_of_an_object_is_already_closed -> field-not-found.ts, T3011 (a write to a missing field)
-- subset: a_function_converted_to_a_string_is_rejected -> function-to-string.ts, T2028 x6 and T3001
-- subset: an_operation_on_any_that_converts_it_is_rejected -> any-operation.ts, T2029 x3 [msg]
-- subset: every_operation_on_any_that_needs_a_lookup_is_rejected -> any-operation.ts, T2029 x10
-
-type-mismatch.ts takes 21 of these lines; split it into three programs (values and calls, function types, flow) so that each stays short enough to read.
-
-### Build mode: codes lower reports
-
-- not-lowered.ts (T2027): check/functions a_rest_parameter_takes_any_number_of_arguments; lower/closures a_function_with_a_rest_parameter_is_reported; lower/builtins the_four_math_names_the_ir_cannot_say_are_reported (`Math.clz32`, `fround`, `hypot`, `imul`); lower/control_flow poison_nothing_reported_is_named_at_the_expression. Also `x ??= 1`.
-- any-to-function.ts (T2029): lower/unions an_any_nested_in_a_flow_never_becomes_a_function, any_never_becomes_a_function.
-
-### Message and hint text
-
-- check/assertions: as_any_is_rejected ("`as any`"), as_between_two_unrelated_types_is_rejected ("cannot be converted"), non_null_on_a_value_that_is_always_there_is_rejected ("nothing to check")
-- check/expressions: strict_equality_rejects_two_types_with_no_value_in_common ("no value in common"), comparing_different_types_with_double_equals_asks_for_triple_equals (hint "use `===`")
-- check/modules: the_message_about_an_unknown_export_names_the_module (the whole message)
-- check/objects: an_extra_field_is_reported_with_a_hint ("`z` is not a field of type `Point`", hint "check the spelling")
-- check/subset: the_hint_of_declare_says_what_to_write_instead, an_operation_on_any_that_converts_it_is_rejected ("a value of type `any` cannot be an operand of `*`")
-- parse/subset: other_constructs_outside_v1_are_named ("`debugger` statements"). Its sites are already `// expect:` lines of the unsupported-*.ts programs; only the text is left.
-
-### Diagnostics in two files
-
-- check/modules: a_re_export_of_a_name_that_is_nowhere_is_reported, a_ring_of_re_exports_answers_that_the_name_is_nowhere (T4009 at 1:10 in both files), a_result_inferred_through_a_ring_of_imports_is_reported_once
-- check/reachability: an_exported_let_with_no_initializer_is_reported_at_its_declaration (the importer stays silent)
-- driver/closure_test: a_cycle_of_modules_that_run_code_is_reported (T4007 lands in `a.ts`, not the entry). The two driver check_test cases with errors in several files may follow; they also pin the report's file order.
-- program/graph: a_cycle_with_side_effects_is_reported_at_the_import_that_closes_it, one_ring_of_three_modules_is_one_message. Their ring leaves the entry out, so T4007 lands on the import of the ring's first module, and the message lists the ring's modules (a quoted text).
-- bind/modules: a_redeclared_export_is_reported_once. Its T4001 sites are in redeclared-name.ts; what is left is the export table, which only an importer sees: the first `export function f` is what `import { f }` gets, and `let f = 1; export function f() {}` exports nothing, so importing `f` is a T4009.
-
-### Lexer and parser codes (from tests/parse)
-
-A parse fragment brings bind and check errors of its own (`f(1, 2` also gives T4008), so each case becomes a whole program with one error per line. `report_syntax` drops a second T1xxx on one line; T1012 skips the rest of the file and needs about 64 nested brackets.
-
-- T1001 unexpected-character.ts: tokenize an_unknown_character_is_reported_and_skipped
-- T1002 unterminated-string.ts: a_string_ends_at_the_end_of_its_line; recovery parse_file_reports_the_tokenizer_errors_too
-- T1003: an_unterminated_template_runs_to_the_end_of_the_text
-- T1004: comments_make_no_tokens
-- T1005: a_malformed_number_is_one_token_and_one_diagnostic
-- T1006: an_invalid_escape_is_reported_and_the_string_goes_on
-- T1007 expected-token.ts: greater_tokens_join_only_when_they_touch, a_missing_part_is_reported_where_it_is_missing, a_member_without_a_type_is_an_error, an_interface_without_a_body_still_has_one, a_skipped_declaration_ends_at_its_body
-- T1008: a_body_takes_no_declaration
-- T1009, T1010, T1011: operator_rules_are_syntax_errors
-- T1012: one program; the nesting sweep over 11 shapes stays a unit test
-- recovery, one program each: after_an_error_the_parser_finds_the_next_one, one_syntax_error_per_line_is_reported, a_broken_statement_ends_where_the_next_one_starts, an_error_does_not_hide_the_next_line, an_unclosed_bracket_does_not_swallow_the_file
-
-A parse test goes only when the program pins all it asserts. `parse_checked` runs `check_tree` over every broken input, and `expect_parse` compares the recovered tree: those assertions keep the test.
 
 ## Diff moves: check and lower
 
@@ -175,7 +48,7 @@ T5.14. Every program passes the tsc gate: `import type` for a type, a `.ts` spec
 
 ### Helpers left unused after the move
 
-check: `expect_program`, `use_declaration`, `member_text`. lower: `number_at`, `returned` and the `core:slice` import in control_flow; after T5.13, `expect_later`, `Lowered.constructs`, `slice_equal`.
+check: `expect_program`, `use_declaration`, `member_text`. lower: `number_at`, `returned` and the `core:slice` import in control_flow.
 
 ## Diff moves: runtime and the rest
 
@@ -244,7 +117,6 @@ T5.16. Each test keeps its decision and loses its exact counts and positions:
   - objects: object_fields_are_in_canonical_order, an_optional_field_prints_with_its_question_mark, and the seven widening-record tests: every_place_a_narrow_object_flows_records_its_widening, a_widening_walks_into_the_fields, a_widening_of_an_interface_that_names_itself_ends, one_type_and_arrays_record_nothing, a_function_flow_lists_its_pair_and_its_parameters_the_other_way, a_lib_callback_lists_no_pair_of_its_own, a_function_pushed_into_an_array_lists_its_pair
   - types: all eight (Type_ID rows, interning, union canonical form and text order across checkers, function type text, the result outliving the check's scratch)
   - corpus: every_program_of_the_diff_corpus_checks_without_a_diagnostic (`check_typed` over every diff program)
-- tests/check tests that move in T5.13 once the negative runner reads text and files: the eight under "Message and hint text" and the three check tests under "Diagnostics in two files".
 - tests/lower, 5 besides KEEP-STRATEGY: the four lib tests of the strategy table (every lib name has a row, every row names a lib member, no name twice, no dotted name), and control_flow the_dump_is_the_same_every_time.
 - tests/ir, all 54: the builder, layout and string interning, the printer's format, 27 verifier faults. None of it reaches a program.
 - tests/codegen, 16: the `noreturn` attribute, i1 widened to i64 at runtime calls, a zeroed internal global, the rest array of a runtime call, a tagged value split into words, the result slot, the closure convention, fail sites, `init$m` names and linkage, one call per `console.log`, the rows of `tsnc_roots` (a missing row for a tagged global passes the corpus under stress, since the conservative stack scan finds a stale copy; a Ref global's row is pinned by gc-objects.ts), and all of codegen_test (object and IR emission, `-o:aggressive`, object formats per target, the unsupported target, the write error).

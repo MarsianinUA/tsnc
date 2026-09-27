@@ -93,8 +93,6 @@ every_assignment_operator_has_its_op :: proc(t: ^testing.T) {
 greater_tokens_join_only_when_they_touch :: proc(t: ^testing.T) {
 	expect_expression(t, "a >= b >> c >>> d", "(>= a (>>> (>> b c) d))")
 	expect_expression(t, "a > b > c", "(> (> a b) c)")
-	expect_errors(t, "a > = b", {{.Expected_Token, 1, 5}})
-	expect_errors(t, "a > > b", {{.Expected_Token, 1, 5}})
 }
 
 @(test)
@@ -182,27 +180,4 @@ arrows_take_parameters_and_a_body :: proc(t: ^testing.T) {
 		"(k: number): ((a: number) => number) => (a: number) => a + k",
 		"(arrow [(k : number)] : (=> [(a : number)] number) (arrow [(a : number)] (+ a k)))",
 	)
-}
-
-@(test)
-operator_rules_are_syntax_errors :: proc(t: ^testing.T) {
-	expect_parse(t, "a ?? b || c", {{.Mixed_Coalesce, 1, 3}}, "(expr (?? a (|| b c)))")
-	expect_errors(t, "a || b ?? c", {{.Mixed_Coalesce, 1, 8}})
-	expect_errors(t, "a && b ?? c", {{.Mixed_Coalesce, 1, 8}})
-	expect_errors(t, "(a || b) ?? c", {})
-	expect_errors(t, "a ?? (b || c)", {})
-
-	expect_errors(t, "-2 ** 2", {{.Unary_Before_Power, 1, 1}})
-	expect_errors(t, "typeof a ** 2", {{.Unary_Before_Power, 1, 1}})
-	expect_errors(t, "(-2) ** 2", {})
-	expect_errors(t, "2 ** -2", {})
-	expect_errors(t, "++a ** 2", {})
-	parsed := expect_errors(t, "!a ** 2", {{.Unary_Before_Power, 1, 1}})
-	testing.expect_value(t, parsed.diagnostics[0].args[0], "!")
-
-	expect_errors(t, "f() = 1", {{.Invalid_Assignment_Target, 1, 1}})
-	expect_errors(t, "a + b = c", {{.Invalid_Assignment_Target, 1, 1}})
-	expect_errors(t, "1 = 2", {{.Invalid_Assignment_Target, 1, 1}})
-	expect_errors(t, "++1", {{.Invalid_Assignment_Target, 1, 3}})
-	expect_errors(t, "f()++", {{.Invalid_Assignment_Target, 1, 1}})
 }

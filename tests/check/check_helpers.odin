@@ -46,8 +46,7 @@ File_Error :: struct {
 Checked :: struct {
 	program:     program.Program,
 	result:      check.Check_Result,
-	diagnostics: []diag.Diagnostic, // check's own, in print order
-	errors:      []Error, // the same, one for one
+	errors:      []Error, // check's own, in print order
 	file_errors: []File_Error, // the same, one for one
 }
 
@@ -112,7 +111,6 @@ check_sources :: proc(
 	checked := Checked {
 		program     = prog,
 		result      = result,
-		diagnostics = diagnostics,
 		errors      = errors_of(files, diagnostics),
 		file_errors = file_errors_of(files, diagnostics),
 	}
@@ -133,26 +131,6 @@ every_source :: proc(count: int) -> []source.File_ID {
 expect_program :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Checked {
 	c := check_sources(t, sources, every_source(len(sources)), loc = loc)
 	testing.expectf(t, len(c.file_errors) == 0, "%v: %v", sources, c.file_errors, loc = loc)
-	return c
-}
-
-// expect_program_errors wants the diagnostics in print order, one for one.
-expect_program_errors :: proc(
-	t: ^testing.T,
-	sources: []string,
-	expected: []File_Error,
-	loc := #caller_location,
-) -> Checked {
-	c := check_sources(t, sources, every_source(len(sources)), loc = loc)
-	testing.expectf(
-		t,
-		slice.equal(c.file_errors, expected),
-		"%v: errors %v, want %v",
-		sources,
-		c.file_errors,
-		expected,
-		loc = loc,
-	)
 	return c
 }
 
@@ -366,17 +344,6 @@ use_declaration :: proc(
 		seen += 1
 	}
 	return {}
-}
-
-// rendered is one diagnostic the way main prints it, error line and hint, for the tests that have
-// to read the hint rather than only the code.
-rendered :: proc(c: Checked, index: int) -> string {
-	if index >= len(c.diagnostics) {
-		return ""
-	}
-	b := strings.builder_make(context.temp_allocator)
-	_ = diag.render(strings.to_writer(&b), c.program.files, c.diagnostics[index])
-	return strings.to_string(b)
 }
 
 // call_text is the signature the occurrence-th call of the file settled on, printed. It is what a
