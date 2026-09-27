@@ -43,13 +43,11 @@ Built :: struct {
 RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style"
 
 // check_project leaves the result to the caller, who must call driver.destroy on its report.
-//
-// Only input is filled in: check_only reads nothing else out of Options, and the fields that carry
-// a target or a thread count first mean something in T4.5 and T6.1.
-check_project :: proc(project, entry: string) -> Checked {
+check_project :: proc(project, entry: string, jobs := 1) -> Checked {
 	options := driver.Options {
 		command = .check,
 		input   = fmt.tprintf("%s%s/%s", PROJECTS, project, entry),
+		jobs    = jobs,
 	}
 	report, err := driver.check_only(options)
 	return {report = report, err = err, errors = errors_of(report)}

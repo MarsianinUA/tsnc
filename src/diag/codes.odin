@@ -93,7 +93,7 @@ Code :: enum u16 {
 	Circular_Initializer, // {0} is the name
 	Used_Before_Declaration, // {0} is the name
 
-	// T4xxx: names, modules and imports. bind reports these, driver the three that need a file
+	// T4xxx: names, modules and imports. bind reports these, driver the four that need a file
 	// system to decide, program the one that needs the whole module graph, and check the three
 	// that need the tables of another module.
 	Redeclared_Name, // {0} is the name
@@ -106,6 +106,7 @@ Code :: enum u16 {
 	Cannot_Find_Name, // {0} is the name; check reports it, once it has read the lib module
 	Unknown_Export, // {0} is the name asked for, {1} the specifier as written
 	Type_Used_As_Value, // {0} is the name
+	Path_Case_Mismatch, // {0} is the specifier as written, {1} the name on disk it differs from
 }
 
 @(private)
@@ -528,6 +529,11 @@ REGISTRY := [Code]Row {
 		number = 4010,
 		text = "`{0}` is a type and not a value",
 		hint = "use `{0}` where a type belongs, such as an annotation; a value of that name has to be declared and exported on its own, and `import type` never brings one",
+	},
+	.Path_Case_Mismatch = {
+		number = 4011,
+		text = "`{0}` differs in case from `{1}` on disk",
+		hint = "spell the path the way the file system does: Linux tells `m.ts` from `M.ts`, so this import would find no file there",
 	},
 }
 

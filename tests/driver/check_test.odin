@@ -40,19 +40,35 @@ a_clean_program_reports_nothing :: proc(t: ^testing.T) {
 }
 
 @(test)
-two_runs_of_one_project_agree :: proc(t: ^testing.T) {
-	first := check_project("multi", "main.ts")
-	defer driver.destroy(&first.report)
-	first_names := slice.clone(file_names(first), context.temp_allocator)
-	first_errors := slice.clone(first.errors, context.temp_allocator)
+the_thread_count_changes_no_number_and_no_diagnostic :: proc(t: ^testing.T) {
+	one := check_project("multi", "main.ts", jobs = 1)
+	defer driver.destroy(&one.report)
 
-	second := check_project("multi", "main.ts")
-	defer driver.destroy(&second.report)
+	// Three waves: main, then big and the five small modules it imports, then what those import.
+	// main imports big first, and at eight threads the small ones finish before it.
+	names := []string {
+		"lib.d.ts",
+		"main.ts",
+		"big.ts",
+		"a.ts",
+		"b.ts",
+		"c.ts",
+		"d.ts",
+		"e.ts",
+		"deep.ts",
+		"shared.ts",
+	}
+	testing.expectf(t, slice.equal(file_names(one), names), "files %v", file_names(one))
+	// Every file but the lib has one mistake, of parse, bind or check, so a changed order shows.
+	testing.expectf(t, len(one.errors) == len(names) - 1, "errors %v", one.errors)
 
-	// The guard T6.1 widens to `-j:1` against `-j:8`. Today it catches the file system: the walk
-	// must not depend on the order a directory happens to hand its entries back in.
-	testing.expect_value(t, slice.equal(first_names, file_names(second)), true)
-	testing.expect_value(t, slice.equal(first_errors, second.errors), true)
+	// Several runs, because a race shows only in some of them.
+	for _ in 0 ..< 10 {
+		eight := check_project("multi", "main.ts", jobs = 8)
+		defer driver.destroy(&eight.report)
+		testing.expectf(t, slice.equal(file_names(eight), names), "files %v", file_names(eight))
+		testing.expectf(t, slice.equal(eight.errors, one.errors), "errors %v", eight.errors)
+	}
 }
 
 @(test)

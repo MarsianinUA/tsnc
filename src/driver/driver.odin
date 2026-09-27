@@ -10,7 +10,10 @@ exit code; main does both.
 
 File_ID order. The lib file is 0, the entry file is 1, and an imported file takes the next number
 as the breadth-first walk first reaches it, as the "Determinism" paragraph of
-docs/architecture-plan-tsnc.md#interaction-map asks.
+docs/architecture-plan-tsnc.md#interaction-map asks. The walk goes in waves: the pool parses every
+file known so far at once, and only when all of them are done does this thread follow their
+imports, in File_ID order. So the numbers never depend on which task finished first, and -j:1 and
+-j:32 number a program alike.
 
 Memory. One arena per file task, holding that file's tokens, AST and Bound_File, plus one driver
 arena for the file table, the path strings, the file texts and the merged diagnostics. Everything
@@ -26,6 +29,7 @@ package driver
 
 import "base:runtime"
 import "core:mem/virtual"
+import "core:thread"
 
 import "../ast"
 import "../bind"
@@ -144,7 +148,8 @@ Build_Memory :: struct {
 }
 
 // check_only reports every error it can rather than stopping at the first: a file that fails to
-// parse still gets bound, and a module that cannot be found does not end the walk.
+// parse still gets bound, and a module that cannot be found does not end the walk. allocator must
+// be thread-safe, because the threads of the pool allocate from it too.
 @(require_results)
 check_only :: proc(
 	options: Options,
@@ -172,6 +177,7 @@ check_only :: proc(
 	c.diagnostics = make([dynamic]diag.Diagnostic, c.arena)
 	c.by_key = make(map[string]source.File_ID, c.arena)
 	c.failed = make(map[string]Failure, c.arena)
+	c.listings = make(map[string][]string, c.arena)
 
 	// Module zero, before anything the entry file might import.
 	_ = add_file(&c, LIB_PATH, "", LIB_TEXT)
@@ -182,13 +188,28 @@ check_only :: proc(
 		return {memory = memory}, err
 	}
 
+	pool: thread.Pool
+	thread.pool_init(&pool, allocator, max(options.jobs, 1))
+	thread.pool_start(&pool)
+	defer {
+		thread.pool_join(&pool)
+		thread.pool_destroy(&pool)
+	}
+
 	// Growing c.files inside the loop is what makes this breadth-first: a file discovered now is
-	// numbered after every file already known, and its own imports are followed later.
-	for id := 0; id < len(c.files); id += 1 {
-		task := c.memory.tasks[id]
-		run_file_task(task)
-		append(&c.diagnostics, ..task.diagnostics)
-		follow_requests(&c, source.File_ID(id))
+	// numbered after every file already known, and its own imports are followed in a later wave.
+	wave: Wave
+	for first := 0; first < len(c.files); {
+		last := len(c.files)
+		wave.tasks = c.memory.tasks[first:last]
+		if parse_wave(&pool, &wave) != nil {
+			return {memory = memory}, {kind = .Out_Of_Memory}
+		}
+		for id in first ..< last {
+			append(&c.diagnostics, ..c.memory.tasks[id].diagnostics)
+			follow_requests(&c, source.File_ID(id))
+		}
+		first = last
 	}
 
 	count := len(c.files)
