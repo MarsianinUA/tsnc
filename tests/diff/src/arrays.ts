@@ -1,7 +1,7 @@
 // Arrays (requirements 3.6 and the Array methods of 2.2): literals, reading and writing an element,
 // a write at the length appending, the methods the runtime answers, and map, filter, forEach and
-// reduce, whose callbacks take the index and the array too. Arrays nest and hold objects, and
-// for...of walks to the end the array has when it gets there.
+// reduce, whose callbacks take the index and the array too, and whose `return` ends one pass. Arrays
+// nest and hold objects, and for...of walks to the end the array has when it gets there.
 
 interface Point {
   x: number;
@@ -26,15 +26,21 @@ const counted = words.map((w, i, all) => w + i + all.length);
 const long = words.filter((w) => w.length > 3);
 let visits = 0;
 numbers.forEach((n, i, all) => {
-  if (all.length > 100) {
+  if (i === all.length - 2) {
     return;
   }
   visits += n * i;
 });
+const odd = numbers.filter((n) => {
+  if (n % 2 === 1) {
+    return true;
+  }
+  return false;
+});
 const total = numbers.reduce((sum, n) => sum + n, 0);
 const product = numbers.reduce((a, b) => a * b);
 const longest = words.reduce((best, w) => (w.length > best.length ? w : best), "");
-console.log(doubled, counted, long, visits, total, product, longest);
+console.log(doubled, counted, long, visits, odd, total, product, longest);
 
 const grid = [[1, 2], [3, 4, 5]];
 grid[1][0] = 30;

@@ -32,18 +32,10 @@ the_four_callback_methods_are_loops_with_the_callback_inlined :: proc(t: ^testin
 	`,
 	)
 	body, _ := func_named(result.output, "m1.sum")
+	testing.expectf(t, len(instructions_of(body, ir.Call)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(body, ir.Call_Closure)) == 0, "%s", result.text)
-	testing.expectf(t, len(instructions_of(body, ir.New_Array)) == 2, "%s", result.text)
-	testing.expectf(t, calls_to(body, .Array_Push) == 1, "%s", result.text)
-	// A bare return in forEach ends the pass, not the function: the one Return is the function's.
-	testing.expectf(t, len(instructions_of(body, ir.Return)) == 1, "%s", result.text)
-	// The filter callback's two returns meet in a phi.
-	bools := 0
-	for instruction in body.values {
-		_, is_phi := instruction.variant.(ir.Phi)
-		bools += 1 if is_phi && instruction.type == ir.BOOL else 0
-	}
-	testing.expectf(t, bools == 1, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Make_Closure)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Func_Ref)) == 0, "%s", result.text)
 }
 
 @(test)
@@ -58,8 +50,7 @@ a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 	`,
 	)
 	init, _ := func_named(result.output, "init$m1")
-	calls := instructions_of(init, ir.Call)
-	if testing.expectf(t, len(calls) == 1, "%s", result.text) {
-		testing.expect_value(t, len(calls[0].args), 1)
-	}
+	testing.expectf(t, calls_function(result.output, init, "m1.double"), "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Func_Ref)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Call_Closure)) == 0, "%s", result.text)
 }

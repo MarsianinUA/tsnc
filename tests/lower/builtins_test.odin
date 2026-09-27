@@ -1,6 +1,5 @@
 package lower_tests
 
-import "core:slice"
 import "core:testing"
 
 import "../../src/ir"
@@ -21,29 +20,25 @@ math_names_with_an_intrinsic_use_it :: proc(t: ^testing.T) {
 	)
 	body, found := func_named(result.output, "m1.work")
 	testing.expect(t, found, "the function was not lowered")
-	testing.expectf(
-		t,
-		slice.equal(intrinsics_of(body), []ir.Intrinsic_Op{.Abs, .Sqrt, .Floor, .Atan2}),
-		"%s",
-		result.text,
-	)
+	used: bit_set[ir.Intrinsic_Op]
+	for call in instructions_of(body, ir.Intrinsic) {
+		used += {call.op}
+	}
+	testing.expectf(t, used == {.Abs, .Sqrt, .Floor, .Atan2}, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
 }
 
 @(test)
 a_program_that_never_reads_process_argv_has_no_global_for_it :: proc(t: ^testing.T) {
-	result := lower_text(t, `console.log(1);`)
-	testing.expectf(t, len(result.output.globals) == 0, "%s", result.text)
-	main := result.output.funcs[result.output.main]
-	testing.expectf(t, calls_to(main, .Process_Argv) == 0, "%s", result.text)
-}
+	// The program that reads it keeps the other half from passing on a global renamed.
+	reads := lower_text(t, `console.log(process.argv.length);`)
+	_, made := global_named(reads.output, "process.argv")
+	testing.expectf(t, made, "%s", reads.text)
 
-@(private = "file")
-intrinsics_of :: proc(body: ir.Func) -> []ir.Intrinsic_Op {
-	out := make([dynamic]ir.Intrinsic_Op, context.temp_allocator)
-	for instruction in body.values {
-		if call, is_call := instruction.variant.(ir.Intrinsic); is_call {
-			append(&out, call.op)
-		}
+	result := lower_text(t, `console.log(1);`)
+	_, made = global_named(result.output, "process.argv")
+	testing.expectf(t, !made, "%s", result.text)
+	for body in result.output.funcs {
+		testing.expectf(t, calls_to(body, .Process_Argv) == 0, "%s", result.text)
 	}
-	return out[:]
 }

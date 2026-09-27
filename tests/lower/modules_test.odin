@@ -1,6 +1,5 @@
 package lower_tests
 
-import "core:slice"
 import "core:testing"
 
 import "../../src/ir"
@@ -21,12 +20,8 @@ an_imported_function_is_called_directly :: proc(t: ^testing.T) {
 	)
 	init, found := func_named(result.output, "init$m1")
 	testing.expect(t, found, "the module has no init function")
-
-	names := make([dynamic]string, context.temp_allocator)
-	for instruction in init.values {
-		if call, is_call := instruction.variant.(ir.Call); is_call {
-			append(&names, result.output.funcs[call.func].name)
-		}
-	}
-	testing.expectf(t, slice.contains(names[:], "m2.double"), "%v", names[:])
+	testing.expectf(t, calls_function(result.output, init, "m2.double"), "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Func_Ref)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Make_Closure)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(init, ir.Call_Closure)) == 0, "%s", result.text)
 }

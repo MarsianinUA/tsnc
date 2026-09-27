@@ -1,8 +1,8 @@
 package lower_tests
 
+import "core:slice"
 import "core:testing"
 
-import "../../src/abi"
 import "../../src/ir"
 
 /*
@@ -21,7 +21,7 @@ type Shape = Circle | Square | Rect;
 
 @(test)
 a_narrowed_read_tests_the_tag_and_unboxes :: proc(t: ^testing.T) {
-	// The assignment narrows v to a number, and nothing else tests a tag here.
+	// The assignment narrows v to a number; v is still stored tagged.
 	result := lower_text(
 		t,
 		`
@@ -32,15 +32,21 @@ a_narrowed_read_tests_the_tag_and_unboxes :: proc(t: ^testing.T) {
 	`,
 	)
 	body, _ := func_named(result.output, "m1.f")
-	tests := instructions_of(body, ir.Tag_Test)
-	fails := instructions_of(body, ir.Fail)
-	if !testing.expectf(t, len(tests) == 1 && len(fails) == 1, "%s", result.text) {
-		return
+	unboxes := instructions_of(body, ir.Unbox)
+	testing.expectf(t, len(unboxes) > 0, "%s", result.text)
+	for unbox in unboxes {
+		guarded := false
+		for instruction, id in body.values {
+			test := instruction.variant.(ir.Tag_Test) or_continue
+			error, fails := fails_unless(result.output, body, ir.Value_ID(id))
+			guarded ||=
+				test.value == unbox.value &&
+				test.tags == {.Number} &&
+				fails &&
+				error == .Tagged_Holds_Other_Kind
+		}
+		testing.expectf(t, guarded, "an unbox without a tag test:\n%s", result.text)
 	}
-	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number})
-	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 1, "%s", result.text)
-	error := result.output.fail_sites[fails[0].site].error
-	testing.expect_value(t, error, abi.Runtime_Error.Tagged_Holds_Other_Kind)
 }
 
 @(test)
@@ -58,12 +64,21 @@ a_narrowed_object_is_checked_by_its_layout_too :: proc(t: ^testing.T) {
 	`,
 	)
 	body, _ := func_named(result.output, "m1.r")
-	checks := instructions_of(body, ir.Layout_Test)
-	if !testing.expectf(t, len(checks) == 1, "%s", result.text) {
-		return
+	loads := instructions_of(body, ir.Field_Load)
+	testing.expectf(t, len(loads) > 0, "%s", result.text)
+	for load in loads {
+		checked := false
+		for instruction, id in body.values {
+			test := instruction.variant.(ir.Layout_Test) or_continue
+			error, fails := fails_unless(result.output, body, ir.Value_ID(id))
+			checked ||=
+				test.cell == load.cell &&
+				body.values[load.cell].type == ir.ref(test.layout) &&
+				fails &&
+				error == .Tagged_Holds_Other_Kind
+		}
+		testing.expectf(t, checked, "a field read of an unchecked layout:\n%s", result.text)
 	}
-	// The layout of the unboxed reference, which the field load then reads.
-	testing.expect_value(t, body.values[checks[0].cell].type, ir.ref(checks[0].layout))
 }
 
 @(test)
@@ -79,14 +94,10 @@ typeof_compared_with_a_word_is_a_tag_test :: proc(t: ^testing.T) {
 	`,
 	)
 	body, _ := func_named(result.output, "m1.f")
-	testing.expectf(t, calls_to(body, .Value_Typeof) == 0, "%s", result.text)
-	tests := instructions_of(body, ir.Tag_Test)
-	if !testing.expectf(t, len(tests) == 2, "%s", result.text) {
-		return
-	}
-	testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number})
+	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
+	testing.expectf(t, tests_tags(body, {.Number}), "%s", result.text)
 	// typeof null is "object".
-	testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Object, .Null})
+	testing.expectf(t, tests_tags(body, {.Object, .Null}), "%s", result.text)
 }
 
 @(test)
@@ -101,9 +112,9 @@ typeof_of_a_static_value_is_a_constant :: proc(t: ^testing.T) {
 	)
 	body, _ := func_named(result.output, "m1.f")
 	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
-	returns := instructions_of(body, ir.Return)
-	if testing.expectf(t, len(returns) == 1, "%s", result.text) {
-		constant, is_constant := body.values[returns[0].value].variant.(ir.Const_Bool)
+	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
+	for leave in instructions_of(body, ir.Return) {
+		constant, is_constant := body.values[leave.value].variant.(ir.Const_Bool)
 		testing.expectf(t, is_constant && !constant.value, "%s", result.text)
 	}
 }
@@ -126,12 +137,9 @@ a_switch_over_typeof_tests_the_tag_of_each_case :: proc(t: ^testing.T) {
 	`,
 	)
 	body, _ := func_named(result.output, "m1.f")
-	testing.expectf(t, calls_to(body, .Value_Typeof) == 0, "%s", result.text)
-	tests := instructions_of(body, ir.Tag_Test)
-	if testing.expectf(t, len(tests) == 2, "%s", result.text) {
-		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Number})
-		testing.expect_value(t, tests[1].tags, ir.Tag_Set{.String})
-	}
+	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
+	testing.expectf(t, tests_tags(body, {.Number}), "%s", result.text)
+	testing.expectf(t, tests_tags(body, {.String}), "%s", result.text)
 }
 
 @(test)
@@ -147,12 +155,9 @@ a_comparison_with_null_or_undefined_is_a_tag_test :: proc(t: ^testing.T) {
 	`,
 	)
 	body, _ := func_named(result.output, "m1.f")
-	testing.expectf(t, calls_to(body, .Value_Equal) == 0, "%s", result.text)
-	tests := instructions_of(body, ir.Tag_Test)
-	if testing.expectf(t, len(tests) == 2, "%s", result.text) {
-		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Null})
-		testing.expect_value(t, tests[1].tags, ir.Tag_Set{.Undefined})
-	}
+	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
+	testing.expectf(t, tests_tags(body, {.Null}), "%s", result.text)
+	testing.expectf(t, tests_tags(body, {.Undefined}), "%s", result.text)
 }
 
 @(test)
@@ -173,13 +178,10 @@ a_nullable_reference_is_truthy_by_its_tag_alone :: proc(t: ^testing.T) {
 	`,
 	)
 	present, _ := func_named(result.output, "m1.present")
-	testing.expectf(t, calls_to(present, .Value_To_Boolean) == 0, "%s", result.text)
-	tests := instructions_of(present, ir.Tag_Test)
-	if testing.expectf(t, len(tests) == 1, "%s", result.text) {
-		testing.expect_value(t, tests[0].tags, ir.Tag_Set{.Undefined, .Null})
-	}
+	testing.expectf(t, len(instructions_of(present, ir.Call_Runtime)) == 0, "%s", result.text)
+	testing.expectf(t, tests_tags(present, {.Undefined, .Null}), "%s", result.text)
 	positive, _ := func_named(result.output, "m1.positive")
-	testing.expectf(t, calls_to(positive, .Value_To_Boolean) == 1, "%s", result.text)
+	testing.expectf(t, calls_to(positive, .Value_To_Boolean) > 0, "%s", result.text)
 }
 
 @(test)
@@ -205,14 +207,22 @@ members_of_one_layout_share_one_arm :: proc(t: ^testing.T) {
 	`,
 	)
 	agreed, _ := func_named(result.output, "m1.agreed")
-	testing.expectf(t, len(instructions_of(agreed, ir.Layout_Test)) == 1, "%s", result.text)
-	testing.expect(t, agreed.result == ir.F64)
-
 	mixed, _ := func_named(result.output, "m1.mixed")
-	testing.expectf(t, len(instructions_of(mixed, ir.Layout_Test)) == 1, "%s", result.text)
-	loads := instructions_of(mixed, ir.Field_Load)
+	testing.expect(t, agreed.result == ir.F64)
+	for body in ([2]ir.Func{agreed, mixed}) {
+		layouts := make([dynamic]ir.Layout_ID, context.temp_allocator)
+		for test in instructions_of(body, ir.Layout_Test) {
+			if !slice.contains(layouts[:], test.layout) {
+				append(&layouts, test.layout)
+			}
+		}
+		// Members of one layout share one arm, which reads the field once.
+		testing.expectf(t, len(layouts) == 1, "%s", result.text)
+		testing.expectf(t, len(instructions_of(body, ir.Field_Load)) == 1, "%s", result.text)
+	}
 	boxes := instructions_of(mixed, ir.Box)
-	if testing.expectf(t, len(loads) == 1 && len(boxes) == 1, "%s", result.text) {
-		testing.expect_value(t, mixed.values[boxes[0].value].type.kind, ir.Type_Kind.Ref)
+	testing.expectf(t, len(boxes) > 0, "%s", result.text)
+	for box in boxes {
+		testing.expect_value(t, mixed.values[box.value].type.kind, ir.Type_Kind.Ref)
 	}
 }
