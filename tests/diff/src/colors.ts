@@ -15,3 +15,18 @@ console.error(false, NaN);
 // %O and %o color what they inspect, %s and the number specifiers never do.
 console.log("%O %o %s %d %i %f", "quoted", 2, 3, 4, 5, 6);
 console.log("%O", "a line that is long enough to be broken\nafter its first line end, and every piece in color");
+
+// Inside an array or an object each value takes the color of its kind, and a reference the color
+// of a function. The codes take no column when numbers group.
+function f(): void {}
+
+const thirty: number[] = [];
+for (let i = 1; i <= 30; i++) {
+  thirty.push(i);
+}
+const ring: unknown[] = [1];
+ring.push(ring);
+console.log("%s %d %O %o", 1, 2, 3, [4]);
+console.log([1, "a", null, undefined, true, f, { k: [2] }]);
+console.log(thirty);
+console.log(ring);

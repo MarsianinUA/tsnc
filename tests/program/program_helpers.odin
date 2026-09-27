@@ -1,7 +1,5 @@
 package program_tests
 
-import "core:testing"
-
 import "../../src/ast"
 import "../../src/bind"
 import "../../src/diag"
@@ -12,13 +10,12 @@ import "../../src/source"
 // level runs code, and the modules it imports, so a test writes those three and nothing else: no
 // source text, no tree and no symbol table are needed to draw the graph.
 //
-// imports and type_imports hold indices into the same array of modules, which are the File_ID
-// values the graph is built with. Module zero stands for the lib, as it does in a real program.
+// imports holds indices into the same array of modules, which are the File_ID values the graph is
+// built with. Module zero stands for the lib, as it does in a real program.
 Module :: struct {
-	path:         string,
-	effects:      bool,
-	imports:      []int, // ordinary imports: they order the modules
-	type_imports: []int, // `import type`: erased, so they order nothing
+	path:    string,
+	effects: bool,
+	imports: []int,
 }
 
 Built :: struct {
@@ -49,14 +46,6 @@ build_graph :: proc(modules: []Module) -> Built {
 	return {program = p, diagnostics = diagnostics}
 }
 
-// request_span is the span build_graph gives request number `position` of `importer`, counted from
-// zero over the ordinary imports and then the type-only ones. A test names it to say which import
-// a diagnostic has to stand on.
-request_span :: proc(importer, position: int) -> source.Span {
-	start := i32(1000 * importer + 10 * position)
-	return {file = source.File_ID(importer), start = start, end = start + 4}
-}
-
 // order_names answers names rather than File_ID values, which is what a failing test should read
 // like.
 order_names :: proc(b: Built) -> []string {
@@ -67,43 +56,21 @@ order_names :: proc(b: Built) -> []string {
 	return names
 }
 
-cycle_names :: proc(b: Built, cycle: int) -> []string {
-	modules := b.program.cycles[cycle].modules
-	names := make([]string, len(modules), context.temp_allocator)
-	for module, i in modules {
-		names[i] = b.program.files[module].path
-	}
-	return names
-}
-
-expect_no_cycles :: proc(t: ^testing.T, b: Built, loc := #caller_location) {
-	testing.expectf(t, len(b.program.cycles) == 0, "cycles %v", b.program.cycles, loc = loc)
-	testing.expectf(t, len(b.diagnostics) == 0, "diagnostics %v", b.diagnostics, loc = loc)
-}
-
+// make_edges gives every request a span of its own, where a diagnostic about it would stand.
 @(private = "file")
 make_edges :: proc(
 	importer: int,
 	module: Module,
 	allocator := context.allocator,
 ) -> []program.Import_Edge {
-	edges := make([]program.Import_Edge, len(module.imports) + len(module.type_imports), allocator)
+	edges := make([]program.Import_Edge, len(module.imports), allocator)
 	for target, i in module.imports {
-		edges[i] = edge_at(importer, i, target, false)
-	}
-	for target, i in module.type_imports {
-		position := len(module.imports) + i
-		edges[position] = edge_at(importer, position, target, true)
+		start := i32(1000 * importer + 10 * i)
+		edges[i] = {
+			request = ast.Node_ID(i + 1),
+			span = {file = source.File_ID(importer), start = start, end = start + 4},
+			module = source.File_ID(target),
+		}
 	}
 	return edges
-}
-
-@(private = "file")
-edge_at :: proc(importer, position, target: int, type_only: bool) -> program.Import_Edge {
-	return {
-		request = ast.Node_ID(position + 1),
-		span = request_span(importer, position),
-		module = source.File_ID(target),
-		type_only = type_only,
-	}
 }

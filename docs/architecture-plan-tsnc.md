@@ -345,7 +345,6 @@ May change during detailed planning:
 - Derived pointers from LLVM optimizations under a conservative scan (requirements, 13). Architecturally this is contained in `ir` (`store_ref`, no pointer arithmetic), `codegen` (`-disable-lsr`) and `gc`. The shadow stack fallback touches only `abi`, `codegen` and `gc`. Planning can go ahead.
 - Private type tables mean the checkers repeat work on shared dependencies. The cost is accepted, as in tsgo; the compile benchmark in milestone 6 measures it. If it turns out large, a merge step gets added; the decision is marked reversible.
 - `string16` from the nightly build is isolated in `rt/str`; falling back to a "pointer plus length" pair does not change `abi` outside the cell.
-- Node's format for `console.log` lives only in `rt/console`, ported from `util.inspect` of Node 24 and tested against its output; objects and arrays are proven there and in `tests/link` until milestone 5 lets a program build them.
 - The runtime root package is named `rt` instead of `runtime` because of the conflict with `base:runtime`; the directory stays `src/runtime`.
 
 ## Handoff to detailed planning

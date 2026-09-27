@@ -125,12 +125,6 @@ every_source :: proc(count: int) -> []source.File_ID {
 	return partition
 }
 
-expect_program :: proc(t: ^testing.T, sources: []string, loc := #caller_location) -> Checked {
-	c := check_sources(t, sources, every_source(len(sources)), loc = loc)
-	testing.expectf(t, len(c.file_errors) == 0, "%v: %v", sources, c.file_errors, loc = loc)
-	return c
-}
-
 // make_edges is the module graph of one file: an edge for every import or re-export whose specifier
 // names another source of the test. driver resolves a path on disk, where `"./m"` and `"./m.ts"` both
 // name `m.ts`; here the file names are known, so the same two spellings are matched against them. A
@@ -230,28 +224,19 @@ expect_checked :: proc(t: ^testing.T, text: string, loc := #caller_location) -> 
 // about inference asks for.
 //
 // A name holds one value and one type, and the lib file uses both of `String` and `Math`, so this
-// asks for the value by default; meaning names which one to read, as declared_type_text does.
-declared_text :: proc(
-	c: Checked,
-	name: string,
-	file := MAIN,
-	meaning := bind.Meaning.Value,
-) -> string {
+// reads the value.
+declared_text :: proc(c: Checked, name: string, file := MAIN) -> string {
 	typed, ok := check.typed_file(c.result, file)
 	if !ok {
 		return "<not in the partition>"
 	}
 	for symbol in c.program.bound[file].symbols[1:] {
-		is_value := meaning in bind.meanings(symbol.kind)
+		is_value := .Value in bind.meanings(symbol.kind)
 		if is_value && symbol.name.text == name && symbol.declaration != ast.NO_NODE {
 			return type_text(c, typed.node_types[symbol.declaration])
 		}
 	}
 	return "<no such name>"
-}
-
-declared_type_text :: proc(c: Checked, name: string, file := MAIN) -> string {
-	return declared_text(c, name, file, .Type)
 }
 
 // use_text is the type of one use of a name: the occurrence-th ast.Ident with that text, counted

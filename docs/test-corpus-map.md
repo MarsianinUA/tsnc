@@ -2,7 +2,7 @@
 
 A working file for T5.11 to T5.16 of `tasks-tsnc.md`. It was made on September 27, 2026, by reading every `@(test)` procedure under `tests/` and every program of the three corpora. Each task strikes its own section when it is done, and T5.16 deletes the file.
 
-T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs. So is T5.13: its section went the same way, and `tests/negative` holds a program for every code of the `diag` registry. So is T5.14: the check and lower tests of its section are programs of `tests/diff/src` now, nine new ones and lines in ten others.
+T5.11 is done: its two sections are gone, and the tests it kept went into the sections of the tasks that can pin what they assert. T5.12 is done too: its section went with the tests it replaced, and `tests/expect` holds the programs. So is T5.13: its section went the same way, and `tests/negative` holds a program for every code of the `diag` registry. So is T5.14: the check and lower tests of its section are programs of `tests/diff/src` now, nine new ones and lines in ten others. So is T5.15: the runtime, codegen, parse, program and check tests of its section are programs too, seven new ones, `array-join.ts` grown out of `join-separator.ts`, and lines in eleven others. What no program can see stayed as five short tests: a result that allocates nothing, a refusal passed on, and the line ends inside literals that a checkout rewrites.
 
 The map is a reading, not a proof. Before a test goes, open the program named next to it and confirm that it reaches the same construct: the same built-in and corner, or the same diagnostic code on the same kind of construct. When it does not, the test moves instead of going.
 
@@ -16,30 +16,6 @@ Classes:
 - NODE-DIFFERS: visible in the output, but Node is not the reference (a runtime failure); it moves to `tests/expect`.
 - KEEP-STRATEGY: a lower test that guards a decision no program shows; it stays and gets rewritten in T5.16.
 - KEEP: needs internal state or more inputs than a program can hold; it stays.
-
-## Diff moves: runtime and the rest
-
-T5.15. What a program can call: `src/lib/lib.d.ts`. It has no `String.fromCharCode`, `Number()`, `parseInt`, `repeat`, `codePointAt` or `toString(radix)`; `%d` reaches `Number()` and `%i` reaches `parseInt`. `Math.clz32`, `fround`, `hypot` and `imul` give T2027. A lone surrogate comes from a `\uD800` escape or from slicing a pair at run time.
-
-1. arrays.ts: arr slice_copies_into_a_new_array (`slice(0, Infinity)`, `(NaN, 2)`, `(3, 1)`, `(-10, -4)`, `(0, -0)`, result `!==` source), the_search_starts_where_node_starts_it (the eight `fromIndex` values), search_compares_as_node_does (NaN, both zeros, strings built at run time, object identity, union arrays, `(undefined | null)[]`).
-2. array-join.ts (new): join_writes_every_element_as_node_does (-0, NaN, 1e21, booleans, a `"\u{1F600}"` separator, undefined and null), a_nested_array_joins_in_place, a_cycle_joins_to_nothing_where_it_closes (check that the subset can build both).
-3. sort-comparator.ts: equal_elements_keep_their_order, a_comparator_that_changes_the_array_sees_node_semantics, a_comparator_may_sort_the_same_array, the_sign_of_a_comparator_is_what_counts, a_long_sort_keeps_equal_elements_in_order (5,000 generated keys, print a checksum). A comparator that changes the array does so on its first call only.
-4. sort-default.ts (new): the_default_order_is_the_order_of_strings, the_default_order_compares_utf16_units (print `charCodeAt(0)`).
-5. strings.ts: console unpaired_surrogate_is_replacement_character; str concat_joins_units (`"\ud83d" + "\ude00"` through a parameter).
-6. string-units.ts (new, or into string-methods.ts): str equality_and_order_go_by_units, char_code_at_matches_node, slice_matches_node, unit_at_answers_one_unit, code_point_at_answers_what_for_of_yields, search_matches_node, trim_strips_the_whitespace_of_ecmascript, splitter_matches_node; arr split_matches_node; num positions_become_integers_before_they_become_indices.
-7. string-case.ts (new): str case_corners_match_node, final_sigma_matches_node, without the checks that the same cell comes back.
-8. numbers.ts: num to_string_matches_node, adding 4.35, 9.999999999999999e20, 1.2e-5, 1e-323, 1e300, 2^53+2, 426147580146789570, 28206292283999998000, 1.3649515199999999e21.
-9. number-methods.ts: num to_fixed_matches_node (the carry `99.99` to `100.0`, the near ties, `1e15`, 20 digits, NaN, -0.5, 3.9 digit counts), parse_float_matches_node (`5.`, `.`, `In`, `+Infinity`, last-place rounding, denormals, Unicode whitespace, U+0085); str numbers_meet_cells.
-10. format.ts: console what_is_no_specifier_stays_as_it_is (`console.log("%% %s")`), percent_s_is_string_but_inspects_an_object_to_depth_zero, the_number_specifiers_convert_as_node_does, percent_j_is_json, percent_o_shows_the_hidden_properties (without the anonymous function with a prototype), percent_o_groups_its_length_as_node_does, percent_j_of_a_deep_list_needs_no_deep_stack; num to_number_matches_node through `%d`, parse_int_matches_node through `%i`.
-11. inspect.ts (new): console arrays_of_each_element_kind, past_the_depth_an_array_and_an_object_print_their_kind, a_long_array_of_numbers_groups_into_right_aligned_columns, other_entries_group_into_left_aligned_columns, a_string_takes_the_quote_it_need_not_escape, a_long_string_breaks_after_its_line_ends, long_values_are_cut_where_node_cuts_them, an_object_prints_its_fields_in_table_order (without `['__proto__']`), a_cycle_prints_a_reference, entries_past_the_break_length_take_a_line_each.
-12. colors.ts: console colors_reach_only_what_inspect_prints (`%o` of `[4]`), colors_wrap_each_value_in_its_style.
-13. math.ts: num round_takes_a_half_toward_positive_infinity, max_and_min_answer_nan_and_order_the_two_zeros (both argument orders, through `id()`).
-14. arithmetic.ts: codegen exponentiation_answers_nan_for_a_unit_base (`1 ** Infinity`, `(-1) ** ±Infinity`, `(-1) ** NaN`).
-15. any-values.ts: value typeof_answers_a_static_word_for_every_tag, strict_equality_goes_by_tag, truthiness_matches_node, to_string_matches_node.
-16. literals.ts (new): parse numbers_have_their_values (hex, octal, binary, `_` separators, `5.`, `1.e2`, `0xFFFFFFFFFFFFFFFF`, `1e400`, last-place rounding), strings_have_their_cooked_values, template_text_is_cooked. Leave out CRLF and U+2028 line continuations: autocrlf rewrites them.
-17. Module programs (new): module-ring.ts (program and check a_cycle_of_types_and_functions_is_allowed: a function called from a body across the ring, and a type alias read back through it), type-import-ring.ts (a_type_only_import_orders_nothing), self-import.ts (a_module_that_imports_itself_is_not_a_cycle). The cycle test is the last caller of `expect_program` in `tests/check/check_helpers.odin`, which goes with it.
-
-Also worth a program, though no test moves there: parse precedence and associativity (`2 ** 3 ** 2`, `a - b - c`, `a = b = c`), the compound assignment operators, `a.default.if`, automatic semicolons (`return\n1`, `a\n(b)`), `c?.5:1`; bind shadowing, a loop header scope, no T3024 after `while (true) {}`, renamed imports, a side-effect `import`, `export { x as y }`.
 
 ## Lower decisions
 
@@ -87,14 +63,14 @@ T5.16. Each test keeps its decision and loses its exact counts and positions:
 - tests/lower, 5 besides KEEP-STRATEGY: the four lib tests of the strategy table (every lib name has a row, every row names a lib member, no name twice, no dotted name), and control_flow the_dump_is_the_same_every_time.
 - tests/ir, all 54: the builder, layout and string interning, the printer's format, 27 verifier faults. None of it reaches a program.
 - tests/codegen, 16: the `noreturn` attribute, i1 widened to i64 at runtime calls, a zeroed internal global, the rest array of a runtime call, a tagged value split into words, the result slot, the closure convention, fail sites, `init$m` names and linkage, one call per `console.log`, the rows of `tsnc_roots` (a missing row for a tagged global passes the corpus under stress, since the conservative stack scan finds a stale copy; a Ref global's row is pinned by gc-objects.ts), and all of codegen_test (object and IR emission, `-o:aggressive`, object formats per target, the unsupported target, the write error).
-- tests/runtime/arr, 10: `new_zeroed`, the three GC-stress tests of collect_test, the three refusals where Node would run a user function (join, ToPrimitive, default sort of a function), comparator call counts, an inconsistent comparator, `fewer_than_two_elements_call_nothing` (`heap.used`).
+- tests/runtime/arr, 11: `new_zeroed`, the three GC-stress tests of collect_test, the three refusals where Node would run a user function (join, ToPrimitive, default sort of a function), comparator call counts, an inconsistent comparator, `fewer_than_two_elements_call_nothing` (`heap.used`), and `an_empty_result_takes_no_buffer`.
 - tests/runtime/console, 4: `color_depth` (50 environments on two platforms), the two width tests (every code point; Hangul differs from Node on purpose), `a_specifier_refuses_what_node_would_run`.
-- tests/runtime/str, 6: invalid UTF-8, the maximum length, the static empty cell, case mapping of every code point, two GC-stress tests.
+- tests/runtime/str, 8: invalid UTF-8, the maximum length, the static empty cell, a result that is an argument coming back as that cell, the `toFixed` refusal passed on, case mapping of every code point, two GC-stress tests.
 - tests/runtime/num, 6: 300,000 random doubles, the two buffer size promises, the `toFixed` range refusal, long literals (bignum inputs), exit codes.
-- tests/runtime/value, 2: the refusal test, `load`.
+- tests/runtime/value, 3: the refusal test, `load`, and the static words of typeof and String.
 - tests/runtime/gc, fail, tests/llvm, abi, target, source, diag, ast: all.
 - tests/bind, 49: symbol tables, capture lists and flags, declaration positions, import and export tables, flow-graph dumps.
-- tests/parse, about 40: AST dumps, token streams and spans, tree invariants over broken input, the T1012 nesting sweep.
+- tests/parse, about 40: AST dumps, token streams and spans, tree invariants over broken input, the T1012 nesting sweep, and the line ends inside literals that a checkout with autocrlf rewrites.
 - tests/program, 2: init order under permutation, determinism.
 - tests/link, 6: the four link errors, arguments with spaces and quotes, the Windows check that no `.lib` file is written.
 - tests/driver: file order, cycles, CLI and output paths, the in-process build with a non-ASCII path.

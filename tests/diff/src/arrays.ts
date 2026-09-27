@@ -64,3 +64,41 @@ console.log(sum, growing);
 const args = process.argv.slice(2);
 const empty: string[] = [];
 console.log(args, args.length, empty, empty.join("-"), empty.pop());
+
+// slice always copies, whatever its bounds: an end past the length, NaN read as 0, a start past
+// the end, both ends before the array, and -0 as the end.
+function part(from: number[], start: number, end: number): number[] {
+  return from.slice(start, end);
+}
+
+const tens = [10, 20, 30, 40, 50];
+console.log(part(tens, 0, Infinity), part(tens, 1, 3), part(tens, -2, Infinity), part(tens, NaN, 2));
+console.log(part(tens, 2, Infinity), part(tens, 3, 1), part(tens, -10, -4), part(tens, 0, -0));
+console.log(part(tens, 0, Infinity) !== tens, tens);
+
+for (const from of [0, 2, -1, -10, 10, NaN, -Infinity, Infinity]) {
+  console.log(from, tens.indexOf(40, from), tens.includes(40, from));
+}
+
+// indexOf compares as === does and includes as SameValueZero: only includes finds NaN, and each
+// finds one zero by the other. A string matches by content, an object only itself.
+function id(x: number): number {
+  return x;
+}
+
+function joined(a: string, b: string): string {
+  return a + b;
+}
+
+const withNaN = [id(NaN), 1];
+console.log(withNaN.indexOf(id(NaN)), withNaN.includes(id(NaN)));
+console.log([1, id(-0)].indexOf(0), [1, 0].includes(id(-0)), ["ab", "cd"].indexOf(joined("c", "d")));
+const point: Point = { x: 1, y: 2 };
+const twin: Point = { x: 1, y: 2 };
+console.log([point].indexOf(twin), [point].indexOf(point));
+const numberOrText: (number | string)[] = [1, "1"];
+console.log(numberOrText.indexOf(joined("1", "")), [true, false].indexOf(false));
+const nothings: (undefined | null)[] = [undefined, null];
+console.log(nothings.indexOf(null), nothings.indexOf(undefined));
+const maybeNumbers: (number | undefined)[] = [id(NaN), undefined];
+console.log(maybeNumbers.includes(id(NaN)), maybeNumbers.indexOf(undefined));
