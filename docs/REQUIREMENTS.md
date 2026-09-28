@@ -79,15 +79,16 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 ### 3.3 Objects
 - Each object type gets a fixed memory layout (a struct). The set of fields in canonical order (by name) determines the layout, so `Point` and `Vec2` with the same fields share one layout and are compatible at no cost.
 - An object reference is 8 bytes, a field access is one load at a known offset.
-- **Exact-type rule (v1).** An object is assignable only to a type with the same set of fields. Passing an object with more fields where fewer are expected (`{x, y, z}` into a parameter `{x, y}`) produces a compile error with a hint. Optional fields are part of the set and live in a tagged slot (3.4).
-- Within one set of fields, a narrow object passes where a wider type is expected, as in TypeScript: `{x: number}` goes where `{x: number | string}` is expected. The value is the same object, not a copy, so `===` holds and a write through either type shows through the other. The compiler finds every such flow in the whole program and gives each class of types that flow into each other one layout; a field whose types differ across the class is a tagged slot. A read through the narrower type checks what the slot holds (3.8).
+- **Exact-type rule (v1).** An object is assignable only to a type with the same set of fields. Passing an object with more fields where fewer are expected (`{x, y, z}` into a parameter `{x, y}`) produces a compile error with a hint. Optional fields are part of the set, and one reads as its type or `undefined` (3.4).
+- Within one set of fields, a narrow object passes where a wider type is expected, as in TypeScript: `{x: number}` goes where `{x: number | string}` is expected. The value is the same object, not a copy, so `===` holds and a write through either type shows through the other. The compiler finds every such flow in the whole program and gives each class of types that flow into each other one layout; a field whose types differ across the class is a tagged slot, or a pointer that may be 0 where they differ only in `null` or `undefined` (3.4). A read through the narrower type checks what the slot holds (3.8).
 - v2: full structural typing. For inexact conversions the compiler generates a fat pointer (object + field offset table, similar to itab in Go); when layouts match, access stays direct.
 - An object's shape does not change after creation: fields cannot be added or removed.
 
 ### 3.4 `any` and union
 - A value of type `any` or a union takes 16 bytes: a type tag and a payload. `number`, `boolean`, `null`, `undefined` are stored inline without allocation; strings, objects, arrays, functions by pointer.
+- A union of one reference type (a string, an object, an array or a function type) with exactly one of `null` and `undefined` is the exception: one 8-byte pointer, where 0 stands for that `null` or `undefined`. So is an optional field or parameter of a reference type, whose missing value is `undefined`. The node `{left: Tree | null, right: Tree | null}` is a header and two pointers, as in Go. Where such a value goes into `any`, a wider union or the console, it takes its tag.
 - Optional fields and `T | undefined` use the same representation.
-- Type narrowing (`typeof`, a literal field, `switch`, comparison with `null`) compiles to a tag check. After narrowing, the value works as a statically typed one.
+- Type narrowing (`typeof`, a literal field, `switch`, comparison with `null`) compiles to a tag check, or to a comparison with 0 for the pointer above. After narrowing, the value works as a statically typed one.
 - `any` and `unknown` narrow by `typeof` as in tsc: inside `typeof x === "number"` the value is a `number`, while `"object"` and `"function"` leave it as it was.
 - A value of type `any` can be printed, compared with `===`, tested for truth, turned into a string and given to a static type, with the check of 3.8. Whatever else JavaScript would do to it by converting it or looking something up at run time is a compile error that asks to narrow it first: arithmetic, `<` and the other orderings, reading a field, indexing, calling, `for...of`. So is an `any` that would become a function anywhere in the type it goes into, since only its tag could be checked, never its signature.
 - v2: NaN-boxing down to 8 bytes as an optimization, only together with precise GC roots.
@@ -117,7 +118,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - `x!`: a check, error on `null` / `undefined`;
 - reading a `let` or `const` before its declaration has run: a compile error where the read runs where it stands, and a runtime error, as Node's `ReferenceError`, where it stands in a function that may run before the declaration or after it, or in a later `case` of the `switch` that declares it, which a jump to that case skips;
 - reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
-- a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
+- a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, or that a pointer that may be 0 is not, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
 - division by zero and overflow follow f64 semantics (`Infinity`, `NaN`), without errors.
 
@@ -199,7 +200,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
 ## 6. Memory management
 
 - A custom garbage collector written in Odin, part of the runtime. Objects never move: a deliberate limitation, Go does the same.
-- **v1:** mark-sweep, stop-the-world. The collector finds stack roots conservatively (it treats every stack word that looks like a heap address as a pointer); it scans the heap precisely using type tables that the compiler generates for each layout (which slots hold pointers or tagged values).
+- **v1:** mark-sweep, stop-the-world. The collector finds stack roots conservatively (it treats every stack word that looks like a heap address as a pointer); it scans the heap precisely using type tables that the compiler generates for each layout (which slots hold pointers, pointers that may be 0, or tagged values).
 - **v2:** concurrent tri-color marking with write barriers in generated code, as in Go. No pause requirements until v2.
 - Consequences of the conservative scan that are mandatory in v1:
   - a size-class allocator with pages and an object-start map, so that a pointer into the interior of an object (LLVM creates them) finds its owner;

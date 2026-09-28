@@ -293,20 +293,27 @@ lib_argument :: proc(
 	span: source.Span,
 ) -> ir.Value_ID {
 	type := value_type(s, value)
-	if type == param || param == ir.TAGGED && boxable(type) {
+	if ir.fits(type, param) || param == ir.TAGGED && boxable(type) {
 		return coerce(s, value, param, span)
 	}
 	return zero_value(s, param, span)
 }
 
 // called_as_it_stands says whether a signature takes what the runtime passes a comparator: two
-// elements of the array, as C types, and a number back.
+// elements of the array, as C types, and a number back. An element that may be null goes only to a
+// parameter that may be the same null.
 @(private)
 called_as_it_stands :: proc(signature: Signature, element: ir.Type) -> bool {
 	if len(signature.params) != 2 || signature.result != ir.F64 {
 		return false
 	}
-	return signature.params[0].kind == element.kind && signature.params[1].kind == element.kind
+	for param in signature.params {
+		takes_null := element.nullish == .None || param.nullish == element.nullish
+		if param.kind != element.kind || !takes_null {
+			return false
+		}
+	}
+	return true
 }
 
 // sort_adapter answers a function of the runtime's comparator shape that calls the closure its
@@ -324,7 +331,7 @@ sort_adapter :: proc(
 	element: ir.Type,
 	span: source.Span,
 ) -> ir.Func_ID {
-	key := fmt.tprintf("%s/%d", signature_key(signature), element.kind)
+	key := fmt.tprintf("%s/%d:%d", signature_key(signature), element.kind, element.nullish)
 	if func, built := low.sort_adapters[key]; built {
 		return func
 	}
@@ -493,14 +500,24 @@ optional_argument :: proc(
 	_, is_text := missing.(string)
 	want := ir.STR if is_text else ir.F64
 	value := lower_expression(s, arg)
-	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED {
+	if value == ir.NO_VALUE {
+		return value
+	}
+	type := value_type(s, value)
+	if type != ir.TAGGED && type.nullish == .None {
 		return coerce(s, value, want, s.tree.nodes[arg].span)
 	}
 	absent := ir.add_block(&s.fb)
 	given := ir.add_block(&s.fb)
 	join := ir.add_block(&s.fb)
+	undefined: ir.Value_ID
+	if type == ir.TAGGED {
+		undefined = tag_test(s, value, {.Undefined}, span)
+	} else {
+		undefined = ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+	}
 	branch := ir.Branch {
-		condition  = tag_test(s, value, {.Undefined}, span),
+		condition  = undefined,
 		then_block = absent,
 		else_block = given,
 	}
@@ -518,7 +535,7 @@ optional_argument :: proc(
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 
 	ir.use_block(&s.fb, given)
-	given_value := unbox_checked(s, value, want, .Tagged_Holds_Other_Kind, s.tree.nodes[arg].span)
+	given_value := coerce(s, present(s, value, span), want, s.tree.nodes[arg].span)
 	passed := here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 
@@ -548,7 +565,7 @@ lower_runtime :: proc(
 	if !complete {
 		return ir.NO_VALUE
 	}
-	return ir.emit(&s.fb, node_type(s, id), ir.Call_Runtime{export = export, args = args}, span)
+	return runtime_call(s, id, {export = export, args = args}, span)
 }
 
 // lower_method passes the receiver first. An argument the call leaves out, always a number, takes
@@ -583,12 +600,24 @@ lower_method :: proc(
 	if !complete {
 		return ir.NO_VALUE
 	}
-	return ir.emit(
-		&s.fb,
-		node_type(s, id),
-		ir.Call_Runtime{export = method.export, args = args},
-		span,
-	)
+	return runtime_call(s, id, {export = method.export, args = args}, span)
+}
+
+// runtime_call types the call as its node, except that a tagged answer is read into a node typed
+// as a reference that may hold null through a check, as the pop of a string array is.
+@(private)
+runtime_call :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	call: ir.Call_Runtime,
+	span: source.Span,
+) -> ir.Value_ID {
+	want := node_type(s, id)
+	exports := abi.RUNTIME_EXPORTS
+	if exports[call.export].result != .Tagged || want == ir.TAGGED {
+		return ir.emit(&s.fb, want, call, span)
+	}
+	return coerce(s, ir.emit(&s.fb, ir.TAGGED, call, span), want, span)
 }
 
 // number_args stays quiet about a call with the wrong count: check already reported it.
@@ -664,6 +693,10 @@ console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	value := lower_raw(s, id)
 	if value != ir.NO_VALUE && value_type(s, value) == ir.TAGGED {
 		return value
+	}
+	if value != ir.NO_VALUE && value_type(s, value).nullish != .None {
+		// Its node may be typed null where a call stored something since the test that narrowed it.
+		return coerce(s, value, ir.TAGGED, span)
 	}
 	switch s.typed.node_types[id] {
 	case check.UNDEFINED:

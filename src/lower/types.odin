@@ -21,16 +21,18 @@ A type with no representation answers `false`, and the caller reports Not_Lowere
 guessing: a function with a rest parameter, and the generic signatures only the lib declares.
 
 Objects. A layout is keyed by its shallow shape: the field names in canonical order, each with its
-slot kind and whether it is optional. Shallow means a string, an object and an array are a Ref slot
-whatever they point at, so `interface Node { next: Node | null }` has a complete key before Node is
-known, and a walk into it would never end. An optional field is a Tagged slot, since a missing one
-reads as undefined.
+slot kind and whether it is optional. Shallow means a string, an object and an array are a
+reference slot whatever they point at, so `interface Node { next: Node | null }` has a complete key
+before Node is known, and a walk into it would never end. A reference with one of null and undefined
+is a pointer where 0 stands for it (Ref_Or_Null, Ref_Or_Undefined), and so is an optional field of a
+reference type, since a missing one reads as undefined; any other optional field is Tagged.
 
 Widening. A value of type A that check accepted where B was expected is the same object after the
 flow, with no copy, as in Node, so A and B need one layout. lower joins the shallow keys of every
 such pair (Check_Result.widenings) into classes before any body is built. The class of a key has
-one slot per field: the kind every member agrees on, or Tagged where they differ. A read through the
-narrower type then checks the tag (objects.odin).
+one slot per field: the kind every member agrees on, the one that may hold null where the other
+holds a present reference, or Tagged where they differ otherwise. A read through the narrower type
+then checks the tag, or for null (objects.odin).
 
 Functions. A function value is a closure, whatever its signature, and its signature is the IR types
 of its parameters and its result. A function accepted where another function type was expected is
@@ -63,6 +65,11 @@ representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type
 		}
 		representation(types, v.result) or_return
 		return .Closure, true
+	case check.Union:
+		// So that the object or the array behind the pointer is looked into, as ir_type does.
+		if held, _, member, nullable := nullable_reference(types, v); nullable && held == .Ref {
+			representation(types, member) or_return
+		}
 	}
 	return shallow_kind(types, id)
 }
@@ -116,6 +123,14 @@ map_type :: proc(
 	case check.Array:
 		element, _ := element_slot(types, v.element)
 		return ir.ref(ir.array_layout(&low.builder, element)), true
+	case check.Union:
+		if _, nullish, member, nullable := nullable_reference(types, v); nullable {
+			if kind != .Ref {
+				return ir.nullable({kind = kind}, nullish), true
+			}
+			present := ir_type(low, types, member) or_return
+			return ir.nullable(present, nullish), true
+		}
 	}
 	return {kind = kind}, true
 }
@@ -190,10 +205,13 @@ shallow_kind :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_K
 		}
 	case check.Union:
 		// A union whose members all live in one representation is that representation: `2 | 3` is
-		// the type of `c ? 2 : 3` and is a plain number at run time. A union with an object or an
-		// array among its members never is: `Node | null` needs the tag of requirements 3.4, and so
-		// do two objects of two layouts. Unions are canonical and never nested, so this looks one
-		// level down and no further.
+		// the type of `c ? 2 : 3` and is a plain number at run time. So is a reference with one of
+		// null and undefined, where 0 stands for it: `Node | null` is one pointer. Two objects of
+		// two layouts need the tag of requirements 3.4. Unions are canonical and never nested, so
+		// this looks one level down and no further.
+		if nullable, _, _, is_nullable := nullable_reference(types, v); is_nullable {
+			return nullable, true
+		}
 		kind = shallow_kind(types, v.members[0]) or_return
 		for member in v.members[1:] {
 			other := shallow_kind(types, member) or_return
@@ -215,15 +233,66 @@ shallow_kind :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_K
 	return .Void, false
 }
 
-// field_slot makes an optional field Tagged whatever it holds: a field the literal left out reads
-// as undefined.
+// nullable_reference says whether a union is one reference type with exactly one of null and
+// undefined: strings, functions, or one object or array type, which member names.
+@(private)
+nullable_reference :: proc(
+	types: []check.Type,
+	union_type: check.Union,
+) -> (
+	kind: ir.Type_Kind,
+	nullish: ir.Nullish,
+	member: check.Type_ID,
+	ok: bool,
+) {
+	for one in union_type.members {
+		if one == check.NULL || one == check.UNDEFINED {
+			if nullish != .None {
+				return .Void, .None, check.ERROR, false
+			}
+			nullish = .Null if one == check.NULL else .Undefined
+			continue
+		}
+		other := shallow_kind(types, one) or_return
+		if other != .Str && other != .Closure && other != .Ref {
+			return .Void, .None, check.ERROR, false
+		}
+		if kind != .Void && (other != kind || other == .Ref) {
+			return .Void, .None, check.ERROR, false
+		}
+		kind, member = other, one
+	}
+	return kind, nullish, member, kind != .Void && nullish != .None
+}
+
+// shallow_type is shallow_kind with what 0 stands for in a reference that may hold null, which is
+// what a slot needs. It carries no layout.
+@(private)
+shallow_type :: proc(types: []check.Type, id: check.Type_ID) -> (type: ir.Type, ok: bool) {
+	type.kind = shallow_kind(types, id) or_return
+	if v, is_union := types[id].(check.Union); is_union {
+		_, type.nullish, _, _ = nullable_reference(types, v)
+	}
+	return type, true
+}
+
+// optional_type is what a read of an optional field or parameter answers: undefined as well, which
+// a reference takes as its null and anything else as a tag.
+@(private)
+optional_type :: proc(type: ir.Type) -> ir.Type {
+	if ir.is_reference(type) && type.nullish != .Null {
+		return ir.nullable(type, .Undefined)
+	}
+	return ir.TAGGED
+}
+
 @(private)
 field_slot :: proc(types: []check.Type, field: check.Field) -> (slot: abi.Slot_Kind, ok: bool) {
-	kind := shallow_kind(types, field.type) or_return
+	type := shallow_type(types, field.type) or_return
 	if field.optional {
-		return .Tagged, true
+		type = optional_type(type)
 	}
-	return slot_of(kind), true
+	return slot_of(type), true
 }
 
 @(private)
@@ -234,21 +303,28 @@ element_slot :: proc(
 	slot: abi.Slot_Kind,
 	ok: bool,
 ) {
-	kind := shallow_kind(types, element) or_return
-	return slot_of(kind), true
+	type := shallow_type(types, element) or_return
+	return slot_of(type), true
 }
 
 // slot_of gives a slot of `void` the Tagged kind: map over a callback that returns nothing makes an
 // array of undefined.
 @(private)
-slot_of :: proc(kind: ir.Type_Kind) -> abi.Slot_Kind {
-	switch kind {
+slot_of :: proc(type: ir.Type) -> abi.Slot_Kind {
+	switch type.kind {
 	case .F64:
 		return .Number
 	case .Bool:
 		return .Boolean
 	case .Str, .Closure, .Ref:
-		return .Ref
+		switch type.nullish {
+		case .None:
+			return .Ref
+		case .Null:
+			return .Ref_Or_Null
+		case .Undefined:
+			return .Ref_Or_Undefined
+		}
 	case .Tagged, .Void:
 		return .Tagged
 	}
@@ -459,6 +535,10 @@ collect_layout :: proc(
 	case check.Array:
 		element, _ := element_slot(types, v.element)
 		wanted.arrays += {element}
+	case check.Union:
+		if kind, _, member, nullable := nullable_reference(types, v); nullable && kind == .Ref {
+			collect_layout(low, types, member, wanted)
+		}
 	}
 	return true
 }
@@ -479,14 +559,20 @@ object_node :: proc(
 	return class_node(&low.objects, slots_key(slots), slots), true
 }
 
-// join_slots keeps a kind two members agree on and takes Tagged where they differ. Every member of
-// a class has the same fields, since check widens only between two types of one field set.
+// join_slots keeps a kind two members agree on, a reference that may hold null where the other
+// member holds a present one, and takes Tagged where they differ otherwise. Every member of a class
+// has the same fields, since check widens only between two types of one field set.
 @(private)
 join_slots :: proc(a, b: []ir.Slot) -> []ir.Slot {
 	joined := make([]ir.Slot, len(a), context.temp_allocator)
 	for slot, i in a {
 		joined[i] = slot
-		if b[i].kind != slot.kind {
+		switch {
+		case b[i].kind == slot.kind:
+		case slot.kind == .Ref && (b[i].kind == .Ref_Or_Null || b[i].kind == .Ref_Or_Undefined):
+			joined[i].kind = b[i].kind
+		case b[i].kind == .Ref && (slot.kind == .Ref_Or_Null || slot.kind == .Ref_Or_Undefined):
+		case:
 			joined[i].kind = .Tagged
 		}
 	}
@@ -529,8 +615,10 @@ own_signature :: proc(
 	params := make([]ir.Type, len(function.params), context.temp_allocator)
 	for param, i in function.params {
 		params[i] = ir_type(low, types, param.type) or_return
-		if i >= function.required || params[i] == ir.VOID {
+		if params[i] == ir.VOID {
 			params[i] = ir.TAGGED
+		} else if i >= function.required {
+			params[i] = optional_type(params[i])
 		}
 	}
 	result := ir_type(low, types, function.result) or_return
@@ -591,13 +679,20 @@ signature_node :: proc(
 	return class_node(&low.signatures, signature_key(signature), signature), true
 }
 
-// join_signatures gives a parameter only one member has that member's type. A result of void joined
-// with another is tagged like any two results that differ: a call through the class may print
+// join_signatures gives a parameter only one member has that member's type, and a reference that may
+// hold null where the other member takes or gives a present one. A result of void joined with
+// another is tagged like any two results that differ otherwise: a call through the class may print
 // what it gets back, which is undefined from a member that returns nothing (handed_on).
 @(private)
 join_signatures :: proc(a, b: Signature) -> Signature {
 	join :: proc(x, y: ir.Type) -> ir.Type {
-		return x if x == y else ir.TAGGED
+		switch {
+		case ir.fits(x, y):
+			return y
+		case ir.fits(y, x):
+			return x
+		}
+		return ir.TAGGED
 	}
 	params := make([]ir.Type, max(len(a.params), len(b.params)), context.temp_allocator)
 	for &param, i in params {
@@ -628,6 +723,8 @@ signature_key :: proc(signature: Signature) -> string {
 @(private)
 write_type_key :: proc(b: ^strings.Builder, type: ir.Type) {
 	strings.write_int(b, int(type.kind))
+	strings.write_byte(b, ':')
+	strings.write_int(b, int(type.nullish))
 	strings.write_byte(b, ':')
 	strings.write_int(b, int(type.layout))
 }

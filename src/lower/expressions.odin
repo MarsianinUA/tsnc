@@ -148,7 +148,8 @@ node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
 // fails with mismatch: that is an `any` going into a static type, or a union of objects going into
 // one object type that covers every member, whose classes share the layout. Two objects check lets
 // meet share one layout, and two functions one signature, so neither ever needs converting into the
-// other.
+// other. A present reference stands for one that may hold null as it is, and one that may is read
+// as present after a test for null.
 //
 // A value of a signature class read as the type a function or a call declares fails with
 // Value_Of_Other_Kind instead: the class joined it with a wider one, and a flow through `any`, or
@@ -165,11 +166,16 @@ coerce :: proc(
 		return value
 	}
 	have := value_type(s, value)
-	if have == target {
+	if ir.fits(have, target) {
 		return value
 	}
 	if target == ir.TAGGED && boxable(have) {
 		return ir.emit(&s.fb, ir.TAGGED, ir.Box{value = value}, span)
+	}
+	if target.nullish != .None {
+		if tags, nullish := nullish_tags(s, value); nullish && tags == {nullish_tag(target)} {
+			return ir.emit(&s.fb, target, ir.Const_Null{}, span)
+		}
 	}
 	if have == ir.VOID {
 		// The call of a void function evaluates to undefined, which a tagged value can hold. Any
@@ -182,6 +188,14 @@ coerce :: proc(
 	}
 	if have == ir.TAGGED {
 		return unbox_checked(s, value, target, mismatch, span)
+	}
+	if have.nullish != .None && target == ir.non_null(have) {
+		return present_checked(s, value, mismatch, span)
+	}
+	if have.nullish != .None && boxable(target) {
+		// Into another reference, or one that stands for the other nullish: the tag tells.
+		boxed := ir.emit(&s.fb, ir.TAGGED, ir.Box{value = value}, span)
+		return unbox_checked(s, boxed, target, mismatch, span)
 	}
 	return later(s, span, "this conversion")
 }
@@ -248,7 +262,10 @@ flow_checked :: proc(
 		return ir.NO_VALUE
 	}
 	from_any := given == check.ANY || given == check.UNKNOWN
-	into_union := wanted != check.ANY && wanted != check.UNKNOWN && is_tagged_type(s, wanted)
+	into_union :=
+		wanted != check.ANY &&
+		wanted != check.UNKNOWN &&
+		(is_tagged_type(s, wanted) || is_nullable_type(s, wanted))
 	if from_any && into_union && value_type(s, value) == ir.TAGGED {
 		check_members(s, value, wanted, .Tagged_Holds_Other_Kind, span)
 	}
@@ -263,6 +280,14 @@ is_tagged_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
 	return ok && kind == .Tagged
 }
 
+// is_nullable_type says whether values of the type are a reference with 0 for null or undefined.
+@(private)
+is_nullable_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
+	v := s.types[type].(check.Union) or_return
+	_, _, _, nullable := nullable_reference(s.types, v)
+	return nullable
+}
+
 @(private)
 boxable :: proc(type: ir.Type) -> bool {
 	#partial switch type.kind {
@@ -274,8 +299,9 @@ boxable :: proc(type: ir.Type) -> bool {
 
 // truthy tests a number by its magnitude being above zero, which is one intrinsic and one
 // comparison and is false for NaN and for both zeros without a branch. A string is true when it
-// has a unit, and an object, an array and a function always are. A tagged value is tested by
-// read_as, the check type it was read with, where the caller knows it (truthy_tagged).
+// has a unit, and an object, an array and a function always are unless null. A tagged value, and a
+// string that may be null, is tested by read_as, the check type it was read with, where the caller
+// knows it (truthy_tagged).
 @(private)
 truthy :: proc(
 	s: ^Func_State,
@@ -286,15 +312,23 @@ truthy :: proc(
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
-	switch value_type(s, value).kind {
+	type := value_type(s, value)
+	switch type.kind {
 	case .Bool:
 		return value
 	case .F64:
 		size := ir.emit(&s.fb, ir.F64, ir.Intrinsic{op = .Abs, args = {value}}, span)
 		return above_zero(s, size, span)
 	case .Str:
+		if type.nullish != .None {
+			boxed := ir.emit(&s.fb, ir.TAGGED, ir.Box{value = value}, span)
+			return truthy_tagged(s, boxed, read_as, span)
+		}
 		return above_zero(s, ir.emit(&s.fb, ir.F64, ir.Length{value = value}, span), span)
 	case .Ref, .Closure:
+		if type.nullish != .None {
+			return negated(s, ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span), span)
+		}
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
 	case .Tagged:
 		return truthy_tagged(s, value, read_as, span)
@@ -516,9 +550,17 @@ lib_root :: proc(s: ^Func_State, id: ast.Node_ID) -> (string, bool) {
 @(private)
 lower_non_null :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Non_Null) -> ir.Value_ID {
 	value := lower_expression(s, node.expr)
-	if value != ir.NO_VALUE && value_type(s, value) == ir.TAGGED {
-		span := s.tree.nodes[id].span
+	if value == ir.NO_VALUE {
+		return value
+	}
+	span := s.tree.nodes[id].span
+	type := value_type(s, value)
+	if type == ir.TAGGED {
 		fail_if(s, tag_test(s, value, {.Undefined, .Null}, span), .Non_Null_Assertion, span)
+	} else if type.nullish != .None {
+		null := ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+		fail_if(s, null, .Non_Null_Assertion, span)
+		return present(s, value, span)
 	}
 	return value
 }
@@ -620,6 +662,14 @@ lower_compare :: proc(
 ) -> ir.Value_ID {
 	left, right := values[0], values[1]
 	ordered := op != .Equal && op != .Not_Equal
+	if !ordered {
+		if test, handled := compare_references(s, values, span); handled {
+			if op == .Not_Equal && test != ir.NO_VALUE {
+				return negated(s, test, span)
+			}
+			return test
+		}
+	}
 	if value_type(s, left) == ir.TAGGED || value_type(s, right) == ir.TAGGED {
 		if ordered {
 			// check orders two numbers or two strings, and `any` not at all.
@@ -702,7 +752,8 @@ lower_logical :: proc(
 		case is_nullish_constant(s, left):
 			right := lower_expression(s, node.right)
 			return flow_into(s, right, s.typed.node_types[node.right], wanted, result, span)
-		case left != ir.NO_VALUE && value_type(s, left) != ir.TAGGED:
+		case left == ir.NO_VALUE:
+		case value_type(s, left) != ir.TAGGED && value_type(s, left).nullish == .None:
 			// Never nullish, so the right side never runs.
 			return flow_into(s, left, s.typed.node_types[node.left], wanted, result, span)
 		}
@@ -712,13 +763,22 @@ lower_logical :: proc(
 	if left == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
+	left_type := value_type(s, left)
 	test: ir.Value_ID
-	if node.op == .Coalesce {
-		test = negated(s, tag_test(s, left, {.Undefined, .Null}, span), span)
-	} else {
+	switch {
+	case node.op != .Coalesce:
 		test = truthy(s, left, span, s.typed.node_types[node.left])
+	case left_type == ir.TAGGED:
+		test = negated(s, tag_test(s, left, {.Undefined, .Null}, span), span)
+	case:
+		test = negated(s, ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = left}, span), span)
 	}
-	unboxing := value_type(s, left) == ir.TAGGED && result != ir.VOID && result != ir.TAGGED
+	// A left side that may hold null and does not fit the result converts on its own edge too:
+	// before the branch, a check for what only the other edge holds could fail.
+	unboxing :=
+		result != ir.VOID &&
+		result != ir.TAGGED &&
+		(left_type == ir.TAGGED || left_type.nullish != .None && !ir.fits(left_type, result))
 	kept := left
 	if !unboxing {
 		kept = flow_into(s, left, s.typed.node_types[node.left], wanted, result, span)
@@ -746,7 +806,15 @@ lower_logical :: proc(
 	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
 	if unboxing {
 		ir.use_block(&s.fb, keep)
-		kept = unbox_checked(s, left, result, .Tagged_Holds_Other_Kind, span)
+		switch {
+		case left_type == ir.TAGGED:
+			kept = unbox_checked(s, left, result, .Tagged_Holds_Other_Kind, span)
+		case node.op == .And:
+			kept = coerce(s, left, result, span)
+		case:
+			// The test proved it is not null.
+			kept = coerce(s, present(s, left, span), result, span)
+		}
 		append(&edges, here(s))
 		ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 	} else {

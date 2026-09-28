@@ -200,7 +200,7 @@ tests_tags :: proc(body: ir.Func, tags: ir.Tag_Set) -> bool {
 }
 
 // fails_unless answers the error the program fails with on one side of the branch on test: the
-// check that guards a read out of a tagged value.
+// check that guards a read out of a tagged value, or of a reference that may be null.
 fails_unless :: proc(
 	output: ir.Program_IR,
 	body: ir.Func,

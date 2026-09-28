@@ -53,7 +53,7 @@ mark_stack :: #force_no_inline proc(heap: ^Heap) {
 mark_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) {
 	switch kind {
 	case .Number, .Boolean:
-	case .Ref:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
 		mark_reference(heap, (^rawptr)(slot)^)
 	case .Tagged:
 		value := (^abi.Tagged)(slot)
@@ -115,6 +115,12 @@ scan_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 			return
 		}
 		mark_reference(heap, array.elements)
+		switch table.element {
+		case .Number, .Boolean:
+			// Nothing to follow, and a sieve's array has millions of elements.
+			return
+		case .Ref, .Tagged, .Ref_Or_Null, .Ref_Or_Undefined:
+		}
 		slots := ([^]byte)(array.elements)
 		for i in 0 ..< array.length {
 			mark_slot(heap, &slots[i * abi.SLOT_SIZE[table.element]], table.element)

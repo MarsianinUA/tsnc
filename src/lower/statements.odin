@@ -154,8 +154,9 @@ inline_arrow :: proc(
 }
 
 // close_body leaves a body whose end control still reaches, as running off it does: with nothing
-// for a result of void, and with undefined for a tagged one. Any other result makes the end
-// unreachable, since check reports a body that promises a value and can reach its end (T3024).
+// for a result of void, and with undefined for one that may be undefined. Any other result makes
+// the end unreachable, since check reports a body that promises a value and can reach its end
+// (T3024).
 @(private)
 close_body :: proc(s: ^Func_State, span: source.Span) {
 	if terminated(s) {
@@ -167,7 +168,11 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 	case .Tagged:
 		leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
 	case .F64, .Bool, .Str, .Closure, .Ref:
-		ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
+		if s.declared.nullish == .Undefined {
+			leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
+		} else {
+			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
+		}
 	}
 }
 

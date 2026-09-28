@@ -80,7 +80,7 @@ set_field :: proc(cell: ^abi.Cell_Header, field: abi.Field, v: abi.Tagged) {
 		(^f64)(slot)^ = v.payload.number
 	case .Boolean:
 		(^b64)(slot)^ = v.payload.boolean
-	case .Ref:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
 		(^^abi.Cell_Header)(slot)^ = v.payload.ref
 	case .Tagged:
 		(^abi.Tagged)(slot)^ = v

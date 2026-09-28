@@ -28,7 +28,7 @@ the_dump_shows_every_section_of_a_program :: proc(t: ^testing.T) {
 			"; tsnc ir",
 			"layout 1 object size 24",
 			"  field 0 \"x\" number at 8",
-			"  field 1 \"next\"? ref at 16",
+			"  field 1 \"next\"? ref or undefined at 16",
 			"layout 2 array number size 32",
 			"global 0 total : f64",
 			"string 0 \"hi\"",
@@ -188,7 +188,7 @@ the_dump_spells_the_string_instructions :: proc(t: ^testing.T) {
 	table := file_table()
 	p := ir.make_builder(context.temp_allocator)
 	site := ir.fail_site(&p, {file = "main.ts", line = 2, column = 1, error = .Index_Out_Of_Range})
-	params := [?]ir.Type{ir.STR, ir.STR}
+	params := [?]ir.Type{ir.STR, ir.nullable(ir.STR, .Undefined)}
 	read := ir.declare_func(&p, "read", params[:], ir.VOID, at(table, 2))
 
 	f := ir.begin_func(&p, read)
@@ -203,7 +203,9 @@ the_dump_spells_the_string_instructions :: proc(t: ^testing.T) {
 	checked := ir.emit(&f, ir.F64, check, at(table, 3))
 	unit := ir.emit(&f, ir.F64, ir.Unit_Load{text = text, index = checked}, at(table, 3))
 	ir.emit(&f, ir.STR, ir.Ascii_Cell{unit = unit}, at(table, 3))
-	ir.emit(&f, ir.BOOL, ir.Same_Cell{a = text, b = other}, at(table, 3))
+	ir.emit(&f, ir.BOOL, ir.Null_Test{value = other}, at(table, 3))
+	present := ir.emit(&f, ir.STR, ir.Non_Null{value = other}, at(table, 3))
+	ir.emit(&f, ir.BOOL, ir.Same_Cell{a = text, b = present}, at(table, 3))
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(table, 3))
 	ir.end_func(&f)
 	program := ir.finish(&p, read, nil)
@@ -212,15 +214,17 @@ the_dump_spells_the_string_instructions :: proc(t: ^testing.T) {
 		t,
 		func_dump(table, program, read),
 		{
-			"func 0 read(str, str) -> void at main.ts:2:1",
+			"func 0 read(str, str | undefined) -> void at main.ts:2:1",
 			"  b0:",
 			"    %0 = param 0 : str ; 2:1",
-			"    %1 = param 1 : str ; 2:1",
+			"    %1 = param 1 : str | undefined ; 2:1",
 			"    %2 = const 0 : f64 ; 3:1",
 			"    %3 = bounds_check %0[%2] not_integer 0 out_of_range 0 : f64 ; 3:1",
 			"    %4 = unit_load %0[%3] : f64 ; 3:1",
 			"    %5 = ascii_cell %4 : str ; 3:1",
-			"    %6 = same_cell %0, %1 : bool ; 3:1",
+			"    %6 = null_test %1 : bool ; 3:1",
+			"    %7 = non_null %1 : str ; 3:1",
+			"    %8 = same_cell %0, %7 : bool ; 3:1",
 			"    return ; 3:1",
 		},
 	)
@@ -424,7 +428,7 @@ build_program :: proc(table: []source.File) -> ir.Program_IR {
 
 	fields := [?]ir.Slot {
 		{name = "x", kind = .Number},
-		{name = "next", kind = .Ref, optional = true},
+		{name = "next", kind = .Ref_Or_Undefined, optional = true},
 	}
 	cell := ir.object_layout(&p, fields[:])
 	ir.array_layout(&p, .Number)

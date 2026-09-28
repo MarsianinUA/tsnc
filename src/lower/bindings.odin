@@ -359,7 +359,7 @@ local_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
 // box_type is the type of a box holding a value of this type: an environment of one slot.
 @(private)
 box_type :: proc(s: ^Func_State, type: ir.Type) -> ir.Type {
-	slots := [1]abi.Slot_Kind{slot_of(type.kind)}
+	slots := [1]abi.Slot_Kind{slot_of(type)}
 	return ir.ref(ir.environment_layout(&s.low.builder, slots[:]))
 }
 
@@ -371,7 +371,7 @@ local_box_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
 	if !s.low.closures[s.file].checked[symbol] || holds_null(type) {
 		return box_type(s, type)
 	}
-	slots := [2]abi.Slot_Kind{slot_of(type.kind), .Boolean}
+	slots := [2]abi.Slot_Kind{slot_of(type), .Boolean}
 	return ir.ref(ir.environment_layout(&s.low.builder, slots[:]))
 }
 
@@ -483,15 +483,11 @@ mark_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 	}
 }
 
-// holds_null says whether a binding of this type is a reference, which is null before anything was
-// stored in it.
+// holds_null says whether a binding of this type is a present reference, which is null only before
+// anything was stored in it. For one that may hold null, null is a value.
 @(private)
 holds_null :: proc(type: ir.Type) -> bool {
-	#partial switch type.kind {
-	case .Str, .Ref, .Closure:
-		return true
-	}
-	return false
+	return ir.is_reference(type) && type.nullish == .None
 }
 
 // store_slot writes a slot of a cell, through the store that ends in _Ref where the collector
@@ -505,7 +501,7 @@ store_slot :: proc(
 	span: source.Span,
 ) {
 	kind := s.low.builder.layouts[value_type(s, cell).layout].fields[field].kind
-	if kind == .Ref || kind == .Tagged {
+	if ir.traced(kind) {
 		store := ir.Field_Store_Ref {
 			cell  = cell,
 			field = field,
@@ -525,9 +521,13 @@ store_slot :: proc(
 // zero_value gives a string the empty cell rather than a null pointer, so no reader and no
 // collector has to know about one. An object, an array or a function has no empty value to take,
 // so its binding starts as the null reference, which the collector skips; a read that may come
-// before a value is stored tests for it (check_ready).
+// before a value is stored tests for it (check_ready). A reference that may hold null starts as
+// that null.
 @(private)
 zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value_ID {
+	if type.nullish != .None {
+		return ir.emit(&s.fb, type, ir.Const_Null{}, span)
+	}
 	switch type.kind {
 	case .F64:
 		return ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
@@ -641,7 +641,7 @@ open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: sourc
 		if same {
 			continue
 		}
-		merged := ir.phi(&s.fb, value_type(s, first), span)
+		merged := ir.phi(&s.fb, held_type(s, at, first), span)
 		for edge in edges {
 			ir.phi_incoming(&s.fb, merged, edge.block, edge.values[at])
 		}
@@ -672,11 +672,20 @@ open_header :: proc(
 			phis[i] = ir.NO_VALUE
 			continue
 		}
-		phis[i] = ir.phi(&s.fb, value_type(s, entering), span)
+		phis[i] = ir.phi(&s.fb, held_type(s, at, entering), span)
 		ir.phi_incoming(&s.fb, phis[i], from.block, entering)
 		s.locals[at] = phis[i]
 	}
 	return
+}
+
+// held_type is the type a phi of the local at `at` takes: the local's own where one edge brings a
+// present reference into a local that may hold null, since another edge may bring the null.
+@(private)
+held_type :: proc(s: ^Func_State, at: int, value: ir.Value_ID) -> ir.Type {
+	have := value_type(s, value)
+	declared := local_type(s, s.symbols[at])
+	return declared if ir.fits(have, declared) else have
 }
 
 @(private)

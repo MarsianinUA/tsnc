@@ -52,6 +52,7 @@ Variant :: union #no_nil {
 	Ascii_Cell,
 	Layout_Test,
 	Null_Test,
+	Non_Null,
 	Same_Cell,
 
 	// Tagged values.
@@ -100,8 +101,9 @@ Const_Bool :: struct {
 Const_Undefined :: struct {}
 
 // Const_Null is Tagged, or a reference type: typed as a Ref or a Closure it is the null reference,
-// the zero of a binding that holds an object or a function. A string binding holds it only as the
-// mark of a declaration that has not run (Null_Test); the zero of a string is the empty cell.
+// the zero of a binding that holds an object or a function; typed as a reference that may hold null,
+// it is that null or undefined. A present string binding holds it only as the mark of a declaration
+// that has not run (Null_Test); the zero of a string is the empty cell.
 Const_Null :: struct {}
 
 // Const_String is a Str pointing at a cell codegen puts in read-only data.
@@ -228,10 +230,16 @@ Layout_Test :: struct {
 	layout: Layout_ID,
 }
 
-// Null_Test answers Bool: whether a reference is null. No value a program makes is, so only a
-// binding holds null, as the mark that its declaration has not run yet where a read may come first
-// (the read check of lower).
+// Null_Test answers Bool: whether a reference is null. A reference type that may hold null is null
+// for its nullish value; a present one is null only as the mark that the declaration of its
+// binding has not run yet where a read may come first (the read check of lower).
 Null_Test :: struct {
+	value: Value_ID,
+}
+
+// Non_Null answers a reference that may hold null as its present type, once a Null_Test before it
+// proved it is not null.
+Non_Null :: struct {
 	value: Value_ID,
 }
 
@@ -252,8 +260,10 @@ Tag_Test :: struct {
 
 Tag_Set :: bit_set[abi.Tag]
 
-// Box wraps a statically typed value as Tagged. Unbox reads it back, and the type of the
-// instruction says as what. Unbox does not check: a Tag_Test, or a Fail, comes before it.
+// Box wraps a statically typed value as Tagged; a null reference of a type that may hold one boxes
+// as its nullish. Unbox reads it back, and the type of the instruction says as what: the payload of
+// null and undefined is 0, the null reference. Unbox does not check: a Tag_Test, or a Fail, comes
+// before it.
 Box :: struct {
 	value: Value_ID,
 }
@@ -356,7 +366,7 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
 		return false
-	case Unit_Load, Ascii_Cell, Same_Cell:
+	case Unit_Load, Ascii_Cell, Same_Cell, Non_Null:
 		return false
 	case Tag_Test, Box, Unbox, Global_Load, Global_Store:
 		return false

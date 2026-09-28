@@ -165,8 +165,10 @@ slot :: proc(array: ^abi.Array_Cell, kind: abi.Slot_Kind, index: int) -> rawptr 
 	return &([^]byte)(array.elements)[index * abi.SLOT_SIZE[kind]]
 }
 
+// store is inlined into push, which builds an array element by element: as a call it cost
+// bench/ts/sieve.ts a fifth of its time once the slot kinds grew to six.
 @(private)
-store :: proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
+store :: #force_inline proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 	switch kind {
 	case .Number:
 		ensure(v.tag == .Number, "a number array given another value")
@@ -180,6 +182,11 @@ store :: proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 			"a reference array given another value",
 		)
 		(^^abi.Cell_Header)(slot)^ = v.payload.ref
+	case .Ref_Or_Null, .Ref_Or_Undefined:
+		held := v.tag == .String || v.tag == .Object || v.tag == .Function
+		absent := v.tag == (.Null if kind == .Ref_Or_Null else .Undefined)
+		ensure(held || absent, "a reference array given another value")
+		(^^abi.Cell_Header)(slot)^ = v.payload.ref if held else nil
 	case .Tagged:
 		(^abi.Tagged)(slot)^ = v
 	}

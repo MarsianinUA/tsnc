@@ -366,6 +366,9 @@ dominates :: proc(c: ^Checker, head, block: Block_ID) -> bool {
 @(private)
 verify_instruction :: proc(c: ^Checker) {
 	instruction := c.body.values[c.value]
+	if instruction.type.nullish != .None && !is_reference(instruction.type) {
+		report(c, .Result_Type)
+	}
 	switch v in instruction.variant {
 	case Unreachable:
 		expect_result(c, VOID)
@@ -392,7 +395,7 @@ verify_instruction :: proc(c: ^Checker) {
 			if _, known := layout_of(c, type.layout); !known {
 				report(c, .Unknown_Id)
 			}
-		} else if type != TAGGED && type != CLOSURE && type != STR {
+		} else if type != TAGGED && !is_reference(type) {
 			report(c, .Result_Type)
 		}
 
@@ -417,7 +420,7 @@ verify_instruction :: proc(c: ^Checker) {
 		right, right_known := operand(c, v.right)
 		if left_known && right_known {
 			ordered := v.op != .Equal && v.op != .Not_Equal
-			if left != right || !comparable(left) || (ordered && left != F64) {
+			if !comparable(left, right) || (ordered && left != F64) {
 				report(c, .Operand_Type)
 			}
 		}
@@ -466,7 +469,7 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Field_Load:
 		field, known := field_of(c, v.cell, v.field)
-		if known && !slot_fits(field.kind, instruction.type) {
+		if known && !slot_holds(field.kind, instruction.type) {
 			report(c, .Result_Type)
 		}
 
@@ -509,7 +512,7 @@ verify_instruction :: proc(c: ^Checker) {
 	case Element_Load:
 		element, known := array_element(c, v.array)
 		expect_checked_index(c, v.index, v.array)
-		if known && !slot_fits(element, instruction.type) {
+		if known && !slot_holds(element, instruction.type) {
 			report(c, .Result_Type)
 		}
 
@@ -549,7 +552,8 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_result(c, STR)
 
 	case Layout_Test:
-		if type, known := operand(c, v.cell); known && type.kind != .Ref {
+		cell, cell_known := operand(c, v.cell)
+		if cell_known && (cell.kind != .Ref || cell.nullish != .None) {
 			report(c, .Operand_Type)
 		}
 		if _, known := layout_of(c, v.layout); !known {
@@ -564,6 +568,14 @@ verify_instruction :: proc(c: ^Checker) {
 			report(c, .Operand_Type)
 		}
 		expect_result(c, BOOL)
+
+	case Non_Null:
+		if type, known := operand(c, v.value); known {
+			if !is_reference(type) || type.nullish == .None {
+				report(c, .Operand_Type)
+			}
+			expect_result(c, non_null(type))
+		}
 
 	case Same_Cell:
 		a, a_known := operand(c, v.a)
@@ -743,7 +755,7 @@ verify_edge :: proc(c: ^Checker, edge: Incoming, want: Type) {
 	if c.order[edge.block] >= 0 && !reaches_end(c, edge.block, edge.value) {
 		report(c, .Use_Before_Definition)
 	}
-	if c.body.values[edge.value].type != want {
+	if !fits(c.body.values[edge.value].type, want) {
 		report(c, .Operand_Type)
 	}
 }
@@ -848,7 +860,7 @@ operand :: proc(c: ^Checker, id: Value_ID) -> (type: Type, known: bool) {
 @(private)
 expect_operand :: proc(c: ^Checker, id: Value_ID, want: Type) {
 	type, known := operand(c, id)
-	if known && type != want {
+	if known && !fits(type, want) {
 		report(c, .Operand_Type)
 	}
 }
@@ -930,7 +942,7 @@ field_of :: proc(c: ^Checker, cell: Value_ID, index: i32) -> (field: abi.Field, 
 	if !cell_known {
 		return
 	}
-	if type.kind != .Ref {
+	if type.kind != .Ref || type.nullish != .None {
 		report(c, .Operand_Type)
 		return
 	}
@@ -958,7 +970,7 @@ array_element :: proc(c: ^Checker, array: Value_ID) -> (element: abi.Slot_Kind, 
 // element_of reports a type that is not an array.
 @(private)
 element_of :: proc(c: ^Checker, type: Type) -> (element: abi.Slot_Kind, known: bool) {
-	if type.kind != .Ref {
+	if type.kind != .Ref || type.nullish != .None {
 		report(c, .Operand_Type)
 		return
 	}
@@ -998,44 +1010,45 @@ is_base :: proc(c: ^Checker, id: Layout_ID) -> bool {
 	return int(id) < len(c.program.base) && c.program.base[id] == id
 }
 
-// slot_fits lets a Ref slot take any reference: abi.Field carries a slot kind and not a table of its
-// own, so the layout behind a traced slot is not knowable here.
+// slot_holds is what a load from a slot of this kind answers. A reference slot holds any reference:
+// abi.Field carries a slot kind and not a table of its own, so the layout behind a traced slot is
+// not knowable here.
 @(private)
-slot_fits :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
+slot_holds :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	switch kind {
 	case .Number:
 		return type == F64
 	case .Boolean:
 		return type == BOOL
 	case .Ref:
-		return is_reference(type)
+		return is_reference(type) && type.nullish == .None
+	case .Ref_Or_Null:
+		return is_reference(type) && type.nullish == .Null
+	case .Ref_Or_Undefined:
+		return is_reference(type) && type.nullish == .Undefined
 	case .Tagged:
 		return type == TAGGED
 	}
 	return false
 }
 
-// traced says whether the collector follows what a slot of this kind holds, which is what decides
-// between a plain store and a store that ends in _Ref.
+// slot_fits is what a store may write: what the slot holds, or a present reference into a slot that
+// may hold null.
 @(private)
-traced :: proc(kind: abi.Slot_Kind) -> bool {
-	return kind == .Ref || kind == .Tagged
+slot_fits :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
+	nullable_slot := kind == .Ref_Or_Null || kind == .Ref_Or_Undefined
+	return slot_holds(kind, type) || nullable_slot && is_reference(type) && type.nullish == .None
 }
 
-// is_reference says whether a value of this type is a pointer a runtime export can take.
-@(private)
-is_reference :: proc(type: Type) -> bool {
-	return type.kind == .Str || type.kind == .Ref || type.kind == .Closure
-}
-
-// c_type_fits lets a Ptr take any reference, because an export names no layout of its own.
+// c_type_fits lets a Ptr take any present reference, because an export names no layout of its own
+// and dereferences what it is given.
 @(private)
 c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 	switch kind {
 	case .Void:
 		return type == VOID
 	case .Ptr:
-		return is_reference(type)
+		return is_reference(type) && type.nullish == .None
 	case .Number:
 		return type == F64
 	case .Boolean:
@@ -1050,16 +1063,23 @@ c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 	return false
 }
 
-// comparable says whether Equal and Not_Equal compare two values of this type themselves. A string
-// and a tagged value go through the runtime instead: one holds its contents, the other its tag.
+// comparable says whether Equal and Not_Equal compare two values themselves. A string and a tagged
+// value go through the runtime instead: one holds its contents, the other its tag. Two objects or
+// two functions compare addresses, except where 0 is null on one side and undefined on the other.
 @(private)
-comparable :: proc(type: Type) -> bool {
-	return type == F64 || type == BOOL || type.kind == .Ref || type == CLOSURE
+comparable :: proc(left, right: Type) -> bool {
+	if left == F64 || left == BOOL {
+		return left == right
+	}
+	if left.kind != .Ref && left.kind != .Closure || non_null(left) != non_null(right) {
+		return false
+	}
+	return left.nullish == right.nullish || left.nullish == .None || right.nullish == .None
 }
 
 @(private)
 boxable :: proc(type: Type) -> bool {
-	return type == F64 || type == BOOL || type == STR || type.kind == .Ref || type == CLOSURE
+	return type == F64 || type == BOOL || is_reference(type)
 }
 
 @(private)
