@@ -18,8 +18,9 @@ and one IR type and still print the way each was written.
 
 A field is read and written at its slot of the layout. A slot the widening classes made Tagged
 (types.odin) holds the value boxed. A read through a type narrower than the slot checks the tag, and
-for an object the layout, and fails the program where a write through the wider type of the same
-object left something else there (requirements 3.8).
+for an object the layout, or checks for null in a slot that may hold it, and fails the program
+where a write through the wider type of the same object left something else there (requirements
+3.8).
 */
 
 @(private)
@@ -146,16 +147,15 @@ field_in :: proc(
 	type: ir.Type,
 	ok: bool,
 ) {
-	declared := ir.TAGGED
 	for one in object.fields {
 		if one.name != name {
 			continue
 		}
-		if !one.optional {
-			declared = ir_type(s.low, s.types, one.type) or_return
-		}
+		declared := ir_type(s.low, s.types, one.type) or_return
 		if declared == ir.VOID {
 			declared = ir.TAGGED // a field of `void` holds undefined
+		} else if one.optional {
+			declared = optional_type(declared)
 		}
 		for slot, i in s.low.builder.layouts[layout].fields {
 			if slot.name == name {
@@ -167,18 +167,33 @@ field_in :: proc(
 }
 
 // load_field reads a widened slot through the field's declared type with a check: a write through
-// the wider type may have left another kind there, or another layout.
+// the wider type may have left another kind there, another layout, or null.
 @(private)
 load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.Value_ID {
 	load := ir.Field_Load {
 		cell  = place.cell,
 		field = place.field,
 	}
-	if slot_kind(s, place) != .Tagged || place.type == ir.TAGGED {
+	held := slot_type(slot_kind(s, place), place.type)
+	if held == place.type {
 		return ir.emit(&s.fb, place.type, load, span)
 	}
-	held := ir.emit(&s.fb, ir.TAGGED, load, span)
-	return unbox_checked(s, held, place.type, .Field_Holds_Other_Kind, span)
+	loaded := ir.emit(&s.fb, held, load, span)
+	return coerce(s, loaded, place.type, span, .Field_Holds_Other_Kind)
+}
+
+// slot_type is the type a load from a slot of this kind answers, for a field declared as type.
+@(private)
+slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
+	#partial switch kind {
+	case .Tagged:
+		return ir.TAGGED
+	case .Ref_Or_Null:
+		return ir.nullable(type, .Null)
+	case .Ref_Or_Undefined:
+		return ir.nullable(type, .Undefined)
+	}
+	return type
 }
 
 // store_field boxes into a widened slot what the declared type holds unboxed.

@@ -3,6 +3,7 @@ package lower_tests
 import "core:slice"
 import "core:testing"
 
+import "../../src/abi"
 import "../../src/ir"
 
 /*
@@ -55,8 +56,8 @@ a_narrowed_object_is_checked_by_its_layout_too :: proc(t: ^testing.T) {
 		t,
 		SHAPES +
 		`
-		function r(c: Circle | null): number {
-			if (c !== null) {
+		function r(c: Circle | number): number {
+			if (typeof c !== "number") {
 				return c.radius;
 			}
 			return 0;
@@ -161,9 +162,9 @@ a_comparison_with_null_or_undefined_is_a_tag_test :: proc(t: ^testing.T) {
 }
 
 @(test)
-a_nullable_reference_is_truthy_by_its_tag_alone :: proc(t: ^testing.T) {
-	// A reference is always truthy, so `T | null` is true exactly when it is not nullish. A number
-	// may be zero or NaN, and the runtime answers for it.
+a_nullable_reference_is_truthy_unless_null :: proc(t: ^testing.T) {
+	// A reference is always truthy, so `T | null` is true exactly when the pointer is not null. A
+	// number may be zero or NaN, and the runtime answers for it.
 	result := lower_text(
 		t,
 		SHAPES +
@@ -179,9 +180,69 @@ a_nullable_reference_is_truthy_by_its_tag_alone :: proc(t: ^testing.T) {
 	)
 	present, _ := func_named(result.output, "m1.present")
 	testing.expectf(t, len(instructions_of(present, ir.Call_Runtime)) == 0, "%s", result.text)
-	testing.expectf(t, tests_tags(present, {.Undefined, .Null}), "%s", result.text)
+	testing.expectf(t, len(instructions_of(present, ir.Tag_Test)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(present, ir.Null_Test)) > 0, "%s", result.text)
 	positive, _ := func_named(result.output, "m1.positive")
 	testing.expectf(t, calls_to(positive, .Value_To_Boolean) > 0, "%s", result.text)
+}
+
+@(test)
+a_reference_or_null_is_one_pointer_slot :: proc(t: ^testing.T) {
+	// The node of bench/ts/trees.ts: a header and two pointers, 0 standing for null.
+	result := lower_text(
+		t,
+		`
+		interface Tree { left: Tree | null; right: Tree | null; }
+		function check(tree: Tree | null): number {
+			if (tree === null) { return 0; }
+			return 1 + check(tree.left) + check(tree.right);
+		}
+	`,
+	)
+	body, _ := func_named(result.output, "m1.check")
+	param := body.params[0]
+	testing.expectf(t, param.kind == .Ref && param.nullish == .Null, "%s", result.text)
+	table := result.output.layouts[param.layout]
+	testing.expect_value(t, table.size, 24)
+	for field in table.fields {
+		testing.expect_value(t, field.kind, abi.Slot_Kind.Ref_Or_Null)
+	}
+	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Box)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 0, "%s", result.text)
+
+	// A narrowed read tests the pointer, which a call may have set to null since the test.
+	reads := instructions_of(body, ir.Non_Null)
+	testing.expectf(t, len(reads) > 0, "%s", result.text)
+	for read in reads {
+		guarded := false
+		for instruction, id in body.values {
+			test := instruction.variant.(ir.Null_Test) or_continue
+			error, fails := fails_unless(result.output, body, ir.Value_ID(id))
+			guarded ||= test.value == read.value && fails && error == .Tagged_Holds_Other_Kind
+		}
+		testing.expectf(t, guarded, "a read of an unchecked pointer:\n%s", result.text)
+	}
+}
+
+@(test)
+an_optional_reference_field_is_a_pointer_slot :: proc(t: ^testing.T) {
+	// A missing field reads as undefined, which the pointer holds as 0.
+	result := lower_text(
+		t,
+		`
+		interface Named { name?: string; }
+		function name(n: Named): string {
+			return n.name ?? "none";
+		}
+	`,
+	)
+	body, _ := func_named(result.output, "m1.name")
+	table := result.output.layouts[body.params[0].layout]
+	testing.expect_value(t, len(table.fields), 1)
+	testing.expect_value(t, table.fields[0].kind, abi.Slot_Kind.Ref_Or_Undefined)
+	testing.expect(t, table.fields[0].optional)
+	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
 }
 
 @(test)

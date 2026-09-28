@@ -32,9 +32,13 @@ to_string :: proc(
 		return ir.NO_VALUE
 	}
 	export := abi.Runtime_Proc.Value_To_String
-	switch value_type(s, value).kind {
+	type := value_type(s, value)
+	switch type.kind {
 	case .Str:
-		return value
+		// One that may be null goes to the runtime, which makes "null" or "undefined" of it.
+		if type.nullish == .None {
+			return value
+		}
 	case .F64:
 		call := ir.Call_Runtime {
 			export = .Number_To_String,
@@ -45,16 +49,15 @@ to_string :: proc(
 		if primitive {
 			export = .Value_To_Primitive_String
 		}
-		fallthrough
 	case .Bool, .Closure:
-		call := ir.Call_Runtime {
-			export = export,
-			args   = {coerce(s, value, ir.TAGGED, span)},
-		}
-		return ir.emit(&s.fb, ir.STR, call, span)
 	case .Void:
+		return ir.NO_VALUE
 	}
-	return ir.NO_VALUE
+	call := ir.Call_Runtime {
+		export = export,
+		args   = {coerce(s, value, ir.TAGGED, span)},
+	}
+	return ir.emit(&s.fb, ir.STR, call, span)
 }
 
 @(private)

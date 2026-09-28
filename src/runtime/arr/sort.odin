@@ -100,18 +100,21 @@ sort_default :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> (ok: bool) {
 	return true
 }
 
-// start_sort copies the array and lists the indices of its elements that are not undefined; only a
-// tagged element can be undefined.
+// start_sort copies the array and lists the indices of its elements that are not undefined, which
+// JavaScript puts last without comparing them.
 @(private)
 start_sort :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> Sort_State {
 	items := slice(heap, array, 0, f64(array.length))
 	kind := element_kind(heap, items)
 	order := make([dynamic]int, 0, items.length)
 	for i in 0 ..< items.length {
-		if kind == .Tagged && (^abi.Tagged)(slot(items, kind, i)).tag == .Undefined {
-			continue
+		at := slot(items, kind, i)
+		undefined :=
+			kind == .Tagged && (^abi.Tagged)(at).tag == .Undefined ||
+			kind == .Ref_Or_Undefined && (^rawptr)(at)^ == nil
+		if !undefined {
+			append(&order, i)
 		}
-		append(&order, i)
 	}
 	return {items = items, kind = kind, order = order[:]}
 }
@@ -236,7 +239,7 @@ less :: proc(state: ^Sort_State, a, b: int) -> bool {
 		order = Compare_Numbers(code)(env, (^f64)(x)^, (^f64)(y)^)
 	case .Boolean:
 		order = Compare_Booleans(code)(env, (^b64)(x)^, (^b64)(y)^)
-	case .Ref:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
 		order = Compare_Refs(code)(env, (^^abi.Cell_Header)(x)^, (^^abi.Cell_Header)(y)^)
 	case .Tagged:
 		v, w := (^abi.Tagged)(x)^, (^abi.Tagged)(y)^

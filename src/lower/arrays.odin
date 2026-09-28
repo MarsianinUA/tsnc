@@ -101,7 +101,7 @@ bounds_check :: proc(s: ^Func_State, array, index: ir.Value_ID, span: source.Spa
 @(private)
 store_checked :: proc(s: ^Func_State, array, checked, value: ir.Value_ID, span: source.Span) {
 	kind := s.low.builder.layouts[value_type(s, array).layout].element
-	if kind == .Ref || kind == .Tagged {
+	if ir.traced(kind) {
 		store := ir.Element_Store_Ref {
 			array = array,
 			index = checked,
@@ -501,7 +501,7 @@ lower_reduce :: proc(
 		start = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
 	}
 
-	loop := open_inline_loop(s, node.args[0], start, first, span)
+	loop := open_inline_loop(s, node.args[0], start, first, span, result)
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
 	args := [?]ir.Value_ID{loop.accumulator, value, loop.index, receiver}
@@ -528,12 +528,14 @@ Inline_Loop :: struct {
 	leaving:     [dynamic]Edge, // the edges into the exit
 }
 
+// accumulated types reduce's accumulator, whose first value may be a present reference of it.
 @(private)
 open_inline_loop :: proc(
 	s: ^Func_State,
 	callback: ast.Node_ID,
 	start, accumulator: ir.Value_ID,
 	span: source.Span,
+	accumulated := ir.VOID,
 ) -> Inline_Loop {
 	loop := Inline_Loop {
 		header      = ir.add_block(&s.fb),
@@ -548,7 +550,7 @@ open_inline_loop :: proc(
 	loop.index = ir.phi(&s.fb, ir.F64, span)
 	ir.phi_incoming(&s.fb, loop.index, from.block, start)
 	if accumulator != ir.NO_VALUE {
-		loop.accumulator = ir.phi(&s.fb, value_type(s, accumulator), span)
+		loop.accumulator = ir.phi(&s.fb, accumulated, span)
 		ir.phi_incoming(&s.fb, loop.accumulator, from.block, accumulator)
 	}
 	return loop

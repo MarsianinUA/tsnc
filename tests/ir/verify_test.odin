@@ -550,6 +550,32 @@ a_heap_instruction_of_the_wrong_kind_is_a_violation :: proc(t: ^testing.T) {
 }
 
 @(test)
+references_that_may_be_null_pass :: proc(t: ^testing.T) {
+	// A present reference goes where one that may be null is wanted as it is: into a slot that may
+	// hold null, and into a phi with the null of that type.
+	expect_none(t, ir.verify(build_nullable(.None), context.temp_allocator))
+}
+
+@(test)
+a_reference_that_may_be_null_is_read_only_after_a_test :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		fault: Nullable_Fault,
+		kind:  ir.Violation_Kind,
+	} {
+		{.Field_Of_Nullable, .Operand_Type},
+		{.Present_Load, .Result_Type},
+		{.Non_Null_Of_Present, .Operand_Type},
+		{.Nullable_To_Runtime, .Operand_Type},
+		// 0 is null on one side and undefined on the other, which are not ===.
+		{.Null_Against_Undefined, .Operand_Type},
+	}
+	for c in cases {
+		found := ir.verify(build_nullable(c.fault), context.temp_allocator)
+		testing.expectf(t, len(found) == 1 && found[0].kind == c.kind, "%v: %v", c.fault, found)
+	}
+}
+
+@(test)
 closures_with_the_environment_of_their_function_pass :: proc(t: ^testing.T) {
 	expect_none(t, ir.verify(build_closures(.None), context.temp_allocator))
 }
@@ -740,6 +766,68 @@ build_heap :: proc(fault: Heap_Fault) -> ir.Program_IR {
 		}
 		ir.emit(&f, ir.BOOL, same, at(1))
 	}
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(1))
+	ir.end_func(&f)
+
+	return ir.finish(&p, main, nil)
+}
+
+@(private = "file")
+Nullable_Fault :: enum {
+	None,
+	Field_Of_Nullable, // a field read through a reference that may be null
+	Present_Load, // a load typed present out of a slot that may hold null
+	Non_Null_Of_Present,
+	Nullable_To_Runtime, // a string that may be undefined handed to an export that reads it
+	Null_Against_Undefined,
+}
+
+@(private = "file")
+build_nullable :: proc(fault: Nullable_Fault) -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	fields := [?]ir.Slot{{name = "next", kind = .Ref_Or_Null}}
+	link := ir.object_layout(&p, fields[:])
+	node := ir.ref(link)
+	maybe := ir.nullable(node, .Null)
+	params := [?]ir.Type{ir.BOOL, ir.nullable(ir.STR, .Undefined)}
+	sink := ir.declare_func(&p, "sink", params[:], ir.VOID, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, sink)
+	flag, text := ir.Value_ID(0), ir.Value_ID(1)
+	cell := ir.emit(&f, node, ir.Alloc{layout = link}, at(1))
+	ir.emit(&f, ir.VOID, ir.Field_Store_Ref{cell = cell, field = 0, value = cell}, at(1))
+	loaded := node if fault == .Present_Load else maybe
+	next := ir.emit(&f, loaded, ir.Field_Load{cell = cell, field = 0}, at(1))
+	if fault == .Field_Of_Nullable {
+		ir.emit(&f, maybe, ir.Field_Load{cell = next, field = 0}, at(1))
+	}
+	ir.emit(&f, ir.BOOL, ir.Null_Test{value = next}, at(1))
+	empty := ir.emit(&f, maybe, ir.Const_Null{}, at(1))
+	ir.emit(&f, node, ir.Non_Null{value = cell if fault == .Non_Null_Of_Present else empty}, at(1))
+	if fault == .Nullable_To_Runtime {
+		ir.emit(&f, ir.STR, ir.Call_Runtime{export = .String_Trim, args = {text}}, at(1))
+	}
+	if fault == .Null_Against_Undefined {
+		absent := ir.emit(&f, ir.nullable(node, .Undefined), ir.Const_Null{}, at(1))
+		ir.emit(&f, ir.BOOL, ir.Compare{op = .Equal, left = empty, right = absent}, at(1))
+	}
+
+	yes := ir.add_block(&f)
+	no := ir.add_block(&f)
+	join := ir.add_block(&f)
+	ir.emit(&f, ir.VOID, ir.Branch{condition = flag, then_block = yes, else_block = no}, at(1))
+	ir.use_block(&f, yes)
+	ir.emit(&f, ir.VOID, ir.Jump{target = join}, at(1))
+	ir.use_block(&f, no)
+	null := ir.emit(&f, maybe, ir.Const_Null{}, at(1))
+	ir.emit(&f, ir.VOID, ir.Jump{target = join}, at(1))
+	ir.use_block(&f, join)
+	merged := ir.phi(&f, maybe, at(1))
+	ir.phi_incoming(&f, merged, yes, cell)
+	ir.phi_incoming(&f, merged, no, null)
+	ir.emit(&f, ir.BOOL, ir.Compare{op = .Equal, left = merged, right = cell}, at(1))
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(1))
 	ir.end_func(&f)
 

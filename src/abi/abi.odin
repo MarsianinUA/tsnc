@@ -105,16 +105,22 @@ Slot_Kind :: enum u8 {
 	Boolean, // b64
 	Ref, // ^Cell_Header, traced by the GC
 	Tagged, // Tagged, the GC traces payload.ref when the tag holds a reference
+	// ^Cell_Header or nil, which reads as null or as undefined: `Tree | null`, `string | undefined`,
+	// an optional field of a reference type (requirements 3.4). The GC traces it as a Ref.
+	Ref_Or_Null,
+	Ref_Or_Undefined,
 }
 
 // SLOT_SIZE is @(rodata) rather than a constant: Odin indexes a constant array only by a constant,
 // and its readers index it by the slot kind of a field.
 @(rodata)
 SLOT_SIZE := [Slot_Kind]int {
-	.Number  = size_of(f64),
-	.Boolean = size_of(b64),
-	.Ref     = size_of(rawptr),
-	.Tagged  = size_of(Tagged),
+	.Number           = size_of(f64),
+	.Boolean          = size_of(b64),
+	.Ref              = size_of(rawptr),
+	.Tagged           = size_of(Tagged),
+	.Ref_Or_Null      = size_of(rawptr),
+	.Ref_Or_Undefined = size_of(rawptr),
 }
 
 Cell_Kind :: enum u8 {
@@ -131,8 +137,8 @@ Field :: struct {
 	name:     string, // UTF-8 TS name; empty in an environment
 	offset:   int, // bytes from the start of the cell
 	kind:     Slot_Kind,
-	// The field may be absent (`x?: T`). A Tagged slot holding undefined then reads as absent:
-	// the console and %j leave it out, as Node does for a property that was never set.
+	// The field may be absent (`x?: T`). A slot holding undefined then reads as absent: the
+	// console and %j leave it out, as Node does for a property that was never set.
 	optional: bool,
 }
 

@@ -1,5 +1,6 @@
 /*
-Tagged values: an `any`, or a union whose members differ in shape (requirements 3.4). The
+Tagged values: an `any`, or a union whose members differ in shape (requirements 3.4); a reference
+that may hold null is tagged here by load, once it is read out of its slot. The
 operations here dispatch on the tag at run time, with the semantics of ECMAScript's typeof,
 IsStrictlyEqual (requirements 3.7), ToBoolean and ToString.
 
@@ -147,6 +148,12 @@ load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
 		return {tag = .Boolean, payload = {boolean = (^b64)(slot)^}}
 	case .Ref:
 		cell := (^^abi.Cell_Header)(slot)^
+		return {tag = tag_of(heap, cell), payload = {ref = cell}}
+	case .Ref_Or_Null, .Ref_Or_Undefined:
+		cell := (^^abi.Cell_Header)(slot)^
+		if cell == nil {
+			return {tag = .Null if kind == .Ref_Or_Null else .Undefined}
+		}
 		return {tag = tag_of(heap, cell), payload = {ref = cell}}
 	case .Tagged:
 		return (^abi.Tagged)(slot)^

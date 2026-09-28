@@ -319,7 +319,7 @@ env_layout :: proc(
 	slots := make([]abi.Slot_Kind, len(symbols), context.temp_allocator)
 	for symbol, i in symbols {
 		type := symbol_type(low, file, symbol) or_return
-		slots[i] = .Ref if low.closures[file].boxed[symbol] else slot_of(type.kind)
+		slots[i] = .Ref if low.closures[file].boxed[symbol] else slot_of(type)
 	}
 	return ir.environment_layout(&low.builder, slots), true
 }

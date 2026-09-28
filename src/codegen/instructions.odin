@@ -124,6 +124,9 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		reference, null := body.values[v.value], llvm.LLVMConstNull(m.types.ptr)
 		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, reference, null, "")
 
+	case ir.Non_Null:
+		body.values[value] = body.values[v.value]
+
 	case ir.Same_Cell:
 		a, b := body.values[v.a], body.values[v.b]
 		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, a, b, "")
@@ -465,7 +468,7 @@ slot_type :: proc(m: ^Module, kind: abi.Slot_Kind) -> llvm.LLVMTypeRef {
 		return m.types.double
 	case .Boolean:
 		return m.types.int64
-	case .Ref:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
 		return m.types.ptr
 	case .Tagged:
 		return m.types.tagged
@@ -575,7 +578,21 @@ build_box :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.L
 		// The verifier keeps both out of box.
 		unreachable()
 	}
-	return tagged_words(m, llvm.LLVMConstInt(m.types.int64, u64(tag), false), payload)
+	tag_word := llvm.LLVMConstInt(m.types.int64, u64(tag), false)
+	nullish: abi.Tag
+	switch type.nullish {
+	case .None:
+		return tagged_words(m, tag_word, payload)
+	case .Null:
+		nullish = .Null
+	case .Undefined:
+		nullish = .Undefined
+	}
+	// The payload of the null reference is 0, which is what null and undefined carry.
+	null := llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, value, llvm.LLVMConstNull(m.types.ptr), "")
+	nullish_word := llvm.LLVMConstInt(m.types.int64, u64(nullish), false)
+	tag_or_nullish := llvm.LLVMBuildSelect(m.builder, null, nullish_word, tag_word, "")
+	return tagged_words(m, tag_or_nullish, payload)
 }
 
 @(private)

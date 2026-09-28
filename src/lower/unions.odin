@@ -13,7 +13,9 @@ import "../source"
 /*
 Unions and `any`: the tagged value. A value whose type can hold more than one kind of value is the
 tag and the payload of requirements 3.4, and every move out of it into a static type is a check that
-fails the program rather than read it wrong (requirements 3.8).
+fails the program rather than read it wrong (requirements 3.8). A reference with one of null and
+undefined is a pointer instead (types.odin), read as present after a test for null (present_checked)
+the way a tagged value is unboxed after a test of its tag, and boxed wherever a tag is wanted.
 
 A tagged value becomes static in one way only. A read check narrowed (a narrowed name, `x!`, an
 `any` narrowed by `typeof`) is unboxed where lower_expression hands it over, since the node holds
@@ -49,7 +51,11 @@ unbox_checked :: proc(
 	if !has_tag {
 		return value
 	}
-	fits := tag_test(s, value, {tag}, span)
+	tags := ir.Tag_Set{tag}
+	if want.nullish != .None {
+		tags += {nullish_tag(want)}
+	}
+	fits := tag_test(s, value, tags, span)
 	unboxed := ir.add_block(&s.fb)
 	failed := ir.add_block(&s.fb)
 	ir.emit(
@@ -61,23 +67,74 @@ unbox_checked :: proc(
 	fail_block(s, failed, error, span)
 
 	ir.use_block(&s.fb, unboxed)
+	// Null and undefined carry a payload of 0, which is the null of a reference that may hold one.
 	result := ir.emit(&s.fb, want, ir.Unbox{value = value}, span)
-	if want.kind == .Ref {
-		layout := ir.Layout_Test {
-			cell   = result,
-			layout = want.layout,
-		}
-		right := ir.emit(&s.fb, ir.BOOL, layout, span)
-		checked := ir.add_block(&s.fb)
+	if want.kind != .Ref {
+		return result
+	}
+	done := ir.NO_BLOCK
+	cell := result
+	if want.nullish != .None {
+		null := ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = result}, span)
+		done = ir.add_block(&s.fb)
+		held := ir.add_block(&s.fb)
 		ir.emit(
 			&s.fb,
 			ir.VOID,
-			ir.Branch{condition = right, then_block = checked, else_block = failed},
+			ir.Branch{condition = null, then_block = done, else_block = held},
 			span,
 		)
-		ir.use_block(&s.fb, checked)
+		ir.use_block(&s.fb, held)
+		cell = present(s, result, span)
+	}
+	layout := ir.Layout_Test {
+		cell   = cell,
+		layout = want.layout,
+	}
+	right := ir.emit(&s.fb, ir.BOOL, layout, span)
+	checked := ir.add_block(&s.fb)
+	ir.emit(
+		&s.fb,
+		ir.VOID,
+		ir.Branch{condition = right, then_block = checked, else_block = failed},
+		span,
+	)
+	ir.use_block(&s.fb, checked)
+	if done != ir.NO_BLOCK {
+		ir.emit(&s.fb, ir.VOID, ir.Jump{target = done}, span)
+		ir.use_block(&s.fb, done)
 	}
 	return result
+}
+
+// present_checked reads a reference that may hold null as its present type, and fails with error
+// where it holds null.
+@(private)
+present_checked :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	error: abi.Runtime_Error,
+	span: source.Span,
+) -> ir.Value_ID {
+	fail_if(s, ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span), error, span)
+	return present(s, value, span)
+}
+
+// present is a reference a test before it proved not null, typed as present. The value may be
+// present already: a local that may hold null holds a present reference as it was given.
+@(private)
+present :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+	if value == ir.NO_VALUE || value_type(s, value).nullish == .None {
+		return value
+	}
+	type := ir.non_null(value_type(s, value))
+	return ir.emit(&s.fb, type, ir.Non_Null{value = value}, span)
+}
+
+// nullish_tag is the tag of what 0 stands for in a reference that may hold null.
+@(private)
+nullish_tag :: proc(type: ir.Type) -> abi.Tag {
+	return .Null if type.nullish == .Null else .Undefined
 }
 
 // tag_of is the tag a value of a static type has once it is boxed; an array is an object there.
@@ -100,9 +157,10 @@ tag_of :: proc(type: ir.Type) -> (abi.Tag, bool) {
 }
 
 // narrowed keeps the promise of lower_expression: a tagged value for a node check typed narrower is
-// unboxed into the node's type, and fails the program where the value holds something else, which
-// only a value that came through `any`, or changed after the test that narrowed it, can do.
-// representation comes first, so a node that stays tagged interns nothing.
+// unboxed into the node's type, and a reference that may hold null is read as present where the
+// node is, and either fails the program where the value holds something else, which only a value
+// that came through `any`, or changed after the test that narrowed it, can do. representation
+// comes first, so a node that stays tagged interns nothing.
 @(private)
 narrowed :: proc(
 	s: ^Func_State,
@@ -110,14 +168,22 @@ narrowed :: proc(
 	id: ast.Node_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
-	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED {
+	if value == ir.NO_VALUE {
+		return value
+	}
+	have := value_type(s, value)
+	if have != ir.TAGGED && have.nullish == .None {
 		return value
 	}
 	kind, ok := representation(s.types, s.typed.node_types[id])
 	if !ok || kind == .Tagged || kind == .Void {
 		return value
 	}
-	return unbox_checked(s, value, node_type(s, id), .Tagged_Holds_Other_Kind, span)
+	want := node_type(s, id)
+	if have.nullish != .None && want != ir.non_null(have) {
+		return value
+	}
+	return coerce(s, value, want, span)
 }
 
 // typeof_tags is the set of tags whose values `typeof` answers the word for. "bigint" and "symbol"
@@ -189,7 +255,7 @@ typeof_operand :: proc(
 	ref := s.typed.node_symbols[operand]
 	if ref.symbol != bind.NO_SYMBOL && ref.file != program.LIB {
 		stored, _ := symbol_type(s.low, ref.file, ref.symbol)
-		if stored != ir.TAGGED {
+		if stored != ir.TAGGED && stored.nullish == .None {
 			if is_ident && early_use(s.tree, s.bound, operand) {
 				check_ready(s, s.bound.node_symbols[operand], s.tree.nodes[operand].span)
 			}
@@ -202,14 +268,15 @@ typeof_operand :: proc(
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE, ""
 	}
-	if value_type(s, value) == ir.TAGGED {
-		return value, ""
+	if type := value_type(s, value); type == ir.TAGGED || type.nullish != .None {
+		// The word of a null depends on what it stands for: "object" for null.
+		return coerce(s, value, ir.TAGGED, s.tree.nodes[operand].span), ""
 	}
 	return ir.NO_VALUE, typeof_word(s, operand)
 }
 
-// typeof_word is the word `typeof` answers for the static type of its operand, or "" when only the
-// tag of a tagged value could tell.
+// typeof_word is the word `typeof` answers for the static type of its operand, whose value is
+// present where the type may hold null, or "" when only the tag of a tagged value could tell.
 @(private)
 typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 	type := s.typed.node_types[operand]
@@ -433,6 +500,50 @@ compare_tagged :: proc(
 	return test
 }
 
+// compare_references answers `===` where a side is a reference that may hold null, or a reference
+// meets null or undefined itself: a test for null, an answer known before anything runs, or the
+// addresses of two objects or two functions. Where 0 is null on one side and undefined on the
+// other, and for strings, both sides go to the runtime boxed. handled = false leaves the comparison
+// to the caller.
+@(private)
+compare_references :: proc(
+	s: ^Func_State,
+	values: [2]ir.Value_ID,
+	span: source.Span,
+) -> (
+	test: ir.Value_ID,
+	handled: bool,
+) {
+	if values[0] == ir.NO_VALUE || values[1] == ir.NO_VALUE {
+		return ir.NO_VALUE, false
+	}
+	for value, i in values {
+		other := value_type(s, values[1 - i])
+		tags, nullish := nullish_tags(s, value)
+		if !nullish || !ir.is_reference(other) {
+			continue
+		}
+		if other.nullish != .None && nullish_tag(other) in tags {
+			return ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = values[1 - i]}, span), true
+		}
+		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span), true
+	}
+	a, b := value_type(s, values[0]), value_type(s, values[1])
+	if a.nullish == .None && b.nullish == .None {
+		return ir.NO_VALUE, false
+	}
+	same_null := a.nullish == b.nullish || a.nullish == .None || b.nullish == .None
+	if (a.kind == .Ref || a.kind == .Closure) && ir.non_null(a) == ir.non_null(b) && same_null {
+		compare := ir.Compare {
+			op    = .Equal,
+			left  = values[0],
+			right = values[1],
+		}
+		return ir.emit(&s.fb, ir.BOOL, compare, span), true
+	}
+	return compare_tagged(s, .Equal, values, span), true
+}
+
 // nullish_tags answers the tag of a value that is null or undefined whatever runs: the constant, or
 // the answer of a call typed void.
 @(private)
@@ -492,8 +603,8 @@ nullish_or_reference :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 }
 
 // lower_as converts the way requirements 3.8 allows: a widening boxes or changes nothing, and a
-// narrowing of a tagged value checks what it holds, failing with Type_Assertion. An `any` or an
-// `unknown` never becomes a type that holds a function.
+// narrowing of a tagged value, or of a reference that may be null, checks what it holds, failing
+// with Type_Assertion. An `any` or an `unknown` never becomes a type that holds a function.
 @(private)
 lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
@@ -506,7 +617,7 @@ lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 	}
 	target := node_type(s, id)
 	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED || target == ir.VOID {
-		return coerce(s, value, target, span)
+		return coerce(s, value, target, span, .Type_Assertion)
 	}
 	if target != ir.TAGGED {
 		return unbox_checked(s, value, target, .Type_Assertion, span)
@@ -837,14 +948,21 @@ union_field_place :: proc(
 			continue
 		}
 		// Two objects or arrays in a reference slot are read as the first member's type and boxed,
-		// and the box is an object either way.
-		group.mixed = true
+		// and the box is an object either way. A reference and one that may be null, which widening
+		// put in one slot, are read and written as the latter.
 		slot := s.low.builder.layouts[group.layout].fields[group.field].kind
-		if slot == .Tagged {
+		switch {
+		case slot == .Tagged:
+			group.mixed = true
 			group.type = ir.TAGGED
-		} else if group.type.kind != .Ref || member.type.kind != .Ref {
+		case ir.fits(group.type, member.type):
+			group.type = member.type
+		case ir.fits(member.type, group.type):
+		case group.type.kind != .Ref || member.type.kind != .Ref:
 			later(s, span, "a field whose representation differs across the members of a union")
 			return nil, false
+		case:
+			group.mixed = true
 		}
 	}
 	out.members = groups[:]

@@ -70,10 +70,20 @@ Type_Kind :: enum u8 {
 	Ref, // a reference to the cell of a layout: object, array, environment
 }
 
-// Type is comparable with ==: layout is NO_LAYOUT for every kind but Ref.
+// Type is comparable with ==: layout is NO_LAYOUT for every kind but Ref, and nullish is None for
+// every kind but Str, Closure and Ref.
 Type :: struct {
-	kind:   Type_Kind,
-	layout: Layout_ID,
+	kind:    Type_Kind,
+	nullish: Nullish,
+	layout:  Layout_ID,
+}
+
+// Nullish is what the null reference stands for in a reference type that may hold one: the `null`
+// of `Tree | null`, the `undefined` of `string | undefined` or of an optional field.
+Nullish :: enum u8 {
+	None,
+	Null,
+	Undefined,
 }
 
 VOID :: Type{}
@@ -98,12 +108,43 @@ ref :: proc(layout: Layout_ID) -> Type {
 	return {kind = .Ref, layout = layout}
 }
 
+is_reference :: proc(type: Type) -> bool {
+	return type.kind == .Str || type.kind == .Ref || type.kind == .Closure
+}
+
+nullable :: proc(type: Type, nullish: Nullish) -> Type {
+	assert(is_reference(type), "only a reference type may hold null")
+	return {kind = type.kind, nullish = nullish, layout = type.layout}
+}
+
+non_null :: proc(type: Type) -> Type {
+	return {kind = type.kind, layout = type.layout}
+}
+
+// fits says whether a value of type have may stand where want is wanted: the same type, or the
+// present reference of a type that may hold null, which it is bit for bit.
+fits :: proc(have, want: Type) -> bool {
+	return have == want || want.nullish != .None && have == non_null(want)
+}
+
 // Slot is one field of an object layout or one captured variable of an environment, in the
 // canonical order lower chose. The layout procedures turn slots into abi.Field offsets.
 Slot :: struct {
 	name:     string, // UTF-8 TS name; empty in an environment
 	kind:     abi.Slot_Kind,
 	optional: bool, // abi.Field.optional
+}
+
+// traced says whether the collector follows what a slot of this kind holds, which is what decides
+// between a plain store and a store that ends in _Ref.
+traced :: proc(kind: abi.Slot_Kind) -> bool {
+	switch kind {
+	case .Number, .Boolean:
+		return false
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Tagged:
+		return true
+	}
+	return false
 }
 
 // Global is a module-level binding, zero filled before any module runs, so a Tagged global starts

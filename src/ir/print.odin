@@ -378,6 +378,10 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, "null_test ") or_return
 		write_value(w, v.value) or_return
 
+	case Non_Null:
+		io.write_string(w, "non_null ") or_return
+		write_value(w, v.value) or_return
+
 	case Same_Cell:
 		io.write_string(w, "same_cell ") or_return
 		write_value(w, v.a) or_return
@@ -521,13 +525,19 @@ write_value :: proc(w: io.Writer, id: Value_ID) -> io.Error {
 
 @(private)
 write_type :: proc(w: io.Writer, type: Type) -> io.Error {
-	if type.kind != .Ref {
-		io.write_string(w, TYPE_KIND_TEXT[type.kind]) or_return
-		return nil
+	io.write_string(w, TYPE_KIND_TEXT[type.kind]) or_return
+	if type.kind == .Ref {
+		io.write_byte(w, '(') or_return
+		io.write_int(w, int(type.layout)) or_return
+		io.write_byte(w, ')') or_return
 	}
-	io.write_string(w, "ref(") or_return
-	io.write_int(w, int(type.layout)) or_return
-	io.write_byte(w, ')') or_return
+	switch type.nullish {
+	case .None:
+	case .Null:
+		io.write_string(w, " | null") or_return
+	case .Undefined:
+		io.write_string(w, " | undefined") or_return
+	}
 	return nil
 }
 
@@ -734,10 +744,12 @@ TAG_TEXT := [abi.Tag]string {
 
 @(private, rodata)
 SLOT_KIND_TEXT := [abi.Slot_Kind]string {
-	.Number  = "number",
-	.Boolean = "boolean",
-	.Ref     = "ref",
-	.Tagged  = "tagged",
+	.Number           = "number",
+	.Boolean          = "boolean",
+	.Ref              = "ref",
+	.Tagged           = "tagged",
+	.Ref_Or_Null      = "ref or null",
+	.Ref_Or_Undefined = "ref or undefined",
 }
 
 @(private, rodata)

@@ -422,7 +422,7 @@ Where: requirements §3.2, §3.7; [Package boundaries: compiler](architecture-pl
 After: T6.3.
 Done: the corpora are green in all passes, under stress and ASan too; a lower test pins each decision the way T5.16 pins them (no runtime call where the plan says none); `chars` runs in at most 1.5 times Node's time.
 
-### [ ] T6.5 `T | null` of one reference type as a plain pointer
+### [x] T6.5 `T | null` of one reference type as a plain pointer
 
 What: `trees` takes 1.124 s against 0.342 for Node and 0.352 for Go. A union with an object member is a 16-byte tagged slot (requirements §3.4, and the item settled in T5.7 under [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may)), so the node `{left: Tree | null, right: Tree | null}` is a 40-byte cell in the 48-byte size class, against 16 bytes in Go, and the collector marks three times the memory. A union of one reference type (an object, array, string or function type) with exactly one of `null` and `undefined` becomes one pointer slot, 0 meaning that `null` or `undefined`, with its narrowing a compare with 0. Where such a value flows into `any`, a wider union or the console, lower gives it its tag. The layout stays a function of structure. The task amends requirements §3.4 and the T5.7 item, so the operator approves the plan before any code.
 Where: requirements §3.3, §3.4, §6; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `lower`, `codegen`, `abi`; the `gc` type table format; `bench/ts/trees.ts`.

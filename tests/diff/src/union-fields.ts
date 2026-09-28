@@ -166,3 +166,46 @@ points.forEach(bump);
 console.log(points);
 set(points[1]);
 console.log(points);
+
+// Both members widen into Wide, so one layout holds x as a box or null. Sure is declared first, so
+// it leads the union, and a read through the union still takes the null a Maybe holds.
+interface Wide {
+	kind: string;
+	x: Held | null;
+}
+
+interface Held {
+	n: number;
+}
+
+interface Sure {
+	kind: "sure";
+	x: Held;
+}
+
+interface Maybe {
+	kind: "maybe";
+	x: Held | null;
+}
+
+function fromMaybe(m: Maybe): Wide {
+	return m;
+}
+
+function fromSure(s: Sure): Wide {
+	return s;
+}
+
+function held(u: Sure | Maybe): Held | null {
+	return u.x;
+}
+
+function refill(u: Sure | Maybe, h: Held): void {
+	u.x = h;
+}
+
+const empty: Maybe = { kind: "maybe", x: null };
+const full: Sure = { kind: "sure", x: { n: 5 } };
+console.log(fromMaybe(empty).kind, fromSure(full).kind, held(empty), held(full));
+refill(empty, { n: 6 });
+console.log(held(empty), empty);
