@@ -89,6 +89,7 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 		fmt.println("| --- | ---: | ---: | ---: |")
 	}
 	now := make(map[string]f64, context.temp_allocator)
+	gc_rows := make([dynamic]string, context.temp_allocator)
 	sizes: [2]i64
 	for name in names {
 		executable := build_tsnc(setup, name) or_return
@@ -98,7 +99,11 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 		seconds: [3]f64
 		for command, i in commands[:1 if against else 3] {
 			samples := series(setup, command, stdout, runs) or_return
-			seconds[i] = time.duration_seconds(median(samples).wall)
+			sample := middle(samples)
+			seconds[i] = time.duration_seconds(sample.wall)
+			if setup.options.gc && i == 0 {
+				append(&gc_rows, gc_row(name, sample.gc) or_return)
+			}
 		}
 		now[name] = seconds[0]
 		if against {
@@ -117,6 +122,16 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 		fmt.printfln("| KB | %d | %d |", sizes[0] / 1024, sizes[1] / 1024)
 		fmt.println()
 	}
+	if setup.options.gc {
+		fmt.println(
+			"| program | collections | marking, ms | sweeping, ms | longest pause, ms | cells | allocated, MB | live, MB | heap, MB |",
+		)
+		fmt.println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+		for row in gc_rows {
+			fmt.println(row)
+		}
+		fmt.println()
+	}
 	if setup.options.save != "" {
 		baseline := Baseline {
 			date  = today(),
@@ -126,6 +141,23 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 		save_baseline(baseline_path(setup, setup.options.save), baseline) or_return
 	}
 	return true
+}
+
+// gc_row takes the numbers of the TSNC_GC_STATS line by position, in the order gc.write_stats
+// writes them: "gc: 109 collections, 293.5 ms marking, ..., 23.3 MB heap".
+gc_row :: proc(name, line: string) -> (row: string, ok: bool) {
+	parts := strings.split(strings.trim_prefix(line, GC_PREFIX), ", ", context.temp_allocator)
+	if !strings.has_prefix(line, GC_PREFIX) || len(parts) != 8 {
+		fmt.eprintfln("bench: %s: no line of %s, but %q", name, GC_VARIABLE, line)
+		return "", false
+	}
+	cells := make([dynamic]string, context.temp_allocator)
+	append(&cells, name)
+	for part in parts {
+		number, _, _ := strings.partition(part, " ")
+		append(&cells, number)
+	}
+	return fmt.tprintf("| %s |", strings.join(cells[:], " | ", context.temp_allocator)), true
 }
 
 size_of_file :: proc(path: string) -> (size: i64, ok: bool) {

@@ -16,6 +16,7 @@ The subpackages are plain Odin; proc "c" lives only in this package.
 package rt
 
 import "base:runtime"
+import "core:bufio"
 import "core:os"
 
 import "../abi"
@@ -36,9 +37,12 @@ foreign _ {
 @(private)
 heap: gc.Heap
 
-// An environment variable, so that stress mode needs no rebuild (requirements 10).
+// Environment variables, so that stress mode and the collector's counts need no rebuild
+// (requirements 10).
 @(private)
 STRESS_VARIABLE :: "TSNC_GC_STRESS"
+@(private)
+STATS_VARIABLE :: "TSNC_GC_STATS"
 
 main :: proc() {
 	context.assertion_failure_proc = fail.assertion_failure
@@ -58,6 +62,22 @@ main :: proc() {
 		fail.at({error = .Internal}, "malformed root table")
 	}
 	tsnc_main()
+	report_stats()
+}
+
+// report_stats reads its variable at exit rather than at startup, so the flag needs no state beside
+// the heap. A failure ends the process in package fail and reports nothing.
+@(private)
+report_stats :: proc() {
+	if os.get_env(STATS_VARIABLE, context.temp_allocator) != "1" {
+		return
+	}
+	buf: [256]byte
+	stderr: bufio.Writer
+	bufio.writer_init_with_buf(&stderr, os.to_writer(os.stderr), buf[:])
+	// A failed write leaves the exit code as it was: the counts are for a person, not the program.
+	_ = gc.write_stats(bufio.writer_to_writer(&stderr), &heap)
+	_ = bufio.writer_flush(&stderr)
 }
 
 // ASan's fake stack moves every local whose address is taken, stack_base in main among them, off

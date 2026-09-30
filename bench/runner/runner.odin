@@ -38,6 +38,7 @@ Options :: struct {
 	rebuild:  bool `usage:"build the compiler and the runtime even when src/ is older"`,
 	save:     string `usage:"write tsnc's times to dist/bench/NAME.json"`,
 	against:  string `usage:"compare tsnc's times with dist/bench/NAME.json; Node and Go only check the output"`,
+	gc:       bool `usage:"print the collector's counts of each tsnc program (TSNC_GC_STATS)"`,
 }
 
 Setup :: struct {
@@ -52,13 +53,18 @@ Setup :: struct {
 Output :: struct {
 	stdout, stderr: string,
 	code:           int,
+	gc:             string, // under -gc, the last line of a tsnc program's stderr, cut off it
 }
 
 // Sample is one run: from start to exit on the wall clock, and the process's CPU time on every core,
 // which Windows counts in ticks of 15.6 ms.
 Sample :: struct {
 	wall, cpu: time.Duration,
+	gc:        string,
 }
+
+GC_VARIABLE :: "TSNC_GC_STATS"
+GC_PREFIX :: "gc: "
 
 main :: proc() {
 	options := Options {
@@ -99,6 +105,12 @@ prepare :: proc(options: Options) -> (setup: Setup, ok: bool) {
 	for name, value in options.env {
 		if err := os.set_env(name, value); err != nil {
 			fmt.eprintfln("bench: set %s: %v", name, err)
+			return {}, false
+		}
+	}
+	if options.gc {
+		if err := os.set_env(GC_VARIABLE, "1"); err != nil {
+			fmt.eprintfln("bench: set %s: %v", GC_VARIABLE, err)
 			return {}, false
 		}
 	}
@@ -250,7 +262,26 @@ timed :: proc(setup: Setup, command: []string) -> (output: Output, sample: Sampl
 		fmt.eprintfln("bench: read the output of %s: %v, %v", command[0], stdout_err, stderr_err)
 		return {}, {}, false
 	}
-	return {stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, sample, true
+	output = {
+		stdout = string(stdout),
+		stderr = string(stderr),
+		code   = state.exit_code,
+	}
+	if setup.options.gc {
+		output.stderr, output.gc = cut_gc_line(output.stderr)
+		sample.gc = output.gc
+	}
+	return output, sample, true
+}
+
+// cut_gc_line splits the line of TSNC_GC_STATS off the end of stderr, where the runtime writes it at
+// exit.
+cut_gc_line :: proc(stderr: string) -> (rest, line: string) {
+	start := strings.last_index(stderr, GC_PREFIX)
+	if start < 0 || (start > 0 && stderr[start - 1] != '\n') {
+		return stderr, ""
+	}
+	return stderr[:start], strings.trim_right_space(stderr[start:])
 }
 
 // checked is one timed run that has to exit 0 and print `stdout` and nothing on stderr.
@@ -295,7 +326,14 @@ median :: proc(samples: []Sample) -> Sample {
 	}
 	slice.sort(walls)
 	slice.sort(cpus)
-	return {walls[len(walls) / 2], cpus[len(cpus) / 2]}
+	return {wall = walls[len(walls) / 2], cpu = cpus[len(cpus) / 2]}
+}
+
+// middle is the run of the median wall time, whole, so that its counts under -gc belong to it.
+middle :: proc(samples: []Sample) -> Sample {
+	sorted := slice.clone(samples, context.temp_allocator)
+	slice.sort_by(sorted, proc(a, b: Sample) -> bool {return a.wall < b.wall})
+	return sorted[len(sorted) / 2]
 }
 
 ms :: proc(d: time.Duration) -> f64 {

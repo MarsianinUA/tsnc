@@ -161,6 +161,29 @@ TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -
 
 Three programs of the corpus exist for the collector: `gc-objects.ts`, `gc-closures.ts` and `gc-large.ts` allocate enough to collect at least three times in the normal mode, where the first collection waits for 4 MiB. Each builds its bytes out of few allocations, long strings by doubling and whole arrays, so that under stress, where every allocation collects and checks the heap, a build still runs in about two seconds.
 
+## GC statistics
+
+A compiled program prints the collector's counts to stderr at exit when the environment variable `TSNC_GC_STATS` is `1`, with no rebuild, the way `GODEBUG=gctrace=1` does in Go and `--trace-gc` in Node. It prints one line for the whole run:
+
+```
+gc: 109 collections, 293.5 ms marking, 78.9 ms sweeping, 5.4 ms longest pause, 29447519 cells, 898.6 MB allocated, 10.6 MB live, 23.3 MB heap
+```
+
+| field | meaning |
+| --- | --- |
+| collections | how many times the collector ran |
+| marking | time spent marking: the stack, the roots and the cells they reach |
+| sweeping | time spent sweeping |
+| longest pause | the longest single collection, marking and sweeping |
+| cells | how many cells the program allocated |
+| allocated | bytes of the slots and page runs those cells took |
+| live | bytes the last collection kept, 0 when none ran |
+| heap | bytes of the heap's pages; the heap never gives a page back, so this is its peak |
+
+A megabyte is 2^20 bytes, and every tenth is cut, not rounded. The line comes when `main` returns and at `process.exit`. A program that fails prints its error and no line. Under stress mode the heap checks are not counted as marking or sweeping.
+
+The counts are always kept, since two adds per allocation and three clock reads per collection cost less than asking whether anyone wants them. The variable is read only at exit. `bench/bench.sh -gc` sets it and prints the counts of each program as a table.
+
 ## AddressSanitizer
 
 `tsnc build -sanitize:address` and `tsnc run -sanitize:address` link the runtime built with AddressSanitizer, `tsnc_rt-<target>-asan.obj` next to `tsnc.exe`, which the second runtime command under [Commands](#commands) builds. Only the runtime is instrumented; the code tsnc generates is not.
@@ -204,10 +227,11 @@ Before any run the runner checks that every program has both `bench/ts/<name>.ts
 | `-rebuild` | builds the compiler and the runtime even when they are newer than `src/` |
 | `-save:NAME` | writes tsnc's median times to `dist/bench/NAME.json` |
 | `-against:NAME` | compares tsnc's times with `dist/bench/NAME.json` |
+| `-gc` | runs tsnc's programs with `TSNC_GC_STATS=1` and prints their [GC statistics](#gc-statistics) from the median run |
 
 The header lists the flags that change the numbers, so a table from `-o:none` cannot pass for a default one.
 
-To measure a change, save a baseline on `dev` with `bench/bench.sh -save:base trees`, switch to the branch and run `bench/bench.sh -against:base trees`. That table gives the time before, the time now and the change in percent. Node and Go still run once, to check the output, but they are not timed: they are the same before and after. Two runs of the same build of `trees` differed by 2%, so a smaller change is noise.
+To measure a change, save a baseline on `dev` with `bench/bench.sh -save:base trees`, switch to the branch and run `bench/bench.sh -against:base trees`. That table gives the time before, the time now and the change in percent. Node and Go still run once, to check the output, but they are not timed: they are the same before and after. On a desktop, the same build of `objects` and `trees` differed by up to 9% from one run of the runner to the next, so a smaller change needs more runs (`-runs:N`) or a repeat before it counts.
 
 The runner prints Markdown:
 
