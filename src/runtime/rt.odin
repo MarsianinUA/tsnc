@@ -10,7 +10,7 @@ UTF-8 console, then runs main, which calls the generated tsnc_main. Returning fr
 process with code 0; a runtime error exits with code 1 through package fail.
 
 Generated code calls back into the runtime through the exports in exports.odin, one per
-abi.Runtime_Proc. Generated code passes no Odin context, so each export builds its own first.
+abi.Runtime_Proc. Generated code passes no Odin context, so an export that needs one builds it.
 The subpackages are plain Odin; proc "c" lives only in this package.
 */
 package rt
@@ -90,11 +90,27 @@ when .Address in ODIN_SANITIZER_FLAGS {
 	}
 }
 
-// export_context makes the thread's temp arena the scratch arena of the call: the export rewinds
+// export_context is for an export that takes no scratch memory: with no temp guard to give an
+// allocation back, one stops the program instead.
+@(private)
+export_context :: proc "contextless" () -> runtime.Context {
+	context = runtime.default_context()
+	context.allocator = NO_SCRATCH
+	context.temp_allocator = NO_SCRATCH
+	context.assertion_failure_proc = fail.assertion_failure
+	return context
+}
+
+@(private)
+NO_SCRATCH :: runtime.Allocator {
+	procedure = runtime.panic_allocator_proc,
+}
+
+// scratch_context makes the thread's temp arena the scratch arena of the call: the export rewinds
 // it on return, so core code may allocate freely inside the call. The GC heap never becomes
 // context.allocator (requirements 4.5).
 @(private)
-export_context :: proc "contextless" () -> runtime.Context {
+scratch_context :: proc "contextless" () -> runtime.Context {
 	context = runtime.default_context()
 	context.allocator = context.temp_allocator
 	context.assertion_failure_proc = fail.assertion_failure

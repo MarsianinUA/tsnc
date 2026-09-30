@@ -54,6 +54,8 @@ stress_mode_collects_before_every_allocation :: proc(t: ^testing.T) {
 	// The loop dropped about two megabytes, and a normal heap would not have collected once. The
 	// live set is a few kilobytes; the bound leaves room for a stale copy of the last large cell.
 	testing.expectf(t, heap.used < 512 * 1024, "%d bytes in use", heap.used)
+	// Even where a free list holds the slot.
+	testing.expect_value(t, heap.stats.collections, heap.stats.cells)
 }
 
 // More live cells than one page of the mark stack holds.
@@ -183,6 +185,23 @@ the_trigger_follows_what_a_collection_leaves :: proc(t: ^testing.T) {
 	defer gc.heap_destroy(&heap)
 
 	collect_around_a_large_cell(t, &heap)
+}
+
+// 64 pages of points hold less than MIN_TRIGGER, so the trigger falls inside the next page, where
+// the slot that crosses it already waits on the free list.
+@(test)
+a_small_cell_past_the_trigger_collects_first :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap, reserve = COLLECT_RESERVE)
+	defer gc.heap_destroy(&heap)
+
+	used := 0
+	for heap.stats.collections == 0 {
+		used = heap.used
+		gc.alloc(&heap, POINT, POINT_SIZE)
+	}
+	crossed := used + gc.CLASS_SIZE[POINT_CLASS] > gc.MIN_TRIGGER
+	testing.expectf(t, crossed && used <= gc.MIN_TRIGGER, "collected at %d bytes in use", used)
 }
 
 keep_live_set_through_garbage :: proc(t: ^testing.T, heap: ^gc.Heap, garbage: int) {
