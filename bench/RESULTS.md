@@ -2,10 +2,10 @@
 
 tsnc, Node and Go run the same programs: [ts](ts) and their twins in [go](go). The time is the median of a run in seconds, less is better; hello is the startup time.
 
-To run them, build `dist/tsnc.exe` and the runtime object ([Commands](../docs/development.md#commands)), put Node 24 and Go on `PATH`, and from the repository root:
+To run them, put Node 24 and Go on `PATH` and run [bench.sh](bench.sh), or [bench](bench.cmd) in the Windows shells. It builds the compiler itself; the flags are in [Benchmarks](../docs/development.md#benchmarks).
 
 ```sh
-odin run bench/runner -out:dist/bench.exe -vet -strict-style
+bench/bench.sh
 ```
 
 ## v1
