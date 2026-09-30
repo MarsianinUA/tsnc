@@ -240,7 +240,13 @@ heap_destroy :: proc(heap: ^Heap) {
 	heap^ = {}
 }
 
-type_table :: proc(heap: ^Heap, id: abi.Type_Table_ID) -> (table: abi.Type_Table, ok: bool) {
+type_table :: proc "contextless" (
+	heap: ^Heap,
+	id: abi.Type_Table_ID,
+) -> (
+	table: abi.Type_Table,
+	ok: bool,
+) {
 	index := int(id)
 	if index < len(abi.Builtin_Table) {
 		return abi.BUILTIN_TABLES[abi.Builtin_Table(index)], true
@@ -289,6 +295,9 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	layout, known := type_table(heap, table)
 	assert(known, "a cell of an unregistered type table")
 	assert(size >= layout.size, "a cell smaller than its type table")
+	if cell := alloc_fast(heap, table, size); cell != nil {
+		return cell
+	}
 
 	class, count, slot_size: int
 	if size <= MAX_SMALL {
@@ -314,6 +323,36 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 		}
 	}
 	// Only now: the collection above recounts used from the live cells.
+	return hand_out(heap, cell, table, size, slot_size)
+}
+
+// alloc_fast is alloc from a free list, or nil where alloc would collect or carve a page. It needs no
+// context, so an export tries it first, and asserts nothing: the caller checks as alloc does.
+alloc_fast :: proc "contextless" (
+	heap: ^Heap,
+	table: abi.Type_Table_ID,
+	size: int,
+) -> ^abi.Cell_Header {
+	if size > MAX_SMALL || heap.mode == .Stress {
+		return nil
+	}
+	class := class_of(size)
+	slot_size := CLASS_SIZE[class]
+	slot := heap.free[class]
+	if slot == nil || heap.used + slot_size > heap.trigger {
+		return nil
+	}
+	heap.free[class] = slot.next
+	return hand_out(heap, ([^]byte)(slot), table, size, slot_size)
+}
+
+@(private)
+hand_out :: proc "contextless" (
+	heap: ^Heap,
+	cell: [^]byte,
+	table: abi.Type_Table_ID,
+	size, slot_size: int,
+) -> ^abi.Cell_Header {
 	heap.used += slot_size
 	heap.stats.cells += 1
 	heap.stats.allocated += slot_size
@@ -444,7 +483,7 @@ root_is_valid :: proc(root: abi.Root) -> bool {
 // class_of reads the class off the layout of CLASS_SIZE: steps of 16 up to 128, then four classes
 // for each power of two, told apart by the two bits below the top one of size - 1.
 @(private)
-class_of :: proc(size: int) -> int {
+class_of :: proc "contextless" (size: int) -> int {
 	if size <= 128 {
 		return (size - 1) >> 4
 	}
