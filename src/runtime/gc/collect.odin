@@ -3,6 +3,7 @@ package gc
 import "base:sanitizer"
 import "core:mem/virtual"
 import "core:strconv"
+import "core:time"
 
 import "../../abi"
 import "../fail"
@@ -15,14 +16,24 @@ spilled onto it are scanned conservatively: cells and module globals are read by
 // collect never runs inlined: between spill_registers and the scan no value of the mutator may sit
 // in a register, and inside collect none does.
 collect :: #force_no_inline proc(heap: ^Heap) {
+	start := time.tick_now()
 	spill_registers()
 	mark_stack(heap)
 	for root in heap.roots {
 		mark_slot(heap, root.slot, root.kind)
 	}
 	drain(heap)
+	marked := time.tick_now()
 	sweep(heap)
+	swept := time.tick_now()
 	heap.trigger = max(MIN_TRIGGER, heap.used * GROWTH)
+
+	stats := &heap.stats
+	stats.collections += 1
+	stats.marking += time.tick_diff(start, marked)
+	stats.sweeping += time.tick_diff(marked, swept)
+	stats.longest = max(stats.longest, time.tick_diff(start, swept))
+	stats.live = heap.used
 
 	if heap.mode == .Stress {
 		if problem, at := verify(heap); problem != .None {

@@ -366,6 +366,7 @@ process_exit :: proc "c" (code: f64) -> ! {
 		// stands, so the line names no place.
 		fail.at({error = .Exit_Code_Not_Integer})
 	}
+	report_stats()
 	os.exit(exit)
 }
 

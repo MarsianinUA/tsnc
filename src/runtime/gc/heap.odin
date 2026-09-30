@@ -29,6 +29,7 @@ package gc
 import "base:intrinsics"
 import "base:sanitizer"
 import "core:mem/virtual"
+import "core:time"
 
 import "../../abi"
 import "../fail"
@@ -127,6 +128,19 @@ Heap :: struct {
 	marks:      Mark_Stack,
 	used:       int, // bytes of the slots and runs that hold cells
 	trigger:    int,
+	stats:      Stats,
+}
+
+// Stats is what TSNC_GC_STATS reports at exit. Counting costs two adds per allocation and three
+// clock reads per collection, less than a check whether anyone asked, so it is always on.
+Stats :: struct {
+	collections: int,
+	marking:     time.Duration,
+	sweeping:    time.Duration,
+	longest:     time.Duration, // one collection, marking and sweeping
+	cells:       int,
+	allocated:   int, // bytes of the slots and runs handed out, as used counts them
+	live:        int, // used after the last collection
 }
 
 Heap_Mode :: enum u8 {
@@ -301,6 +315,8 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	}
 	// Only now: the collection above recounts used from the live cells.
 	heap.used += slot_size
+	heap.stats.cells += 1
+	heap.stats.allocated += slot_size
 
 	// A cell of a header alone still clears the free list link after it, so no stale pointer stays
 	// in its slot. The whole slot is poisoned first: a run of fresh pages never was.
