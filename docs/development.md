@@ -183,16 +183,35 @@ The define makes the first command fail if the build lost the sanitizer, where e
 
 `bench/ts/` holds the programs of requirements 10: `mandelbrot` and `collatz` (numeric loops), `sieve` (a `boolean[]`), `chars` and `strings` (a scan by `s[i]` and the string methods), `objects` (an array of records sorted and filtered), `closures`, `trees` (binary-trees, for the collector) and `hello`. Each has a Go twin in `bench/go/<name>/main.go`. The twins run the same algorithm on the same data, in the types a Go programmer would pick: `int` where a value is always an integer, byte indexing for ASCII text, a slice of structs for records.
 
-`bench/runner` needs the compiler and the runtime object, and Node and Go on `PATH`:
+`bench/bench.sh`, or `bench\bench` in the Windows shells, runs `bench/runner` from the repository root, wherever it is called from. The runner needs Node and Go on `PATH`:
 
 ```sh
-odin run bench/runner -out:dist/bench.exe -vet -strict-style
-odin run bench/runner -out:dist/bench.exe -vet -strict-style -- chars strings
+bench/bench.sh
+bench/bench.sh chars strings
+bench/bench.sh -against:base trees
 ```
 
-The names pick benchmarks: a program, `hello` or `compile`. With no names, everything runs, which takes about four minutes. The runner prints Markdown:
+The names pick benchmarks: a program, `hello` or `compile`. With no names, everything runs, which takes about four minutes.
 
-- The tables of `bench/RESULTS.md`. Each program is built with `-o:speed` by tsnc and with `go build`, runs once under each implementation, and all three must exit 0 and print the same output. The table gives the median wall time of five more runs, or of 20 for hello, then the size of hello's executable.
+Before any run the runner checks that every program has both `bench/ts/<name>.ts` and `bench/go/<name>/main.go`, and that neither directory holds a program missing from `PROGRAMS` in `bench/runner/programs.odin`. So adding a benchmark means two files and one line. Then it builds `dist/tsnc.exe` and the runtime object with the commands above, but only when a file in `src/` is newer than they are.
+
+| flag | effect |
+| --- | --- |
+| `-runs:N` | timed runs of a program, 5 by default; hello always runs 20 |
+| `-o:none`, `-o:aggressive` | the level of `tsnc build`, `speed` by default |
+| `-sanitize:address` | links the runtime built with AddressSanitizer, and builds that runtime too |
+| `-env:NAME=VALUE` | sets a variable for everything the runner starts, such as `-env:TSNC_GC_STRESS=1`; repeatable |
+| `-rebuild` | builds the compiler and the runtime even when they are newer than `src/` |
+| `-save:NAME` | writes tsnc's median times to `dist/bench/NAME.json` |
+| `-against:NAME` | compares tsnc's times with `dist/bench/NAME.json` |
+
+The header lists the flags that change the numbers, so a table from `-o:none` cannot pass for a default one.
+
+To measure a change, save a baseline on `dev` with `bench/bench.sh -save:base trees`, switch to the branch and run `bench/bench.sh -against:base trees`. That table gives the time before, the time now and the change in percent. Node and Go still run once, to check the output, but they are not timed: they are the same before and after. Two runs of the same build of `trees` differed by 2%, so a smaller change is noise.
+
+The runner prints Markdown:
+
+- The tables of `bench/RESULTS.md`, when no flag is given. Each program is built with `-o:speed` by tsnc and with `go build`, runs once under each implementation, and all three must exit 0 and print the same output. The table gives the median wall time of five more runs, or of 20 for hello, then the size of hello's executable.
 - compile: three generated projects of about a thousand modules under `dist/bench-compile-*` go through `tsnc check` at `-j:1` and at the default `-j`.
   - In `apart` no file uses another's declarations.
   - In `shared` every module calls functions of ten shared lib modules.

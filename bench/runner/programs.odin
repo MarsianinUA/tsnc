@@ -2,6 +2,8 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
+import "core:strings"
 import "core:time"
 
 @(rodata)
@@ -18,8 +20,51 @@ PROGRAMS := [?]string {
 RUNS :: 5
 HELLO_RUNS :: 20
 
+// check_set holds bench/ts and bench/go to PROGRAMS and hello both ways, so that no program runs
+// without its twin and no file lies there unmeasured.
+check_set :: proc() -> (ok: bool) {
+	names := slice.concatenate([][]string{PROGRAMS[:], {"hello"}}, context.temp_allocator)
+	ok = true
+	for name in names {
+		for path in ([]string{source_of(name), fmt.tprintf("bench/go/%s/main.go", name)}) {
+			if !os.is_file(path) {
+				fmt.eprintfln("bench: %s is missing", path)
+				ok = false
+			}
+		}
+	}
+
+	sources := read_directory("bench/ts") or_return
+	for info in sources {
+		name := strings.trim_suffix(info.name, ".ts")
+		if name != info.name && !slice.contains(names, name) {
+			fmt.eprintfln("bench: bench/ts/%s is not in PROGRAMS", info.name)
+			ok = false
+		}
+	}
+	twins := read_directory("bench/go") or_return
+	for info in twins {
+		if info.type == .Directory && !slice.contains(names, info.name) {
+			fmt.eprintfln("bench: bench/go/%s is not in PROGRAMS", info.name)
+			ok = false
+		}
+	}
+	return ok
+}
+
+read_directory :: proc(path: string) -> (infos: []os.File_Info, ok: bool) {
+	err: os.Error
+	infos, err = os.read_all_directory_by_path(path, context.temp_allocator)
+	if err != nil {
+		fmt.eprintfln("bench: read %s: %v", path, err)
+		return nil, false
+	}
+	return infos, true
+}
+
 // comparison prints the tables of bench/RESULTS.md: the median seconds of a run of each program,
-// where hello is the startup time, then the size of hello's executable.
+// where hello is the startup time, then the size of hello's executable. Under -against it times
+// tsnc alone and prints its change instead, since Node and Go are the same before and after.
 comparison :: proc(setup: Setup) -> (ok: bool) {
 	names := make([dynamic]string, context.temp_allocator)
 	for name in PROGRAMS {
@@ -35,20 +80,32 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 	}
 	build_twins(setup) or_return
 
-	fmt.println("| program | tsnc, s | Node, s | Go, s |")
-	fmt.println("| --- | ---: | ---: | ---: |")
+	against := setup.options.against != ""
+	if against {
+		fmt.println("| program | before, s | now, s | change |")
+		fmt.println("| --- | ---: | ---: | ---: |")
+	} else {
+		fmt.println("| program | tsnc, s | Node, s | Go, s |")
+		fmt.println("| --- | ---: | ---: | ---: |")
+	}
+	now := make(map[string]f64, context.temp_allocator)
 	sizes: [2]i64
 	for name in names {
 		executable := build_tsnc(setup, name) or_return
 		commands := [3][]string{{executable}, {"node", source_of(name)}, {twin(setup, name)}}
 		stdout := agree(setup, commands) or_return
-		runs := HELLO_RUNS if name == "hello" else RUNS
+		runs := HELLO_RUNS if name == "hello" else setup.options.runs
 		seconds: [3]f64
-		for command, i in commands {
+		for command, i in commands[:1 if against else 3] {
 			samples := series(setup, command, stdout, runs) or_return
 			seconds[i] = time.duration_seconds(median(samples).wall)
 		}
-		fmt.printfln("| %s | %.3f | %.3f | %.3f |", name, seconds[0], seconds[1], seconds[2])
+		now[name] = seconds[0]
+		if against {
+			change_row(setup.before, name, seconds[0])
+		} else {
+			fmt.printfln("| %s | %.3f | %.3f | %.3f |", name, seconds[0], seconds[1], seconds[2])
+		}
 		if name == "hello" {
 			sizes = {size_of_file(executable) or_return, size_of_file(twin(setup, name)) or_return}
 		}
@@ -59,6 +116,14 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 		fmt.println("| --- | ---: | ---: |")
 		fmt.printfln("| KB | %d | %d |", sizes[0] / 1024, sizes[1] / 1024)
 		fmt.println()
+	}
+	if setup.options.save != "" {
+		baseline := Baseline {
+			date  = today(),
+			flags = flags_text(setup.options),
+			tsnc  = now,
+		}
+		save_baseline(baseline_path(setup, setup.options.save), baseline) or_return
 	}
 	return true
 }
@@ -105,8 +170,19 @@ source_of :: proc(name: string) -> string {
 
 build_tsnc :: proc(setup: Setup, name: string) -> (executable: string, ok: bool) {
 	executable = path_in(setup.dist, fmt.tprintf("bench-%s%s", name, setup.suffix))
-	out := fmt.tprintf("-out:%s", executable)
-	build({setup.compiler, "build", source_of(name), "-o:speed", out}) or_return
+	command := make([dynamic]string, context.temp_allocator)
+	append(
+		&command,
+		setup.compiler,
+		"build",
+		source_of(name),
+		fmt.tprintf("-o:%v", setup.options.o),
+		fmt.tprintf("-out:%s", executable),
+	)
+	if setup.options.sanitize != .none {
+		append(&command, fmt.tprintf("-sanitize:%v", setup.options.sanitize))
+	}
+	build(command[:]) or_return
 	return executable, true
 }
 

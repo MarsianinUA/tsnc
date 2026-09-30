@@ -1,15 +1,17 @@
 /*
-The benchmarks of requirements 10. docs/development.md#benchmarks says what each table measures and
-how a version's results reach bench/RESULTS.md.
+The benchmarks of requirements 10. docs/development.md#benchmarks says what each table measures,
+what the flags do and how a version's results reach bench/RESULTS.md.
 
-	odin run bench/runner -out:dist/bench.exe -vet -strict-style -- [names]
+	bench/bench.sh [names] [flags]
 
-The names pick programs of bench/ts, hello and compile; with no names, everything runs. A
+bench/bench.sh and bench\bench.cmd run this package from the repository root; -help lists the
+flags. The names pick programs of bench/ts, hello and compile; with no names, everything runs. A
 program runs under tsnc, Node and its Go twin in bench/go, and the three must print the same
 output before any run is timed, so a program that fails early cannot pass for a fast one.
 */
 package main
 
+import "core:flags"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -17,16 +19,34 @@ import "core:strings"
 import si "core:sys/info"
 import "core:time"
 
+import "../../src/link"
 import "../../src/target"
 
-COMPILER :: "dist/tsnc.exe"
+// Optimization spells the levels as codegen.Optimization does; importing codegen would link LLVM.
+Optimization :: enum {
+	none,
+	speed,
+	aggressive,
+}
+
+Options :: struct {
+	overflow: [dynamic]string `usage:"programs of bench/ts, hello or compile; everything when none"`,
+	runs:     int `usage:"timed runs of a program (default: 5; hello runs 20)"`,
+	o:        Optimization `usage:"level of tsnc build (default: speed)"`,
+	sanitize: link.Sanitizer `usage:"link the runtime built with -sanitize:address"`,
+	env:      map[string]string `usage:"-env:NAME=VALUE for everything the runner starts"`,
+	rebuild:  bool `usage:"build the compiler and the runtime even when src/ is older"`,
+	save:     string `usage:"write tsnc's times to dist/bench/NAME.json"`,
+	against:  string `usage:"compare tsnc's times with dist/bench/NAME.json; Node and Go only check the output"`,
+}
 
 Setup :: struct {
 	// Absolute: on Windows os.process_start answers Not_Exist for the relative dist/tsnc.exe.
 	compiler: string,
 	dist:     string,
 	suffix:   string, // of an executable
-	only:     []string,
+	options:  Options,
+	before:   Baseline, // read from -against
 }
 
 Output :: struct {
@@ -41,19 +61,24 @@ Sample :: struct {
 }
 
 main :: proc() {
-	setup, ok := prepare()
-	if !ok {
+	options := Options {
+		runs = RUNS,
+		o    = .speed,
+	}
+	flags.parse_or_exit(&options, os.args, .Odin)
+	setup, ok := prepare(options)
+	if !ok || !check_set() || !build_tools(setup) {
 		os.exit(1)
 	}
-	header()
+	header(setup)
 	if !comparison(setup) || !compile(setup) {
 		os.exit(1)
 	}
 }
 
-prepare :: proc() -> (setup: Setup, ok: bool) {
-	setup.only = os.args[1:]
-	for name in setup.only {
+prepare :: proc(options: Options) -> (setup: Setup, ok: bool) {
+	setup.options = options
+	for name in options.overflow {
 		if !slice.contains(PROGRAMS[:], name) && name != "hello" && name != "compile" {
 			fmt.eprintfln(
 				"bench: no benchmark %q; the names are %v, hello and compile",
@@ -63,32 +88,48 @@ prepare :: proc() -> (setup: Setup, ok: bool) {
 			return {}, false
 		}
 	}
-
-	// On Linux and macOS get_absolute_path resolves only a path that exists, so an output path is
-	// joined onto dist rather than resolved.
-	compiler, compiler_err := os.get_absolute_path(COMPILER, context.allocator)
-	dist, dist_err := os.get_absolute_path("dist", context.allocator)
-	if compiler_err != nil || dist_err != nil || !os.is_file(compiler) {
-		fmt.eprintfln(
-			"bench: %s is missing; run from the repository root after building it",
-			COMPILER,
-		)
+	if options.runs < 1 {
+		fmt.eprintln("bench: -runs must be at least 1")
 		return {}, false
 	}
-	setup.compiler = compiler
+	if options.sanitize == .address && target.SPECS[target.HOST].asan_runtime_object == "" {
+		fmt.eprintfln("bench: -sanitize:address: %v has no runtime built with ASan", target.HOST)
+		return {}, false
+	}
+	for name, value in options.env {
+		if err := os.set_env(name, value); err != nil {
+			fmt.eprintfln("bench: set %s: %v", name, err)
+			return {}, false
+		}
+	}
+
+	if err := os.make_directory_all("dist"); err != nil {
+		fmt.eprintfln("bench: create dist: %v", err)
+		return {}, false
+	}
+	// On Linux and macOS get_absolute_path resolves only a path that exists, so an output path is
+	// joined onto dist rather than resolved.
+	dist, dist_err := os.get_absolute_path("dist", context.allocator)
+	if dist_err != nil {
+		fmt.eprintfln("bench: absolute path of dist: %v", dist_err)
+		return {}, false
+	}
 	setup.dist = dist
+	setup.compiler = path_in(dist, "tsnc.exe")
 	setup.suffix = target.SPECS[target.HOST].executable_suffix
+	if options.against != "" {
+		setup.before = load_baseline(baseline_path(setup, options.against)) or_return
+	}
 	return setup, true
 }
 
 wanted :: proc(setup: Setup, name: string) -> bool {
-	return len(setup.only) == 0 || slice.contains(setup.only, name)
+	return len(setup.options.overflow) == 0 || slice.contains(setup.options.overflow[:], name)
 }
 
 // header is the first lines of a RESULTS.md section: the date, the machine and the other two tools.
-header :: proc() {
-	year, month, day := time.date(time.now())
-	fmt.printfln("bench, %04d-%02d-%02d UTC", year, int(month), day)
+header :: proc(setup: Setup) {
+	fmt.printfln("bench, %s UTC", today())
 	if version, ok := si.os_version(context.temp_allocator); ok {
 		fmt.printfln("  OS    %s", version.full)
 	}
@@ -99,7 +140,42 @@ header :: proc() {
 		version := strings.trim_space(output.stdout) if ok else "missing"
 		fmt.printfln("  %-5s %s", tool[0], version)
 	}
+	if text := flags_text(setup.options); text != "" {
+		fmt.printfln("  flags %s", text)
+	}
+	if setup.options.against != "" {
+		fmt.printf("  before %s, %s", setup.options.against, setup.before.date)
+		if setup.before.flags != "" {
+			fmt.printf(", %s", setup.before.flags)
+		}
+		fmt.println()
+	}
 	fmt.println()
+}
+
+today :: proc() -> string {
+	year, month, day := time.date(time.now())
+	return fmt.tprintf("%04d-%02d-%02d", year, int(month), day)
+}
+
+// flags_text names the flags that change the numbers; the default run prints none.
+flags_text :: proc(options: Options) -> string {
+	words := make([dynamic]string, context.temp_allocator)
+	if options.o != .speed {
+		append(&words, fmt.tprintf("-o:%v", options.o))
+	}
+	if options.runs != RUNS {
+		append(&words, fmt.tprintf("-runs:%d", options.runs))
+	}
+	if options.sanitize != .none {
+		append(&words, fmt.tprintf("-sanitize:%v", options.sanitize))
+	}
+	names, _ := slice.map_keys(options.env, context.temp_allocator)
+	slice.sort(names)
+	for name in names {
+		append(&words, fmt.tprintf("-env:%s=%s", name, options.env[name]))
+	}
+	return strings.join(words[:], " ", context.temp_allocator)
 }
 
 path_in :: proc(directory, name: string) -> string {
