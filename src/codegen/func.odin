@@ -1,7 +1,6 @@
 package codegen
 
 import "core:fmt"
-import "core:slice"
 
 import "../abi"
 import "../ir"
@@ -23,6 +22,15 @@ Body :: struct {
 	// the function; nil in a function that makes none. The runtime is done with them when the call
 	// returns, so one slot serves every call.
 	rest_slot:   llvm.LLVMValueRef,
+	// cells holds, by ir.Value_ID, the slot of a stack cell. Every evaluation starts it afresh: opt
+	// proved nothing still points into it by then.
+	cells:       []Stack_Cell,
+}
+
+@(private)
+Stack_Cell :: struct {
+	slot: llvm.LLVMValueRef,
+	size: int,
 }
 
 @(private)
@@ -36,9 +44,11 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		values   = make([]llvm.LLVMValueRef, len(func.values), context.temp_allocator),
 	}
 
+	// Reverse post-order puts a definition before the uses it dominates. An unreachable block stays
+	// out: nothing promises that its operands dominate their uses, and LLVM would refuse it.
+	order := ir.make_flow(func, context.temp_allocator).order
 	// Every block exists before any instruction does, so a jump forward and a back edge both have
 	// something to name.
-	order := block_order(func)
 	for block in order {
 		name: cstring = "entry" if block == ir.ENTRY else fmt.ctprintf("b%d", block)
 		body.blocks[block] = llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, name)
@@ -53,6 +63,19 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
 		values := llvm.LLVMArrayType2(m.types.tagged, u64(capacity))
 		body.rest_slot = llvm.LLVMBuildAlloca(m.builder, values, "")
+	}
+	body.cells = make([]Stack_Cell, len(func.values), context.temp_allocator)
+	for &instruction, id in func.values {
+		place := ir.cell_place(&instruction.variant)
+		if place == nil || place^ != .Stack {
+			continue
+		}
+		size, _ := ir.cell_size(m.program^, func, ir.Value_ID(id))
+		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
+		bytes := llvm.LLVMArrayType2(m.types.int8, u64(size))
+		slot := llvm.LLVMBuildAlloca(m.builder, bytes, "")
+		llvm.LLVMSetAlignment(slot, STACK_CELL_ALIGNMENT)
+		body.cells[id] = {slot, size}
 	}
 
 	phis := make([dynamic]ir.Value_ID, 0, len(func.blocks), context.temp_allocator)
@@ -80,6 +103,10 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	}
 	patch_phis(m, &body, phis[:])
 }
+
+// STACK_CELL_ALIGNMENT is what a cell gets on the heap too: its size class steps by 16 bytes.
+@(private)
+STACK_CELL_ALIGNMENT :: 16
 
 @(private)
 calls_for_a_tagged_result :: proc(func: ir.Func) -> bool {
@@ -137,54 +164,4 @@ patch_phis :: proc(m: ^Module, body: ^Body, phis: []ir.Value_ID) {
 			u32(len(values)),
 		)
 	}
-}
-
-// block_order answers the blocks a call can reach, in reverse post-order, so every definition is
-// translated before the uses it dominates. lower leaves unreachable blocks behind - what follows a
-// return or a diverging call - and they stay out: nothing promises that their operands dominate
-// their uses, and LLVM would refuse them.
-@(private)
-block_order :: proc(func: ir.Func) -> []ir.Block_ID {
-	Step :: struct {
-		block: ir.Block_ID,
-		next:  int, // the successor to walk when this step comes up again
-	}
-	seen := make([]bool, len(func.blocks), context.temp_allocator)
-	order := make([dynamic]ir.Block_ID, 0, len(func.blocks), context.temp_allocator)
-	stack := make([dynamic]Step, 0, len(func.blocks), context.temp_allocator)
-
-	seen[ir.ENTRY] = true
-	append(&stack, Step{block = ir.ENTRY})
-	for len(stack) > 0 {
-		// By index rather than by pointer: the append below may move the backing array.
-		top := len(stack) - 1
-		targets, count := successors(func, stack[top].block)
-		if stack[top].next < count {
-			target := targets[stack[top].next]
-			stack[top].next += 1
-			if !seen[target] {
-				seen[target] = true
-				append(&stack, Step{block = target})
-			}
-			continue
-		}
-		append(&order, stack[top].block)
-		pop(&stack)
-	}
-	slice.reverse(order[:])
-	return order[:]
-}
-
-// successors reads the last instruction unchecked: the verifier promises that every block ends in
-// exactly one terminator.
-@(private)
-successors :: proc(func: ir.Func, block: ir.Block_ID) -> (targets: [2]ir.Block_ID, count: int) {
-	instructions := func.blocks[block].instructions
-	#partial switch v in func.values[instructions[len(instructions) - 1]].variant {
-	case ir.Jump:
-		return {v.target, 0}, 1
-	case ir.Branch:
-		return {v.then_block, v.else_block}, 2
-	}
-	return {}, 0
 }

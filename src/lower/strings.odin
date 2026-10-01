@@ -52,6 +52,8 @@ to_string :: proc(
 	case .Bool, .Closure:
 	case .Void:
 		return ir.NO_VALUE
+	case .I32, .I64:
+		unreachable()
 	}
 	call := ir.Call_Runtime {
 		export = export,

@@ -333,6 +333,8 @@ truthy :: proc(
 	case .Tagged:
 		return truthy_tagged(s, value, read_as, span)
 	case .Void:
+	case .I32, .I64:
+		unreachable()
 	}
 	return ir.NO_VALUE
 }
@@ -692,6 +694,8 @@ lower_compare :: proc(
 	case .Str:
 		return compare_strings(s, op, left, right, span)
 	case .Tagged, .Void:
+	case .I32, .I64:
+		unreachable()
 	}
 	return ir.NO_VALUE
 }

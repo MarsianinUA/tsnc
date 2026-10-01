@@ -33,7 +33,7 @@ STRING :: abi.Type_Table_ID(abi.Builtin_Table.String)
 
 // MAX_LENGTH is the longest string Node 24 builds. One unit more is "RangeError: Invalid string
 // length" there and a runtime failure with Node's text here.
-MAX_LENGTH :: 536_870_888
+MAX_LENGTH :: abi.MAX_STRING_LENGTH
 
 // ensure_length fails the program when a string of `length` units would be too long. Every string
 // cell comes from new_cell, which checks, and a writer that grows a text before it allocates the

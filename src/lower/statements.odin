@@ -165,6 +165,8 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 	switch s.declared.kind {
 	case .Void:
 		leave(s, ir.NO_VALUE, span)
+	case .I32, .I64:
+		unreachable()
 	case .Tagged:
 		leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
 	case .F64, .Bool, .Str, .Closure, .Ref:

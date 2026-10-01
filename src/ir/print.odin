@@ -302,6 +302,10 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 			io.write_byte(w, ']') or_return
 		}
 
+	case Convert:
+		io.write_string(w, "convert ") or_return
+		write_value(w, v.value) or_return
+
 	case Alloc:
 		io.write_string(w, "alloc ") or_return
 		io.write_int(w, int(v.layout)) or_return
@@ -309,12 +313,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 			io.write_string(w, " table ") or_return
 			io.write_int(w, int(v.table)) or_return
 		}
+		write_cell_place(w, v.place) or_return
 
 	case New_Array:
 		io.write_string(w, "new_array ") or_return
 		io.write_int(w, int(v.layout)) or_return
 		io.write_string(w, ", ") or_return
 		write_value(w, v.length) or_return
+		write_cell_place(w, v.place) or_return
 
 	case Field_Load:
 		io.write_string(w, "field_load ") or_return
@@ -337,12 +343,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		write_value(w, v.value) or_return
 
 	case Bounds_Check:
-		io.write_string(w, "bounds_check ") or_return
+		io.write_string(w, "proved_index " if v.proved else "bounds_check ") or_return
 		write_element(w, v.array, v.index) or_return
-		io.write_string(w, " not_integer ") or_return
-		io.write_int(w, int(v.not_integer)) or_return
-		io.write_string(w, " out_of_range ") or_return
-		io.write_int(w, int(v.out_of_range)) or_return
+		if !v.proved {
+			io.write_string(w, " not_integer ") or_return
+			io.write_int(w, int(v.not_integer)) or_return
+			io.write_string(w, " out_of_range ") or_return
+			io.write_int(w, int(v.out_of_range)) or_return
+		}
 
 	case Element_Load:
 		io.write_string(w, "element_load ") or_return
@@ -434,6 +442,7 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 			write_value(w, v.env) or_return
 		}
 		io.write_byte(w, ')') or_return
+		write_cell_place(w, v.place) or_return
 
 	case Call:
 		io.write_string(w, "call ") or_return
@@ -478,6 +487,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 	case Fail:
 		io.write_string(w, "fail ") or_return
 		io.write_int(w, int(v.site)) or_return
+	}
+	return nil
+}
+
+@(private)
+write_cell_place :: proc(w: io.Writer, place: Cell_Place) -> io.Error {
+	if place == .Stack {
+		io.write_string(w, " stack") or_return
 	}
 	return nil
 }
@@ -667,6 +684,8 @@ TYPE_KIND_TEXT := [Type_Kind]string {
 	.Str     = "str",
 	.Closure = "closure",
 	.Ref     = "ref",
+	.I32     = "i32",
+	.I64     = "i64",
 }
 
 @(private, rodata)

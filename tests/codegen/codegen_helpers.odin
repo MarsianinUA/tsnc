@@ -6,34 +6,24 @@ import "core:strings"
 import "core:testing"
 
 import "../../src/abi"
-import "../../src/ast"
-import "../../src/bind"
-import "../../src/check"
 import "../../src/codegen"
-import "../../src/diag"
 import "../../src/ir"
-import "../../src/lower"
-import "../../src/parse"
-import "../../src/program"
 import "../../src/source"
 import "../../src/target"
+import "../harness"
 
 /*
 Two ways to get a program into codegen.
 
-compile_text runs one TypeScript source through the whole compiler the way driver will: the real lib
-as module zero, the source as module one, then parse, bind, program, check and lower, with ir.verify
-on the result. A test that gets past it has a program every layer accepted, which is what the
-instructions lower emits today are tested through.
+compile_text lowers one TypeScript source through tests/harness, the way driver will. A test that
+gets past it has a program every layer accepted, which is what the instructions lower emits today
+are tested through.
 
 The builder helpers make a small IR by hand, the way tests/ir does, for what no TypeScript program
 produces yet and for the operators an optimizing build would fold away.
 
 Everything lives in the temp allocator, which the test runner frees between tests.
 */
-
-// LIB_TEXT is the real lib.d.ts, embedded the way driver embeds it.
-LIB_TEXT :: #load("../../src/lib/lib.d.ts", string)
 
 MAIN :: source.File_ID(1)
 
@@ -45,63 +35,7 @@ init_llvm :: proc "contextless" () {
 }
 
 compile_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> ir.Program_IR {
-	texts := [?]string{LIB_TEXT, text}
-	count := len(texts)
-	files := make([]source.File, count, context.temp_allocator)
-	trees := make([]ast.File_AST, count, context.temp_allocator)
-	bound := make([]bind.Bound_File, count, context.temp_allocator)
-	// One file imports nothing: an edge would need another source.
-	imports := make([][]program.Import_Edge, count, context.temp_allocator)
-
-	for source_text, i in texts {
-		path := "lib.d.ts" if i == 0 else "main.ts"
-		files[i] = source.make_file(path, source_text, context.temp_allocator)
-		tree, parse_diagnostics := parse.parse_file(
-			source_text,
-			source.File_ID(i),
-			context.temp_allocator,
-		)
-		trees[i] = tree
-		bind_diagnostics: []diag.Diagnostic
-		bound[i], bind_diagnostics = bind.bind_file(&trees[i], context.temp_allocator)
-		testing.expectf(
-			t,
-			len(parse_diagnostics) == 0,
-			"%s: parse %v",
-			path,
-			parse_diagnostics,
-			loc = loc,
-		)
-		testing.expectf(
-			t,
-			len(bind_diagnostics) == 0,
-			"%s: bind %v",
-			path,
-			bind_diagnostics,
-			loc = loc,
-		)
-	}
-
-	prog, graph_diagnostics := program.build(files, trees, bound, imports, context.temp_allocator)
-	testing.expectf(t, len(graph_diagnostics) == 0, "program %v", graph_diagnostics, loc = loc)
-
-	partition := [?]source.File_ID{MAIN}
-	result, check_diagnostics := check.check(&prog, partition[:], context.temp_allocator)
-	testing.expectf(t, len(check_diagnostics) == 0, "check %v", check_diagnostics, loc = loc)
-
-	results := make([]check.Check_Result, 1, context.temp_allocator)
-	results[0] = result
-	output, lower_diagnostics := lower.lower(&prog, results, context.temp_allocator)
-	testing.expectf(t, len(lower_diagnostics) == 0, "lower %v", lower_diagnostics, loc = loc)
-
-	violations := ir.verify(output, context.temp_allocator)
-	testing.expectf(
-		t,
-		len(violations) == 0,
-		"the IR breaks its contract: %v",
-		violations,
-		loc = loc,
-	)
+	_, output := harness.lower_sources(t, []string{text}, loc)
 	return output
 }
 

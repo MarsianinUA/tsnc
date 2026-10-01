@@ -64,6 +64,8 @@ The compiler CLI follows Odin. [Usage](../README.md#usage) in the README shows t
 
 Without `-out:` the artifact is named after the entry file, in the current directory: `tsnc build src/main.ts` writes `main.exe` on Windows and `main` elsewhere, `-emit-llvm` writes `main.ll` and `-emit-ir` writes `main.ir`. `tsnc run` builds the file `tsnc build` would and leaves it there; its exit code is the program's own.
 
+`-emit-ir` writes the IR codegen gets: at `-o:none` the IR lower made, at `-o:speed` and `-o:aggressive` the IR `opt` made of it. A diff of the two dumps of one program shows what `opt` did.
+
 ## Negative tests
 
 `tests/negative/` holds programs that must not compile, at least one for every code of the `diag` registry. `tests/runner negative` builds each one with `tsnc build` and compares the diagnostics it prints with the ones its header names:
@@ -304,6 +306,7 @@ src/program/  the frozen program: every file, its tree, its names, the module gr
 src/check/    TypeScript types: the type table, inference, the type rules
 src/ir/       our own IR: SSA blocks in flat arrays, interned layouts, the builder
 src/lower/    the typed syntax tree to our IR
+src/opt/      our IR to our IR: cells on the stack, number ranges, proved indices, integers
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
 tests/        unit tests (one folder per src package), test runner, negative, diff and expect corpora

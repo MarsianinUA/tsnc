@@ -149,6 +149,11 @@ foreign lib {
 	LLVMBuildFDiv :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildFRem :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildFNeg :: proc(B: LLVMBuilderRef, V: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildNSWAdd :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildNSWSub :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildNSWMul :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildNSWNeg :: proc(B: LLVMBuilderRef, V: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildSRem :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildShl :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildLShr :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildAShr :: proc(B: LLVMBuilderRef, LHS: LLVMValueRef, RHS: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
@@ -164,6 +169,7 @@ foreign lib {
 	LLVMBuildSelect :: proc(B: LLVMBuilderRef, If: LLVMValueRef, Then: LLVMValueRef, Else: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 
 	LLVMBuildAlloca :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildMemSet :: proc(B: LLVMBuilderRef, Ptr: LLVMValueRef, Val: LLVMValueRef, Len: LLVMValueRef, Align: u32) -> LLVMValueRef ---
 	LLVMBuildLoad2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, PointerVal: LLVMValueRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildStore :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, Ptr: LLVMValueRef) -> LLVMValueRef ---
 	LLVMBuildInBoundsGEP2 :: proc(B: LLVMBuilderRef, Ty: LLVMTypeRef, Pointer: LLVMValueRef, Indices: [^]LLVMValueRef, NumIndices: u32, Name: cstring) -> LLVMValueRef ---
@@ -172,6 +178,7 @@ foreign lib {
 
 	LLVMBuildTrunc :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildZExt :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
+	LLVMBuildSExt :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildSIToFP :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildFPToSI :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---
 	LLVMBuildUIToFP :: proc(B: LLVMBuilderRef, Val: LLVMValueRef, DestTy: LLVMTypeRef, Name: cstring) -> LLVMValueRef ---

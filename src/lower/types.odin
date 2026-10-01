@@ -327,6 +327,8 @@ slot_of :: proc(type: ir.Type) -> abi.Slot_Kind {
 		}
 	case .Tagged, .Void:
 		return .Tagged
+	case .I32, .I64:
+		unreachable()
 	}
 	return .Tagged
 }

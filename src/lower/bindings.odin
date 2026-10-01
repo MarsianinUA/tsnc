@@ -543,6 +543,8 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 	case .Void:
 		// A binding typed never holds nothing.
 		return ir.NO_VALUE
+	case .I32, .I64:
+		unreachable()
 	}
 	return ir.NO_VALUE
 }

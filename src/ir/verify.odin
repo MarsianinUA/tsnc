@@ -1,5 +1,7 @@
 package ir
 
+import "core:math"
+
 import "../abi"
 
 /*
@@ -12,9 +14,9 @@ diag.Diagnostic: ir does not depend on diag and nothing here prints. verify answ
 it finds rather than stopping at the first, the way a phase returns every diagnostic it found, and
 it never panics on a malformed program: a broken layer must still be reportable and printable.
 
-Definition before use is dominance, not the order the values were emitted in. So verify builds the
-predecessors of every block, walks them in reverse post-order, builds the dominator tree from that
-order and asks whether the block that defines a value lies on every path to the block that uses it.
+Definition before use is dominance, not the order the values were emitted in. So verify asks the
+Flow of the function whether the block that defines a value lies on every path to the block that
+uses it.
 A phi operand is checked at the end of the block its edge names instead, which is what makes a back
 edge legal.
 
@@ -81,11 +83,9 @@ Checker :: struct {
 	program:  Program_IR,
 	found:    [dynamic]Violation,
 	body:     Func,
-	preds:    [][dynamic]Block_ID, // the predecessor edges of each block, duplicates included
+	flow:     Flow,
 	home:     []Block_ID, // the block each value is defined in, NO_BLOCK when it is in none
 	index:    []i32, // the place of each value inside its block
-	idom:     []Block_ID, // the immediate dominator of each block, NO_BLOCK when unreachable
-	order:    []i32, // the place of each block in reverse post-order, -1 when unreachable
 	func:     Func_ID,
 	block:    Block_ID,
 	position: i32,
@@ -115,18 +115,12 @@ verify_func :: proc(c: ^Checker, id: Func_ID) {
 		report(c, .Missing_Body)
 		return
 	}
-	c.preds = make([][dynamic]Block_ID, blocks, context.temp_allocator)
-	for &list in c.preds {
-		list = make([dynamic]Block_ID, context.temp_allocator)
-	}
 	c.home = make([]Block_ID, values, context.temp_allocator)
 	c.index = make([]i32, values, context.temp_allocator)
-	c.idom = make([]Block_ID, blocks, context.temp_allocator)
-	c.order = make([]i32, blocks, context.temp_allocator)
 
 	locate_values(c)
 	verify_blocks(c)
-	build_dominators(c)
+	c.flow = make_flow(c.body, context.temp_allocator)
 
 	for block in 0 ..< blocks {
 		c.block = Block_ID(block)
@@ -162,7 +156,6 @@ locate_values :: proc(c: ^Checker) {
 	}
 }
 
-// verify_blocks checks the shape of every block and collects the edges between them.
 @(private)
 verify_blocks :: proc(c: ^Checker) {
 	for block, index in c.body.blocks {
@@ -196,168 +189,7 @@ verify_blocks :: proc(c: ^Checker) {
 		last := block.instructions[len(block.instructions) - 1]
 		if int(last) >= len(c.body.values) || !terminates(c.body.values[last].variant) {
 			report(c, .Missing_Terminator)
-			continue
 		}
-		add_edges(c, Block_ID(index), c.body.values[last].variant)
-	}
-}
-
-@(private)
-add_edges :: proc(c: ^Checker, block: Block_ID, variant: Variant) {
-	#partial switch v in variant {
-	case Jump:
-		if int(v.target) < len(c.body.blocks) {
-			append(&c.preds[v.target], block)
-		}
-	case Branch:
-		if int(v.then_block) < len(c.body.blocks) {
-			append(&c.preds[v.then_block], block)
-		}
-		if int(v.else_block) < len(c.body.blocks) {
-			append(&c.preds[v.else_block], block)
-		}
-	}
-}
-
-// build_dominators numbers the blocks the entry reaches in reverse post-order and fills idom with
-// the iterative dominator algorithm: every block takes the common dominator of the predecessors
-// already numbered, until nothing moves.
-@(private)
-build_dominators :: proc(c: ^Checker) {
-	for &position in c.order {
-		position = -1
-	}
-	for &block in c.idom {
-		block = NO_BLOCK
-	}
-	if len(c.body.blocks) == 0 {
-		return
-	}
-
-	post := walk_post_order(c)
-	for i in 0 ..< len(post) {
-		c.order[post[len(post) - 1 - i]] = i32(i)
-	}
-
-	c.idom[ENTRY] = ENTRY
-	changed := true
-	for changed {
-		changed = false
-		// Reverse post-order without the entry, whose dominator is itself.
-		for i in 1 ..< len(post) {
-			block := post[len(post) - 1 - i]
-			found := NO_BLOCK
-			for pred in c.preds[block] {
-				if c.idom[pred] == NO_BLOCK {
-					continue
-				}
-				found = pred if found == NO_BLOCK else common_dominator(c, pred, found)
-			}
-			if found != NO_BLOCK && c.idom[block] != found {
-				c.idom[block] = found
-				changed = true
-			}
-		}
-	}
-}
-
-// walk_post_order lists the blocks the entry reaches, each after its successors. The walk carries
-// its own stack: a function of many blocks must not grow the machine stack.
-@(private)
-walk_post_order :: proc(c: ^Checker) -> [dynamic]Block_ID {
-	Frame :: struct {
-		block: Block_ID,
-		next:  int, // the successor to follow when this frame comes up again
-	}
-
-	count := len(c.body.blocks)
-	post := make([dynamic]Block_ID, 0, count, context.temp_allocator)
-	visited := make([]bool, count, context.temp_allocator)
-	stack := make([dynamic]Frame, 0, count, context.temp_allocator)
-
-	visited[ENTRY] = true
-	append(&stack, Frame{block = ENTRY})
-	for len(stack) > 0 {
-		frame := &stack[len(stack) - 1]
-		target, more := successor(c, frame.block, frame.next)
-		if !more {
-			append(&post, frame.block)
-			pop(&stack)
-			continue
-		}
-		frame.next += 1
-		if int(target) >= count || visited[target] {
-			continue
-		}
-		visited[target] = true
-		append(&stack, Frame{block = target})
-	}
-	return post
-}
-
-// successor answers the i-th block the terminator of block jumps to. A target outside the function
-// is answered as it stands: the caller skips it, and the instruction check reports it.
-@(private)
-successor :: proc(c: ^Checker, block: Block_ID, i: int) -> (target: Block_ID, more: bool) {
-	instructions := c.body.blocks[block].instructions
-	if len(instructions) == 0 {
-		return
-	}
-	last := instructions[len(instructions) - 1]
-	if int(last) >= len(c.body.values) {
-		return
-	}
-	#partial switch v in c.body.values[last].variant {
-	case Jump:
-		if i == 0 {
-			return v.target, true
-		}
-	case Branch:
-		switch i {
-		case 0:
-			return v.then_block, true
-		case 1:
-			return v.else_block, true
-		}
-	}
-	return
-}
-
-// common_dominator walks two blocks up their dominator chains until they meet, comparing them by
-// reverse post-order number: the block further from the entry moves first.
-@(private)
-common_dominator :: proc(c: ^Checker, left, right: Block_ID) -> Block_ID {
-	left, right := left, right
-	for left != right {
-		for c.order[left] > c.order[right] {
-			left = c.idom[left]
-		}
-		for c.order[right] > c.order[left] {
-			right = c.idom[right]
-		}
-	}
-	return left
-}
-
-// dominates says whether every path from the entry to `block` goes through `head`.
-@(private)
-dominates :: proc(c: ^Checker, head, block: Block_ID) -> bool {
-	if c.order[head] < 0 || c.order[block] < 0 {
-		return false
-	}
-	walk := block
-	for {
-		if walk == head {
-			return true
-		}
-		if walk == ENTRY {
-			return false
-		}
-		next := c.idom[walk]
-		if next == NO_BLOCK || next == walk {
-			return false
-		}
-		walk = next
 	}
 }
 
@@ -381,7 +213,10 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_result(c, c.body.params[v.index])
 
 	case Const_Number:
-		expect_result(c, F64)
+		type := instruction.type
+		if type != F64 && !(is_integer(type) && holds_integer(type, v.value)) {
+			report(c, .Result_Type)
+		}
 
 	case Const_Bool:
 		expect_result(c, BOOL)
@@ -406,21 +241,36 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_result(c, STR)
 
 	case Binary:
-		expect_operand(c, v.left, F64)
-		expect_operand(c, v.right, F64)
-		expect_result(c, F64)
+		switch v.op {
+		case .Add, .Subtract, .Multiply, .Remainder:
+			expect_arithmetic(c, {v.left, v.right})
+		case .Divide, .Power:
+			expect_operand(c, v.left, F64)
+			expect_operand(c, v.right, F64)
+			expect_result(c, F64)
+		case .Shift_Left, .Shift_Right, .Bit_And, .Bit_Or, .Bit_Xor:
+			expect_bitwise(c, {v.left, v.right}, I32)
+		case .Shift_Right_Unsigned:
+			expect_bitwise(c, {v.left, v.right}, I64)
+		}
 
 	case Unary:
-		want := BOOL if v.op == .Not else F64
-		expect_operand(c, v.operand, want)
-		expect_result(c, want)
+		switch v.op {
+		case .Not:
+			expect_operand(c, v.operand, BOOL)
+			expect_result(c, BOOL)
+		case .Negate:
+			expect_arithmetic(c, {v.operand})
+		case .Bit_Not:
+			expect_bitwise(c, {v.operand}, I32)
+		}
 
 	case Compare:
 		left, left_known := operand(c, v.left)
 		right, right_known := operand(c, v.right)
 		if left_known && right_known {
 			ordered := v.op != .Equal && v.op != .Not_Equal
-			if !comparable(left, right) || (ordered && left != F64) {
+			if !comparable(left, right) || (ordered && !is_number(left)) {
 				report(c, .Operand_Type)
 			}
 		}
@@ -430,11 +280,20 @@ verify_instruction :: proc(c: ^Checker) {
 		if instruction.type == VOID {
 			report(c, .Result_Type)
 		}
-		if c.order[c.block] >= 0 && !edges_match(c, v.incoming) {
+		if c.flow.rank[c.block] >= 0 && !edges_match(c, v.incoming) {
 			report(c, .Phi_Edges)
 		}
 		for edge in v.incoming {
 			verify_edge(c, edge, instruction.type)
+		}
+
+	case Convert:
+		type, known := operand(c, v.value)
+		result := instruction.type
+		if !is_number(result) {
+			report(c, .Result_Type)
+		} else if known && !converts(type, result) {
+			report(c, .Operand_Type)
 		}
 
 	case Alloc:
@@ -465,6 +324,10 @@ verify_instruction :: proc(c: ^Checker) {
 			report(c, .Operand_Type)
 		}
 		expect_operand(c, v.length, F64)
+		// codegen sizes the slot of an array on the stack by its constant length.
+		if _, fits := cell_size(c.program, c.body, c.value); v.place == .Stack && !fits {
+			report(c, .Operand_Type)
+		}
 		expect_result(c, ref(v.layout))
 
 	case Field_Load:
@@ -498,16 +361,15 @@ verify_instruction :: proc(c: ^Checker) {
 		if type, known := operand(c, v.value); known && type != STR {
 			element_of(c, type)
 		}
-		expect_result(c, F64)
+		expect_result_of(c, {F64, I64})
 
 	case Bounds_Check:
 		if type, known := operand(c, v.array); known && type != STR {
 			element_of(c, type)
 		}
-		expect_operand(c, v.index, F64)
+		expect_index(c, v.index)
 		expect_site(c, v.not_integer)
 		expect_site(c, v.out_of_range)
-		expect_result(c, F64)
 
 	case Element_Load:
 		element, known := array_element(c, v.array)
@@ -541,7 +403,7 @@ verify_instruction :: proc(c: ^Checker) {
 	case Unit_Load:
 		expect_operand(c, v.text, STR)
 		expect_checked_index(c, v.index, v.text)
-		expect_result(c, F64)
+		expect_result_of(c, {F64, I32})
 
 	case Ascii_Cell:
 		if _, known := operand(c, v.unit); known {
@@ -598,7 +460,7 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Unbox:
 		expect_operand(c, v.value, TAGGED)
-		if instruction.type == VOID || instruction.type == TAGGED {
+		if instruction.type == VOID || instruction.type == TAGGED || is_integer(instruction.type) {
 			report(c, .Result_Type)
 		}
 
@@ -670,8 +532,14 @@ verify_instruction :: proc(c: ^Checker) {
 	case Call_Closure:
 		expect_operand(c, v.callee, CLOSURE)
 		for arg in v.args {
-			// A function value carries no signature, so only the arguments themselves are checked.
-			operand(c, arg)
+			// A function value carries no signature, so only the arguments themselves are checked:
+			// codegen builds the signature out of their types, and a parameter is never an integer.
+			if type, known := operand(c, arg); known && is_integer(type) {
+				report(c, .Operand_Type)
+			}
+		}
+		if is_integer(instruction.type) {
+			report(c, .Result_Type)
 		}
 
 	case Call_Runtime:
@@ -752,7 +620,7 @@ verify_edge :: proc(c: ^Checker, edge: Incoming, want: Type) {
 		report(c, .Unknown_Value)
 		return
 	}
-	if c.order[edge.block] >= 0 && !reaches_end(c, edge.block, edge.value) {
+	if c.flow.rank[edge.block] >= 0 && !reaches_end(c, edge.block, edge.value) {
 		report(c, .Use_Before_Definition)
 	}
 	if !fits(c.body.values[edge.value].type, want) {
@@ -764,7 +632,7 @@ verify_edge :: proc(c: ^Checker, edge: Incoming, want: Type) {
 // branch that names one block on both sides gets two.
 @(private)
 edges_match :: proc(c: ^Checker, incoming: []Incoming) -> bool {
-	preds := c.preds[c.block]
+	preds := c.flow.preds[c.block]
 	if len(incoming) != len(preds) {
 		return false
 	}
@@ -851,7 +719,7 @@ operand :: proc(c: ^Checker, id: Value_ID) -> (type: Type, known: bool) {
 		report(c, .Unknown_Value)
 		return
 	}
-	if c.order[c.block] >= 0 && !reaches(c, id) {
+	if c.flow.rank[c.block] >= 0 && !reaches(c, id) {
 		report(c, .Use_Before_Definition)
 	}
 	return c.body.values[id].type, true
@@ -873,15 +741,14 @@ expect_slot :: proc(c: ^Checker, id: Value_ID, kind: abi.Slot_Kind) {
 	}
 }
 
-// expect_checked_index requires the index of an element access to be the answer of a bounds check
-// of the same array, so the check cannot drift away from the access it guards.
+// expect_checked_index keeps a check from drifting away from the access it guards.
 @(private)
 expect_checked_index :: proc(c: ^Checker, id: Value_ID, array: Value_ID) {
 	type, known := operand(c, id)
 	if !known {
 		return
 	}
-	if type != F64 {
+	if !is_number(type) {
 		report(c, .Operand_Type)
 	}
 	bounds, checked := c.body.values[id].variant.(Bounds_Check)
@@ -890,11 +757,58 @@ expect_checked_index :: proc(c: ^Checker, id: Value_ID, array: Value_ID) {
 	}
 }
 
+// expect_index: the answer of a check is the index itself, in its own type.
+@(private)
+expect_index :: proc(c: ^Checker, id: Value_ID) {
+	type, known := operand(c, id)
+	if !known {
+		return
+	}
+	if !is_number(type) {
+		report(c, .Operand_Type)
+	} else {
+		expect_result(c, type)
+	}
+}
+
+@(private)
+expect_arithmetic :: proc(c: ^Checker, ids: []Value_ID) {
+	result := c.body.values[c.value].type
+	if !is_number(result) {
+		report(c, .Result_Type)
+		return
+	}
+	for id in ids {
+		expect_operand(c, id, result)
+	}
+}
+
+// expect_bitwise takes any number type as an operand: ToInt32 reads each of them.
+@(private)
+expect_bitwise :: proc(c: ^Checker, ids: []Value_ID, integer: Type) {
+	for id in ids {
+		if type, known := operand(c, id); known && !is_number(type) {
+			report(c, .Operand_Type)
+		}
+	}
+	expect_result_of(c, {F64, integer})
+}
+
 @(private)
 expect_result :: proc(c: ^Checker, want: Type) {
 	if c.body.values[c.value].type != want {
 		report(c, .Result_Type)
 	}
+}
+
+@(private)
+expect_result_of :: proc(c: ^Checker, wants: []Type) {
+	for want in wants {
+		if c.body.values[c.value].type == want {
+			return
+		}
+	}
+	report(c, .Result_Type)
 }
 
 @(private)
@@ -922,7 +836,7 @@ reaches :: proc(c: ^Checker, id: Value_ID) -> bool {
 	if home == c.block {
 		return c.index[id] < c.position
 	}
-	return dominates(c, home, c.block)
+	return dominates(c.flow, home, c.block)
 }
 
 // reaches_end says whether the definition of a value is in hand at the end of a block, which is
@@ -933,7 +847,7 @@ reaches_end :: proc(c: ^Checker, block: Block_ID, id: Value_ID) -> bool {
 	if home == NO_BLOCK {
 		return false
 	}
-	return home == block || dominates(c, home, block)
+	return home == block || dominates(c.flow, home, block)
 }
 
 @(private)
@@ -1068,13 +982,38 @@ c_type_fits :: proc(kind: abi.C_Type, type: Type) -> bool {
 // two functions compare addresses, except where 0 is null on one side and undefined on the other.
 @(private)
 comparable :: proc(left, right: Type) -> bool {
-	if left == F64 || left == BOOL {
+	if is_number(left) || left == BOOL {
 		return left == right
 	}
 	if left.kind != .Ref && left.kind != .Closure || non_null(left) != non_null(right) {
 		return false
 	}
 	return left.nullish == right.nullish || left.nullish == .None || right.nullish == .None
+}
+
+// holds_integer refuses -0, which no integer stands for.
+@(private)
+holds_integer :: proc(type: Type, value: f64) -> bool {
+	if value != math.trunc(value) || value == 0 && math.sign_bit(value) {
+		return false
+	}
+	if type == I32 {
+		return value >= -(1 << 31) && value <= (1 << 31) - 1
+	}
+	return value >= -(1 << 63) && value < (1 << 63)
+}
+
+@(private)
+converts :: proc(from, to: Type) -> bool {
+	switch from {
+	case I32:
+		return to == I64 || to == F64
+	case I64:
+		return to == F64
+	case F64:
+		return is_integer(to)
+	}
+	return false
 }
 
 @(private)

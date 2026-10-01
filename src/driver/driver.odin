@@ -85,7 +85,7 @@ Options :: struct {
 Artifact :: enum u8 {
 	Executable, // codegen writes an object file, link makes the program out of it
 	LLVM_IR, // -emit-llvm: textual LLVM IR from codegen, after the passes of -o:
-	IR_Dump, // -emit-ir: the tsnc IR as lower left it, which -o: says nothing about
+	IR_Dump, // -emit-ir: the tsnc IR codegen would get, lower's at -o:none and opt's otherwise
 }
 
 Error_Kind :: enum u8 {

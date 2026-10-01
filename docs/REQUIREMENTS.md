@@ -51,7 +51,7 @@ Version 0.1 · September 15, 2026 · status: agreed (13-question interview, cros
 
 **v2**
 - Classes (fields, constructor, methods, single inheritance, `this`), user-defined generics through monomorphization, `try` / `catch` / `throw`, `async` / `await`, destructuring, spread, `Map` / `Set`, `enum`, optional chaining `?.`, getters / setters, `export default`.
-- Index signatures as hash tables, `Object.keys` / `for...in`, `obj[key]` access through a field-name table, full structural typing of objects (3.3), integer optimization of `number` (3.1), cross-compilation, debug info.
+- Index signatures as hash tables, `Object.keys` / `for...in`, `obj[key]` access through a field-name table, full structural typing of objects (3.3), cross-compilation, debug info.
 - Regular expressions (own engine for the ECMAScript dialect, 4.5), `bigint` (the arithmetic engine is `core:math/big` from the Odin standard library, the value itself is an immutable object in the GC heap), WebAssembly through WASI (`wasm-ld` is already in the Odin distribution), minimal file I/O (reading and writing a whole file, stdin).
 
 **Never**
@@ -65,7 +65,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 
 ### 3.1 Numbers
 - `number` is always an IEEE 754 double (f64). The semantics are exact: `NaN`, `Infinity`, `-0`, fractional division, `%` as in TS, bitwise operations through conversion to int32.
-- v2: an optimization the program cannot observe. The compiler proves that a value is always an integer in the safe range (loop counters, indices, results of bitwise operations) and keeps it in i64 / i32. Behavior does not change, only speed. Precedent: Static Hermes (Int32 / Uint32 as type refinements in the IR).
+- An optimization the program cannot observe, at `-o:speed` and `-o:aggressive`: the compiler proves that a value is always an integer in the safe range and never `-0` (loop counters, indices, lengths, results of bitwise operations, the remainder of a dividend that is never negative, a global or a parameter the whole program keeps in range) and keeps it in i32 / i64. Behavior does not change, only speed. A value nothing bounds stays f64, such as `x = 3 * x + 1` in the Collatz sequence. Precedent: Static Hermes (Int32 / Uint32 as type refinements in the IR).
 - Conversion to string follows ECMAScript `Number::toString` strictly: the shortest round-trip representation, decimal notation when `1e-7 <= |x| < 1e21`, exponential otherwise; `-0` prints as `0`.
 
 ### 3.2 Strings
@@ -140,7 +140,7 @@ A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr 
 1. **Lexer.** TypeScript tokens, template strings with nesting, automatic semicolon insertion (ASI) per the specification.
 2. **Parser.** Hand-written recursive descent (like tsc and Go). Builds an AST with positions for diagnostics. Parses type syntax: union, arrays, object types, function types, literal types, `Array<T>`.
 3. **Semantic analysis.** Name and module resolution, type checking and inference (section 5), union narrowing, subset checking. The result is a typed AST.
-4. **Custom IR.** A low-level representation with explicit layouts, tags, and runtime calls. The place for custom optimizations (v2: integer narrowing, escape analysis for closures, objects, and arrays: a value that does not leave its function goes on the stack or splits into separate variables and never reaches the GC heap).
+4. **Custom IR.** A low-level representation with explicit layouts, tags, and runtime calls. The place for custom optimizations, which run at `-o:speed` and `-o:aggressive`: integer narrowing (3.1), escape analysis for closures, environments, objects, and arrays (a cell that does not leave its function goes on its stack and never reaches the GC heap; LLVM splits it into separate variables where it can), and removal of the bounds checks the compiler proves.
 5. **Code generation.** IR → LLVM IR through the LLVM-C API in memory, not as text. LLVM optimizations through the new pass manager (`LLVMRunPasses`, pipelines `default<O2>` / `default<O3>`). Object file through `LLVMTargetMachineEmitToFile`.
 6. **Linking.** On Windows, `lld-link` from the Odin distribution. On Linux and macOS, the system C compiler (`cc`) as the linker driver, as Odin and Rust do: only it knows where the C runtime startup files, the dynamic loader, and the SDK live on a given machine. It links the program object file, the runtime object file, and system libraries. Flags come from `odin build -print-linker-flags`.
 
@@ -209,6 +209,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value is always a
   - mitigating the risk of "external" derived pointers from LLVM optimizations: loop strength reduction is disabled (`-disable-lsr`), the base pointer stays live across calls. The risk cannot be fully eliminated and is accepted: Chrome (Oilpan) and Firefox live with it in production.
 - Fallback if the conservative scan does not work out: a custom shadow stack (the compiler generates a frame record with references and a per-thread frame list), as in Static Hermes and AssemblyScript. The project does not use LLVM's built-in shadow stack (`llvm.gcroot`): it is slow and not thread-safe.
 - The GC heap holds closures, strings, arrays, objects, and tagged values with pointers. A v1 program is single-threaded, with one mutator.
+- A cell the compiler proves never leaves its function lives on that function's stack instead: no reference to it is returned, stored in a global or in a heap cell, boxed, handed to the runtime, or kept past the loop pass that made it. The conservative scan sees the references such a cell holds along with the rest of the stack. In stress mode the heap check fails when a heap cell or a root points into the stack.
 
 ## 7. Modules and the compilation unit
 
@@ -263,7 +264,7 @@ tsnc build src/main.ts -sanitize:address            # link the runtime built wit
 
 ## 11. Non-functional requirements
 
-- Compile time is not limited; the priority is the quality and speed of the generated code. Target: on numeric and array-heavy tasks, comparable to Node already in v1 and closer to Go after the v2 integer optimization; on strings and allocations, lagging behind Node in v1 is acceptable, and benchmarks record the gap.
+- Compile time is not limited; the priority is the quality and speed of the generated code. Target: on numeric and array-heavy tasks, comparable to Node already in v1 and closer to Go with the integer optimization of 3.1; on strings and allocations, lagging behind Node in v1 is acceptable, and benchmarks record the gap.
 - Building the compiler: `odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style`, following the `projects/odin-template` template. `-vet -strict-style` are mandatory.
 - No global mutable state; deterministic output for any number of threads.
 - Runtime errors in the generated program always come with a message and exit code `1`, never silent continuation.
@@ -291,7 +292,7 @@ None of the following is planned in any version; section 2 lists everything plan
 | "External" derived pointers from LLVM optimizations under the conservative scan | Mitigations from section 6, GC stress tests under `-O3`, the shadow stack fallback |
 | The exact-type rule will reject part of ordinary TS code | Collect a corpus of real programs and measure the rejection rate before v2; offset tables in v2 |
 | macOS is tested only in CI | Connect GitHub Actions early |
-| Numbers as f64 in v1 are slower than Go on integer tasks | Optimization in v2, benchmarks record the gap |
+| Numbers as f64 are slower than Go on integer tasks | The compiler narrows what it proves (3.1); a value nothing bounds, such as `x` in `collatz`, stays f64, and benchmarks record the gap |
 | The name `tsnc` matches the abandoned project `mhw0/tsnc` ("typescript native compiler", C, archived since 2024) and the command of the commercial TSN.1 Compiler (Protomatics). The name is free on npm, crates.io, PyPI, JSR, Homebrew, and AUR; the `tsnc` username on GitHub is taken | Acceptable for a personal project; when publishing, state "TypeScript → machine code, Odin + LLVM" in the description to stand apart in search |
 | Exact reproduction of the Node format in `console.log` for objects | `util.inspect` is ported rule by rule and tested against Node's output; a Node release that changes it needs the port changed too, and the corpus shows where |
 | The runtime relies on the built-in `string16` from a nightly Odin build | The Odin version is pinned together with LLVM 20; on rollback a custom "pointer plus length" pair is enough, and the semantics of 3.2 do not change |

@@ -59,7 +59,6 @@ NO_VALUE :: Value_ID(max(u32))
 // NO_BLOCK means the builder has no open block: a terminator closed the last one.
 NO_BLOCK :: Block_ID(max(u32))
 
-// Type_Kind gains I32 and I64 for narrowed integers in v2.
 Type_Kind :: enum u8 {
 	Void,
 	F64, // number
@@ -68,6 +67,10 @@ Type_Kind :: enum u8 {
 	Str, // a reference to an abi.String_Cell
 	Closure, // a reference to an abi.Closure_Cell: code plus environment
 	Ref, // a reference to the cell of a layout: object, array, environment
+	// A number opt proved an integer that fits, and never -0. Only arithmetic, comparisons, phis,
+	// indices and conversions take one: memory, calls, boxes and returns hold numbers as F64.
+	I32,
+	I64,
 }
 
 // Type is comparable with ==: layout is NO_LAYOUT for every kind but Ref, and nullish is None for
@@ -101,6 +104,20 @@ STR :: Type {
 }
 CLOSURE :: Type {
 	kind = .Closure,
+}
+I32 :: Type {
+	kind = .I32,
+}
+I64 :: Type {
+	kind = .I64,
+}
+
+is_integer :: proc(type: Type) -> bool {
+	return type == I32 || type == I64
+}
+
+is_number :: proc(type: Type) -> bool {
+	return type == F64 || is_integer(type)
 }
 
 ref :: proc(layout: Layout_ID) -> Type {
@@ -186,8 +203,8 @@ Unit :: struct {
 	funcs: []Func_ID,
 }
 
-// Program_IR is frozen once lower returns it: only opt rewrites it, and only in v2, because "IR to
-// IR" is that package's contract.
+// Program_IR is frozen once lower returns it: only opt rewrites it, because "IR to IR" is that
+// package's contract.
 Program_IR :: struct {
 	funcs:      []Func, // indexed by Func_ID
 	layouts:    []abi.Type_Table, // indexed by Layout_ID; the GC type tables; row 0 is reserved
