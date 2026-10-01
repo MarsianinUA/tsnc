@@ -4,8 +4,7 @@ import "core:testing"
 
 import "../../src/ir"
 
-// Integer narrowing: which numbers become I32 or I64 and which stay F64. tests/diff/src/integers.ts
-// shows that the narrowed programs print what Node prints.
+// tests/diff/src/integers.ts shows that the narrowed programs print what Node prints.
 
 @(test)
 a_counter_bounded_by_a_constant_global_is_i32 :: proc(t: ^testing.T) {

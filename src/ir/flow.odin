@@ -1,11 +1,7 @@
 package ir
 
 /*
-The control flow of one function: the predecessors of every block, the blocks the entry reaches in
-reverse post-order, and the dominator tree. verify asks it where a definition reaches, opt where a
-condition holds.
-
-A malformed function still gets an answer: a target outside the function adds no edge and a block
+A malformed function still gets a Flow: a target outside the function adds no edge and a block
 without a terminator has no successors, so the verifier can report what it finds rather than stop.
 */
 
@@ -13,7 +9,7 @@ Flow :: struct {
 	preds: [][]Block_ID, // the predecessor edges of each block, duplicates included
 	order: []Block_ID, // the blocks the entry reaches, in reverse post-order
 	rank:  []i32, // the place of each block in order, -1 when the entry never reaches it
-	idom:  []Block_ID, // the immediate dominator of each block; ENTRY's is ENTRY, NO_BLOCK unreached
+	idom:  []Block_ID, // the immediate dominator; ENTRY's is ENTRY, an unreached block's NO_BLOCK
 }
 
 @(require_results)
@@ -59,8 +55,7 @@ make_flow :: proc(func: Func, allocator := context.allocator) -> Flow {
 		flow.rank[block] = i32(i)
 	}
 
-	// The iterative algorithm of Cooper, Harvey and Kennedy: every block takes the common dominator
-	// of the predecessors already placed, until nothing moves.
+	// The iterative algorithm of Cooper, Harvey and Kennedy.
 	flow.idom[ENTRY] = ENTRY
 	changed := true
 	for changed {
@@ -103,8 +98,7 @@ dominates :: proc(flow: Flow, head, block: Block_ID) -> bool {
 	}
 }
 
-// successors answers the blocks the terminator of `block` jumps to, a target outside the function
-// included: the caller skips it, and the verifier reports it.
+// successors keeps a target outside the function: callers skip it, the verifier reports it.
 @(private)
 successors :: proc(func: Func, block: Block_ID) -> (targets: [2]Block_ID, count: int) {
 	instructions := func.blocks[block].instructions
@@ -158,8 +152,6 @@ walk_post_order :: proc(func: Func, allocator := context.allocator) -> []Block_I
 	return post[:]
 }
 
-// common_dominator walks two blocks up their dominator chains until they meet, comparing them by
-// rank: the block further from the entry moves first.
 @(private = "file")
 common_dominator :: proc(flow: Flow, left, right: Block_ID) -> Block_ID {
 	left, right := left, right

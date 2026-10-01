@@ -4,8 +4,7 @@ import "core:testing"
 
 import "../../src/ir"
 
-// Escape analysis: which cells go on the stack of their function. tests/diff/src/stack-cells.ts
-// runs the same shapes while the collector runs.
+// tests/diff/src/stack-cells.ts runs the same shapes while the collector runs.
 
 @(test)
 a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {

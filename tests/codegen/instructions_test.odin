@@ -235,8 +235,6 @@ a_function_takes_the_closure_convention :: proc(t: ^testing.T) {
 	expect_text(t, text, wants)
 }
 
-// The integer types opt narrows numbers to: each operation is the LLVM instruction the IR means,
-// with the no-overflow flag opt proved, and a bitwise operator reads any number type.
 @(test)
 the_integer_types_map_to_llvm_integers :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)

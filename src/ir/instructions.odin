@@ -138,9 +138,8 @@ Phi :: struct {
 	incoming: []Incoming,
 }
 
-// Convert answers its number as the type of the instruction, exactly: an I32 as an I64, an integer
-// as an F64, or an F64 opt proved an integer that fits as an I32 or an I64. opt never needs a type
-// narrower than the value's own, so nothing truncates.
+// Convert is exact: it never narrows an integer, and it turns an F64 into an integer only where opt
+// proved one that fits.
 Convert :: struct {
 	value: Value_ID,
 }
@@ -155,10 +154,9 @@ Alloc :: struct {
 	place:  Cell_Place,
 }
 
-// Cell_Place says where Alloc, New_Array and Make_Closure put their cell. opt puts one on the stack
-// of its function when no reference to it outlives the call, nor the pass of the loop that made it,
-// and none enters a heap cell. Such a cell is never handed to the runtime, and a New_Array there
-// has a constant length of at most MAX_STACK_ELEMENTS.
+// Cell_Place Stack: no reference to the cell outlives the call or the loop pass that made it,
+// enters a heap cell or reaches the runtime, and a New_Array there has a constant length of at
+// most MAX_STACK_ELEMENTS.
 Cell_Place :: enum u8 {
 	Heap,
 	Stack,
@@ -235,8 +233,7 @@ Bounds_Check :: struct {
 	out_of_range: Fail_Site_ID,
 }
 
-// Proved_Index stands where opt removed a Bounds_Check it proved can never fail: it answers the
-// index, in its own type, and emits no code.
+// Proved_Index replaces a Bounds_Check opt proved never fails: it answers the index, no code.
 Proved_Index :: struct {
 	array: Value_ID,
 	index: Value_ID,
@@ -434,11 +431,10 @@ terminates :: proc(variant: Variant) -> bool {
 	return false
 }
 
-// Binary_Op: Add, Subtract, Multiply and Remainder take two F64 and answer F64, or take and answer
-// one integer type; Divide and Power take F64 alone. The bitwise and shift operators take any
-// number type on either side and answer F64 or I32, an unsigned shift F64 or I64. An integer
-// operation computes what the F64 one would, because opt narrows only what it proved to fit, and a
-// Remainder only of a dividend it proved non-negative.
+// Binary_Op: Add, Subtract, Multiply and Remainder take and answer one number type, Divide and
+// Power only F64. The bitwise operators take any number type and answer F64 or I32, an unsigned
+// shift F64 or I64. An integer operation computes what the F64 one would: opt narrows only what it
+// proved to fit, and a Remainder only of a dividend it proved non-negative.
 //
 // The bitwise and shift operators are the ones ECMAScript defines, not the ones the machine has:
 // each operand goes through ToInt32, or ToUint32 on the left of an unsigned shift, the shift count

@@ -1,8 +1,7 @@
 package ir
 
-// operands answers a pointer to every field of the variant that names a value, the arguments of a
-// call and the edges of a phi included, so opt lists the uses of a value and rewrites them through
-// one switch. A field that holds NO_VALUE is left out. found is cleared first.
+// operands lets opt list and rewrite the uses of a value through one switch. The fields come in a
+// fixed order, so an index into `found` names the same field again after the variant moved.
 operands :: proc(variant: ^Variant, found: ^[dynamic]^Value_ID) {
 	clear(found)
 	switch &v in variant {

@@ -22,9 +22,8 @@ Body :: struct {
 	// the function; nil in a function that makes none. The runtime is done with them when the call
 	// returns, so one slot serves every call.
 	rest_slot:   llvm.LLVMValueRef,
-	// cells holds, by ir.Value_ID, the stack slot of a cell opt put on the stack (ir.Cell_Place).
-	// Every evaluation of the instruction starts the slot afresh: opt proved nothing still points
-	// into it by then.
+	// cells holds, by ir.Value_ID, the slot of a stack cell. Every evaluation starts it afresh: opt
+	// proved nothing still points into it by then.
 	cells:       []llvm.LLVMValueRef,
 }
 
@@ -39,9 +38,8 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		values   = make([]llvm.LLVMValueRef, len(func.values), context.temp_allocator),
 	}
 
-	// Reverse post-order puts every definition before the uses it dominates. The blocks lower leaves
-	// unreachable stay out: nothing promises that their operands dominate their uses, and LLVM would
-	// refuse them.
+	// Reverse post-order puts a definition before the uses it dominates. An unreachable block stays
+	// out: nothing promises that its operands dominate their uses, and LLVM would refuse it.
 	order := ir.make_flow(func, context.temp_allocator).order
 	// Every block exists before any instruction does, so a jump forward and a back edge both have
 	// something to name.

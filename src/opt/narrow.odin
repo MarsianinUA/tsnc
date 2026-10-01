@@ -9,17 +9,13 @@ import "../ir"
 Integer narrowing: a number whose range is integral, never -0 and inside ±2^53 becomes an I32 when
 the range fits 32 bits and an I64 otherwise.
 
-An instruction that computes the number is retyped in place: a constant, arithmetic, a negation, a
-phi, a length, a unit, a check's answer, and the bitwise operators, which answer I32 (an unsigned
-shift I64) whatever they read. Arithmetic, a phi and a comparison take the widest type among their
-own and their operands', so a type only ever grows, from I32 to I64, and a conversion is a widening
-or a crossing to or from F64, never a truncation. A number that arrives as F64 and must stay one,
-a parameter, a load, a call's result, is converted once, right after its definition, for the uses
-that want an integer.
+Arithmetic, a phi and a comparison take the widest type among their own and their operands', so a
+type only grows and a conversion never truncates. A number that has to arrive as F64 (a parameter,
+a load, a call's result) is converted once, right after its definition.
 
-A conversion out of F64 runs wherever the definition runs, so it is only made of a value whose own
-range, not one a comparison narrowed at the use, is integral. An arithmetic operation or a phi that
-would need any other conversion stays F64.
+A conversion out of F64 runs wherever the definition runs, so it is made only of a value whose own
+range, not one a comparison narrowed at the use, is integral; an operation that would need any
+other conversion stays F64.
 */
 
 narrow :: proc(p: ^ir.Program_IR, ranges: Ranges, allocator: runtime.Allocator) {
@@ -45,12 +41,10 @@ Conversion :: struct {
 	type:  ir.Type_Kind,
 }
 
-// Use is one number operand, by its place in ir.operands, and the type its instruction reads it
-// as.
 @(private = "file")
 Use :: struct {
 	consumer: ir.Value_ID,
-	field:    int,
+	field:    int, // the place of the operand in ir.operands of the consumer
 	value:    ir.Value_ID,
 	want:     ir.Type,
 	dead:     bool, // the edge of a phi out of a block nothing reaches
@@ -181,8 +175,6 @@ range_type :: proc(r: Range) -> ir.Type {
 	return ir.I32 if r.lo >= INT32.lo && r.hi <= INT32.hi else ir.I64
 }
 
-// widest answers the type an operation reads all of its operands as, or F64 when one of them
-// cannot become an integer.
 @(private = "file")
 widest :: proc(n: ^Narrowing, type: ir.Type, operands: []ir.Value_ID) -> ir.Type {
 	type := type
@@ -198,8 +190,8 @@ widest :: proc(n: ^Narrowing, type: ir.Type, operands: []ir.Value_ID) -> ir.Type
 	return type
 }
 
-// widest_edge leaves out an edge out of a block nothing reaches: it never runs, and a zero of the
-// phi's type stands in for whatever it carries.
+// widest_edge skips an edge out of a block nothing reaches: a zero of the phi's type stands in for
+// what it carries.
 @(private = "file")
 widest_edge :: proc(n: ^Narrowing, type: ir.Type, incoming: []ir.Incoming) -> ir.Type {
 	type := type
@@ -215,9 +207,7 @@ widest_edge :: proc(n: ^Narrowing, type: ir.Type, incoming: []ir.Incoming) -> ir
 	return type
 }
 
-// integer_of answers the integer type a narrowed operation reads an operand as: its own, or for an
-// F64 the type its range needs, when that range is integral. A value in a block nothing reaches
-// converts to anything, since the conversion never runs.
+// integer_of lets a value of an unreachable block convert to anything: that never runs.
 @(private = "file")
 integer_of :: proc(n: ^Narrowing, value: ir.Value_ID) -> (ir.Type, bool) {
 	type := n.types[value]
@@ -234,8 +224,6 @@ integer_of :: proc(n: ^Narrowing, value: ir.Value_ID) -> (ir.Type, bool) {
 	return range_type(r), true
 }
 
-// list_uses lists every number operand with the type its instruction reads it as: F64 unless the
-// instruction was narrowed. A bitwise operator and an index read any number type as it is.
 @(private = "file")
 list_uses :: proc(n: ^Narrowing) -> []Use {
 	uses := make([dynamic]Use, context.temp_allocator)
@@ -283,9 +271,8 @@ list_uses :: proc(n: ^Narrowing) -> []Use {
 	return uses[:]
 }
 
-// settle_constants gives an integer constant the type its readers want, so that no twin of another
-// type stands beside it unread: I32 when one reads it so, which its range then fits, else I64, and
-// its F64 back when no reader wants an integer.
+// settle_constants gives an integer constant the type its readers want, so that no unread twin of
+// another type stands beside it.
 @(private = "file")
 settle_constants :: proc(n: ^Narrowing, uses: []Use) {
 	wants := make([]bit_set[ir.Type_Kind], len(n.types), context.temp_allocator)
@@ -310,9 +297,8 @@ settle_constants :: proc(n: ^Narrowing, uses: []Use) {
 	}
 }
 
-// replacement answers the value a use reads in place of its operand: a constant of the wanted type
-// or a conversion, one per value and type, right after the definition, so it dominates every use
-// the definition does.
+// replacement puts a conversion, one per value and type, right after the definition, so it
+// dominates every use the definition does.
 @(private = "file")
 replacement :: proc(n: ^Narrowing, use: Use) -> ir.Value_ID {
 	value := use.value
@@ -337,7 +323,7 @@ replacement :: proc(n: ^Narrowing, use: Use) -> ir.Value_ID {
 		type = use.want,
 	}
 	if constant, is_constant := source.variant.(ir.Const_Number); is_constant {
-		// An integer constant is never -0, and this one is an integer wherever an integer wants it.
+		// + 0: an integer reader of a -0 constant reads 0, and ir.verify refuses an integer -0.
 		instruction.variant = ir.Const_Number {
 			value = constant.value + 0,
 		}
@@ -360,8 +346,7 @@ replacement :: proc(n: ^Narrowing, use: Use) -> ir.Value_ID {
 	return id
 }
 
-// after_phis answers the last phi of the block that holds `value`, which a new instruction of that
-// block has to follow.
+// after_phis answers the last phi of the block of `value`: phis lead a block.
 @(private = "file")
 after_phis :: proc(n: ^Narrowing, value: ir.Value_ID) -> ir.Value_ID {
 	last := ir.NO_VALUE

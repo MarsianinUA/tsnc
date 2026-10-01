@@ -4,26 +4,14 @@ package opt
 import "../ir"
 
 /*
-Escape analysis: a cell goes on the stack of its function when every value that may point to it
-only reads it, writes into it, compares it, or hands it where it stays in this frame:
-- the cell of a field or an element instruction, a length, a check, a layout, null or cell test, a
-  comparison, a Non_Null;
-- the closure a Call_Closure calls;
-- the environment of a closure on the stack whose function never lets its environment out;
-- the value of a Field_Store_Ref into a cell on the stack that is made in the same pass of the same
-  loop or a deeper one, so it never outlives what it points to;
-- an argument of a direct call, or of a call through a closure made here, whose parameter the callee
-  never lets out.
-Anything else lets it out: a phi, a return, a global, a box, the runtime, an element of an array.
-
-Points-to is per function and ignores order: a value may point to a cell when it is the cell, a
-Non_Null of such a value, or a field load out of a cell such a value was stored into.
+Escape analysis: a cell goes on the stack of its function when every use of every value that may
+point to it keeps it in this frame (kept). LLVM then splits it into registers where it can; opt has
+no scalar replacement of its own. Points-to is per function and ignores the order of instructions.
 
 The callees' side comes from summaries, one per environment and per reference parameter: the Env and
-the Param of a function are cells of the caller's, and one that meets anything outside the list above
-leaks. They start out not leaking and only ever start to, so the fixpoint over all functions is the
-least one; each function's own cells then start on the stack and fall back to the heap until nothing
-moves.
+the Param of a function stand for cells of the caller's. A summary starts out not leaking and only
+ever starts to, so the fixpoint over all functions is the least one; each function's own cells start
+on the stack and fall back to the heap until nothing moves.
 
 A function gets at most STACK_BUDGET bytes of stack cells, since a recursive one takes them again in
 every frame; the cells after that stay on the heap.
@@ -165,7 +153,7 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func) -> Frame {
 			case ir.Field_Load:
 				for site in frame.points[v.cell] {
 					grew |= add_points(&frame.points[id], stored[site][:])
-					// The caller may have stored a cell of its own there, which goes where this goes.
+					// The caller may have stored its own cell there, which goes where this goes.
 					kind := instruction.type.kind
 					if frame.sites[site].pseudo != .None && (kind == .Ref || kind == .Closure) {
 						grew |= add_point(&frame.points[id], site)
@@ -177,8 +165,8 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func) -> Frame {
 	return frame
 }
 
-// find_loops gives every block the header of the innermost natural loop around it. Headers go in
-// reverse post-order, outer before inner, so an inner loop's blocks end up with its own header.
+// find_loops visits headers in reverse post-order, outer before inner, so an inner loop's blocks
+// end up with its own header.
 @(private = "file")
 find_loops :: proc(frame: ^Frame, flow: ir.Flow) {
 	for &block in frame.loop {
@@ -221,8 +209,7 @@ find_loops :: proc(frame: ^Frame, flow: ir.Flow) {
 	}
 }
 
-// decide puts every cell of the function on the stack and moves to the heap what lets it out,
-// until nothing moves; then the cells past the budget go, and what that lets out with them.
+// decide runs again after a budget cut: a cell moved to the heap lets out what it holds.
 @(private = "file")
 decide :: proc(e: ^Escape, frame: ^Frame) {
 	for &site in frame.sites {
@@ -310,9 +297,8 @@ kept :: proc(
 	return false
 }
 
-// held_here says whether every cell `holder` may point to is a stack cell of this frame, made in
-// the same pass of the same loop as every cell `value` may point to, or in a deeper loop: the holder
-// is made again, empty, before what it holds is.
+// held_here wants the holder a stack cell of this frame, made in the loop of what it holds or a
+// deeper one, so that it is made again, empty, before what it holds is.
 @(private = "file")
 held_here :: proc(frame: ^Frame, holder, value: ir.Value_ID) -> bool {
 	holders := frame.points[holder]
@@ -334,8 +320,7 @@ held_here :: proc(frame: ^Frame, holder, value: ir.Value_ID) -> bool {
 	return true
 }
 
-// nested says whether the loop headed by `inner` is the one headed by `outer` or lies inside it;
-// NO_BLOCK stands for the function outside every loop.
+// nested takes NO_BLOCK for the function outside every loop.
 @(private = "file")
 nested :: proc(frame: ^Frame, inner, outer: ir.Block_ID) -> bool {
 	if outer == ir.NO_BLOCK {

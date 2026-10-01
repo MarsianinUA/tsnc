@@ -4,8 +4,7 @@ import "core:testing"
 
 import "../../src/ir"
 
-// Bounds check elimination: which checks become a Proved_Index and which stay. The checks that stay
-// fail where they should in tests/expect/array-shrink.ts.
+// The checks that stay fail where they should in tests/expect/array-shrink.ts.
 
 @(test)
 a_check_below_the_length_the_loop_tested_is_proved :: proc(t: ^testing.T) {

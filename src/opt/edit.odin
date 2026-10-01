@@ -6,8 +6,7 @@ import "core:slice"
 
 import "../ir"
 
-// Editor inserts instructions into one function. Every value keeps its id, an inserted one takes the
-// next, and end_edit writes the new lists back into the function.
+// Editor keeps the id of every value, and the function stays as it was until end_edit.
 Editor :: struct {
 	func:       ^ir.Func,
 	values:     [dynamic]ir.Instruction,
@@ -17,7 +16,7 @@ Editor :: struct {
 
 @(private = "file")
 Insertion :: struct {
-	after: ir.Value_ID, // the instruction the new one follows, in its block
+	after: ir.Value_ID, // the instruction the new one follows
 	value: ir.Value_ID,
 }
 
@@ -32,8 +31,7 @@ begin_edit :: proc(func: ^ir.Func, allocator := context.allocator) -> Editor {
 	}
 }
 
-// insert_after puts the instruction right behind `after`, and behind whatever was inserted there
-// before it. An inserted value may be the `after` of another.
+// insert_after goes behind what was inserted after `after` before; `after` may be inserted itself.
 insert_after :: proc(e: ^Editor, after: ir.Value_ID, instruction: ir.Instruction) -> ir.Value_ID {
 	id := ir.Value_ID(len(e.values))
 	append(&e.values, instruction)

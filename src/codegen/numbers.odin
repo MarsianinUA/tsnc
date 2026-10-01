@@ -18,9 +18,9 @@ The number functions of Math are emitted inline: an llvm intrinsic where this LL
 to libm otherwise.
 */
 
-// build_binary emits an integer operation where opt narrowed one. It proved the result never leaves
-// its type, which nsw tells LLVM, and a Remainder's dividend non-negative and its divisor never 0,
-// where srem is what % computes.
+// build_binary trusts what opt proved of an integer operation: the result never leaves its type,
+// which nsw tells LLVM, and a Remainder's dividend is non-negative and its divisor never 0, where
+// srem is what % computes.
 @(private)
 build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> llvm.LLVMValueRef {
 	left, right := body.values[v.left], body.values[v.right]

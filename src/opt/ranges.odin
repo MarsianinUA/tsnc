@@ -7,19 +7,17 @@ import "../abi"
 import "../ir"
 
 /*
-The values each number of the program may take: an interval, whether it holds only integers, and
-whether -0 is among them. bounds and narrow read the answer; nothing here rewrites the IR.
+The values each number may take, for bounds and narrow; nothing here rewrites the IR.
 
 Bounds are computed with the same correctly rounded f64 operations as the program, on the ends of
 the operands' intervals. Rounding is monotone, so the program's own result lies between them. A
 range that may reach ±2^53 is Top: past it f64 rounds integers, and no integer type computes what
 the program does there.
 
-A value's range is the join over what reaches it; an operand is first narrowed by the comparisons
-on the way to its use (refined). A loop is solved by iteration, with the phis of a loop header
-widened to the next threshold after two rounds, then recomputed twice from their operands to take
-back what widening gave away. Across functions, one fixpoint joins what reaches a number global, a
-parameter of a function only ever called directly, and the result of a direct call.
+A loop is solved by iteration: ascending, the phis of a loop header widen to the next threshold
+after two rounds; descending, two more rounds take back what widening gave away. Across functions,
+one fixpoint joins what reaches a number global, a parameter of a function only ever called
+directly, and the result of a direct call.
 */
 
 @(private = "file")
@@ -81,7 +79,7 @@ find_ranges :: proc(p: ir.Program_IR) -> Ranges {
 	for units in p.strings {
 		a.ranges.string_limit = max(a.ranges.string_limit, f64(len(units)))
 	}
-	// Module globals start out zero filled, before any store.
+	// A module global is 0 before its first store.
 	for global, id in p.globals {
 		if global.type == ir.F64 {
 			a.globals[id].range = {
@@ -113,9 +111,8 @@ find_ranges :: proc(p: ir.Program_IR) -> Ranges {
 	return a.ranges
 }
 
-// refined narrows the range of a value by every comparison that holds where `block` runs: the
-// branches on the dominator chain whose edge is the only way into the block below them. That edge
-// ran after the latest definition of the value, so its condition is about this value.
+// refined narrows a range by the facts that hold where `block` runs. A fact's edge ran after the
+// latest definition of the value, so its condition is about this value.
 refined :: proc(fr: Func_Ranges, func: ir.Func, value: ir.Value_ID, block: ir.Block_ID) -> Range {
 	r := fr.values[value]
 	if r.kind == .Bottom || fr.flow.rank[block] < 0 {
@@ -133,8 +130,8 @@ refined :: proc(fr: Func_Ranges, func: ir.Func, value: ir.Value_ID, block: ir.Bl
 	return range_of(iv)
 }
 
-// fact_of answers the number comparison the only predecessor of `block` branched on, and whether
-// the block is its true side; ok is false for a block entered any other way.
+// fact_of answers the number comparison the single predecessor of `block` branched on; holds says
+// the block is its true side.
 fact_of :: proc(
 	fr: Func_Ranges,
 	func: ir.Func,
@@ -174,7 +171,6 @@ Analysis :: struct {
 	grown:   [dynamic]u8, // by Value_ID of the function being analyzed
 }
 
-// Summary is what reaches a global, a parameter or a call's result from every function.
 @(private = "file")
 Summary :: struct {
 	range: Range,
@@ -182,8 +178,8 @@ Summary :: struct {
 }
 
 // link_summaries knows a function's callers only when no closure of it exists: the runtime calls
-// comparators, and a closure may be called from anywhere. main and the module inits are called by
-// the runtime and by main.
+// comparators, and a closure may be called from anywhere. main and the module inits count as
+// entry points.
 @(private = "file")
 link_summaries :: proc(a: ^Analysis) {
 	p := a.program
@@ -246,7 +242,7 @@ prepare :: proc(func: ir.Func) -> Func_Ranges {
 			}
 		}
 		if block == ir.ENTRY {
-			// Nothing jumps to ENTRY, and its dominator is itself: the walk up the chain stops here.
+			// ENTRY has no predecessor and dominates itself: the walk up the chain stops here.
 			continue
 		}
 		if _, _, ok := fact_of(fr, func, block); ok {
@@ -270,7 +266,7 @@ analyze :: proc(a: ^Analysis, id: ir.Func_ID) {
 		count = 0
 	}
 
-	// Ascending: nothing shrinks, and a phi a retreating edge feeds widens once it grew twice.
+	// Ascending.
 	for changed := true; changed; {
 		changed = false
 		for block in fr.flow.order {
@@ -295,8 +291,7 @@ analyze :: proc(a: ^Analysis, id: ir.Func_ID) {
 		}
 	}
 
-	// Descending: every value again from its operands. Each step starts from ranges that hold, so
-	// its result holds too, and a loop bound widening lost comes back.
+	// Descending: each round starts from ranges that hold, so its result holds too.
 	for _ in 0 ..< 2 {
 		for block in fr.flow.order {
 			for value in func.blocks[block].instructions {
@@ -308,8 +303,6 @@ analyze :: proc(a: ^Analysis, id: ir.Func_ID) {
 	}
 }
 
-// contribute joins what the function stores, passes and returns into the summaries, and marks the
-// functions that read a summary that grew.
 @(private = "file")
 contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 	func := a.program.funcs[id]
@@ -485,7 +478,7 @@ binary :: proc(op: ir.Binary_Op, a, b: Range) -> Range {
 	case .Shift_Left, .Bit_Or, .Bit_Xor:
 		return INT32
 	case .Shift_Right:
-		// Shifting right moves a 32 bit integer toward 0 and never past it.
+		// A 32 bit integer shifted right stays between itself and 0.
 		if a.kind == .Integral && a.lo >= INT32.lo && a.hi <= INT32.hi {
 			return {kind = .Integral, lo = min(a.lo, 0), hi = max(a.hi, 0)}
 		}
@@ -615,8 +608,8 @@ join :: proc(a, b: Range) -> Range {
 	}
 }
 
-// widen moves an end that grew to the next threshold: the 32 bit range, then the safe one, then
-// Top. A loop counter reaches its threshold in one step rather than in one step per iteration.
+// widen jumps an end that grew to the next threshold, so a loop counter gets there in one step
+// rather than in one per iteration.
 @(private = "file")
 widen :: proc(old, new: Range) -> Range {
 	if old.kind == .Bottom || new.kind == .Top {
@@ -678,8 +671,6 @@ range_of :: proc(iv: Interval) -> Range {
 	return make_range(iv.integral, lo, hi, iv.negative_zero)
 }
 
-// apply_fact narrows the interval of `value` by the comparison that holds in a fact block. The
-// false side of an ordered comparison says something only when neither side may be NaN.
 @(private = "file")
 apply_fact :: proc(
 	fr: Func_Ranges,
@@ -700,6 +691,7 @@ apply_fact :: proc(
 	}
 	o := interval_of(fr.values[other])
 	if !holds {
+		// The false side of an ordered comparison says something only when neither side is NaN.
 		if op != .Equal && op != .Not_Equal && (iv.nan || o.nan) {
 			return iv
 		}

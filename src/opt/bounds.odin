@@ -6,15 +6,13 @@ import "base:runtime"
 import "../ir"
 
 /*
-Bounds check elimination. A Bounds_Check becomes a Proved_Index when its index is a whole number
-no smaller than 0 where the check stands, by the refined ranges, and one of three things bounds it
-from above:
-- a branch on `index < length` or `length > index`, of these very two values, whose true edge
-  every path to the check takes;
+Bounds check elimination. A Bounds_Check becomes a Proved_Index when the refined range of its index
+is whole and non-negative and one of these bounds it from above:
+- the true edge of `index < length` or `length > index`, on every path to the check;
 - a constant index below the constant length of an array literal;
-- the index is the answer of an earlier check of the same array.
-An array's length changes only inside a call, so no call may stand on a path from the length, the
-literal or the earlier check to this one. A string never changes.
+- an earlier check of the same array, whose answer the index is.
+An array's length changes only inside a call, so no call may stand between the bound and the
+check. A string never changes.
 */
 
 prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges) {
@@ -82,7 +80,6 @@ upper_bound :: proc(
 	block: ir.Block_ID,
 	check: ir.Bounds_Check,
 ) -> ir.Value_ID {
-	// An earlier check of the same array answered the index.
 	#partial switch earlier in func.values[check.index].variant {
 	case ir.Bounds_Check:
 		if earlier.array == check.array {
@@ -94,7 +91,6 @@ upper_bound :: proc(
 		}
 	}
 
-	// A constant index into an array literal of a constant length.
 	if made, is_new := func.values[check.array].variant.(ir.New_Array); is_new {
 		length, length_known := func.values[made.length].variant.(ir.Const_Number)
 		at, at_known := func.values[check.index].variant.(ir.Const_Number)
@@ -103,7 +99,6 @@ upper_bound :: proc(
 		}
 	}
 
-	// A branch on the index against the length of the array, taken on its true side.
 	for walk := fr.fact[block]; walk != ir.NO_BLOCK; walk = fr.fact[fr.flow.idom[walk]] {
 		compare, holds, _ := fact_of(fr, func, walk)
 		if !holds {
@@ -126,8 +121,6 @@ upper_bound :: proc(
 	return ir.NO_VALUE
 }
 
-// no_call_between walks every block on a path from `from` to `to` backwards, from the head of the
-// block of `to` to the block of `from`, and answers whether a call stands anywhere on the way.
 @(private = "file")
 no_call_between :: proc(
 	func: ir.Func,

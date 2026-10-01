@@ -362,9 +362,8 @@ call_runtime :: proc(
 	)
 }
 
-// start_stack_cell fills the stack slot of a cell as tsnc_alloc fills a heap cell: zeros, then the
-// type table in the header. The collector scans the slot with the rest of the stack, so the zeros
-// also clear what an earlier pass left there.
+// start_stack_cell fills the slot as tsnc_alloc fills a heap cell. The collector scans the slot
+// with the rest of the stack, so the zeros also clear what an earlier pass left there.
 @(private)
 start_stack_cell :: proc(
 	m: ^Module,
@@ -382,8 +381,6 @@ start_stack_cell :: proc(
 	return cell
 }
 
-// build_stack_array lays the elements right after the Array_Cell in the same slot, as many as the
-// capacity says.
 @(private)
 build_stack_array :: proc(
 	m: ^Module,
@@ -444,7 +441,7 @@ element_address :: proc(m: ^Module, body: ^Body, array, index: ir.Value_ID) -> l
 	return llvm.LLVMBuildInBoundsGEP2(m.builder, slot_type(m, kind), elements, &position, 1, "")
 }
 
-// index_word is a number as the i64 an address takes. The caller knows it is an integer.
+// index_word takes a number the caller proved an integer, so fptosi is never poison.
 @(private)
 index_word :: proc(m: ^Module, body: ^Body, index: ir.Value_ID) -> llvm.LLVMValueRef {
 	#partial switch body.func.values[index].type.kind {

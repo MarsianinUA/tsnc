@@ -91,9 +91,8 @@ build :: proc(
 	}
 
 	// --- Verify. codegen relies on what the verifier promises and does not check again, so a
-	// broken instruction is caught here, where it can still be named, instead of inside LLVM. opt
-	// rewrites the IR, so what it hands on is verified as well. -o:none optimizes nothing
-	// (requirements 9), and its -emit-ir is lower's IR.
+	// broken instruction is caught here, where it can still be named, instead of inside LLVM.
+	// -o:none optimizes nothing (requirements 9), and its -emit-ir is lower's IR.
 	files := report.check.program.files
 	if err = verify_ir(files, program_ir, lowering, arena); err.kind != .None {
 		return report, err

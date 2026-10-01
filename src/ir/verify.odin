@@ -747,9 +747,7 @@ expect_slot :: proc(c: ^Checker, id: Value_ID, kind: abi.Slot_Kind) {
 	}
 }
 
-// expect_checked_index requires the index of an element access to be the answer of a bounds check
-// of the same array, or of the Proved_Index opt left in its place, so the check cannot drift away
-// from the access it guards.
+// expect_checked_index keeps a check from drifting away from the access it guards.
 @(private)
 expect_checked_index :: proc(c: ^Checker, id: Value_ID, array: Value_ID) {
 	type, known := operand(c, id)
@@ -772,8 +770,7 @@ expect_checked_index :: proc(c: ^Checker, id: Value_ID, array: Value_ID) {
 	report(c, .Unchecked_Index)
 }
 
-// expect_index wants a number, and a result of the index's own type: the answer of a check is the
-// index itself.
+// expect_index: the answer of a check is the index itself, in its own type.
 @(private)
 expect_index :: proc(c: ^Checker, id: Value_ID) {
 	type, known := operand(c, id)
@@ -799,8 +796,7 @@ expect_arithmetic :: proc(c: ^Checker, ids: []Value_ID) {
 	}
 }
 
-// expect_bitwise takes any number type as an operand, since ToInt32 reads each of them, and a result
-// of F64 or the one integer type the operator answers in.
+// expect_bitwise takes any number type as an operand: ToInt32 reads each of them.
 @(private)
 expect_bitwise :: proc(c: ^Checker, ids: []Value_ID, integer: Type) {
 	for id in ids {
@@ -1008,8 +1004,7 @@ comparable :: proc(left, right: Type) -> bool {
 	return left.nullish == right.nullish || left.nullish == .None || right.nullish == .None
 }
 
-// holds_integer says whether a constant fits an integer type: a whole number inside its range, and
-// not -0, which no integer stands for.
+// holds_integer refuses -0, which no integer stands for.
 @(private)
 holds_integer :: proc(type: Type, value: f64) -> bool {
 	if value != math.trunc(value) || value == 0 && math.sign_bit(value) {

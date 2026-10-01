@@ -17,10 +17,8 @@ import "../../src/program"
 import "../../src/source"
 
 /*
-The harness builds one source the way driver does, the real lib as module zero and the source as
-module one, lowers it, optimizes it and holds the IR to its contract before and after. A test
-asserts the decision a pass took on the optimized IR and prints its dump when it fails; the dump
-before opt is there to compare with while a decision is being debugged.
+The harness builds one source with the real lib the way driver does, and verifies the IR on both
+sides of opt. No test reads `before`: it is there to compare with while a decision is debugged.
 
 Everything lives in the temp allocator, which the test runner frees between tests.
 */
@@ -114,7 +112,6 @@ counter :: proc(body: ir.Func) -> (phi: ir.Value_ID, step: ir.Value_ID, found: b
 	return ir.NO_VALUE, ir.NO_VALUE, false
 }
 
-// read_as answers the value an operand stands for, through a conversion.
 read_as :: proc(body: ir.Func, value: ir.Value_ID) -> ir.Value_ID {
 	if convert, is_convert := body.values[value].variant.(ir.Convert); is_convert {
 		return convert.value

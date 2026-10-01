@@ -1022,8 +1022,6 @@ expect_kinds :: proc(
 
 @(test)
 integers_of_one_type_pass :: proc(t: ^testing.T) {
-	// Arithmetic and a comparison in one integer type, the conversions between the number types,
-	// an I64 length and a check that answers its index in the index's type.
 	expect_none(t, ir.verify(build_integers(.None), context.temp_allocator))
 }
 

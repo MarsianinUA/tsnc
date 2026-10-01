@@ -207,9 +207,8 @@ verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Prob
 	return .None
 }
 
-// verify_reference takes nil, which is what a slot holds before its first store, and a reference out
-// of the heap, where the compiler's static cells live, but not one between this frame and the stack
-// base: a cell of the stack goes when its frame does.
+// verify_reference takes nil, which is what a slot holds before its first store. A cell of the
+// stack goes when its frame does.
 @(private = "file")
 verify_reference :: proc(heap: ^Heap, ref: ^abi.Cell_Header) -> Heap_Problem {
 	if ref == nil {
