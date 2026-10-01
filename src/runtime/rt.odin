@@ -30,6 +30,8 @@ foreign _ {
 	tsnc_type_tables :: proc "c" () -> ^[]abi.Type_Table ---
 	@(link_name = abi.ROOTS_SYMBOL)
 	tsnc_roots :: proc "c" () -> ^[]abi.Root ---
+	@(link_name = abi.HEAP_SYMBOL)
+	tsnc_heap :: proc "c" (head: ^abi.Heap_Head) ---
 }
 
 // heap is the one piece of state the runtime keeps. The exports reach it here, since generated code
@@ -61,6 +63,7 @@ main :: proc() {
 	case .Bad_Root:
 		fail.at({error = .Internal}, "malformed root table")
 	}
+	tsnc_heap(&heap.head)
 	tsnc_main()
 	report_stats()
 }

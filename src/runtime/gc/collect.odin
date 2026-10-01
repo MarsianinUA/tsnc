@@ -26,7 +26,7 @@ collect :: #force_no_inline proc(heap: ^Heap) {
 	marked := time.tick_now()
 	sweep(heap)
 	swept := time.tick_now()
-	heap.trigger = max(MIN_TRIGGER, heap.used * GROWTH)
+	set_trigger(heap, max(MIN_TRIGGER, heap.used * GROWTH))
 
 	stats := &heap.stats
 	stats.collections += 1
@@ -65,22 +65,41 @@ mark_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) {
 	switch kind {
 	case .Number, .Boolean:
 	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
-		mark_reference(heap, (^rawptr)(slot)^)
+		mark_cell(heap, (^rawptr)(slot)^)
 	case .Tagged:
 		value := (^abi.Tagged)(slot)
 		#partial switch value.tag {
 		case .String, .Object, .Function:
-			mark_reference(heap, value.payload.ref)
+			mark_cell(heap, value.payload.ref)
 		}
 	}
 }
 
-// owner answers nil for a static cell, which lives in read-only data and must not be marked, and
-// for a number the stack scan took for an address.
+// Only the stack scan needs owner: a word there may be a number, or point inside a cell.
 @(private = "file")
 mark_reference :: proc(heap: ^Heap, p: rawptr) {
-	cell := owner(heap, p)
-	if cell == nil || .Marked in cell.flags {
+	if cell := owner(heap, p); cell != nil {
+		push(heap, cell)
+	}
+}
+
+// mark_cell takes a reference out of a slot, which is nil, the start of a live cell, or an address
+// out of the pages (a static cell, a cell opt put on the stack); verify checks that in stress mode.
+@(private = "file")
+mark_cell :: proc(heap: ^Heap, p: rawptr) {
+	if in_pages(heap, p) {
+		push(heap, (^abi.Cell_Header)(p))
+	}
+}
+
+@(private = "file")
+in_pages :: proc(heap: ^Heap, p: rawptr) -> bool {
+	return uintptr(p) - uintptr(heap.base) < uintptr(heap.page_count * PAGE_SIZE)
+}
+
+@(private = "file")
+push :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
+	if .Marked in cell.flags {
 		return
 	}
 	cell.flags += {.Marked}
@@ -117,15 +136,15 @@ scan_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 			mark_slot(heap, &bytes[field.offset], field.kind)
 		}
 	case .Closure:
-		mark_reference(heap, (^abi.Closure_Cell)(cell).env)
+		mark_cell(heap, (^abi.Closure_Cell)(cell).env)
 	case .Array:
 		// elements points past the header of a Buffer cell, whose table knows nothing of the
 		// elements, so the array reads them.
 		array := (^abi.Array_Cell)(cell)
-		if array.capacity == 0 || owner(heap, array.elements) == nil {
+		if array.capacity == 0 || !in_pages(heap, array.elements) {
 			return
 		}
-		mark_reference(heap, array.elements)
+		mark_cell(heap, rawptr(uintptr(array.elements) - size_of(abi.Cell_Header)))
 		switch table.element {
 		case .Number, .Boolean:
 			// Nothing to follow, and a sieve's array has millions of elements.
@@ -165,7 +184,7 @@ sweep :: proc(heap: ^Heap) {
 @(private = "file")
 sweep_page :: proc(heap: ^Heap, index: int) {
 	class := int(heap.pages[index].class)
-	size := CLASS_SIZE[class]
+	size := abi.CLASS_SIZE[class]
 	page := heap.base[index * PAGE_SIZE:]
 	above := heap.free[class]
 	live := 0
@@ -179,10 +198,10 @@ sweep_page :: proc(heap: ^Heap, index: int) {
 			}
 			// Only a cell that dies now: a free slot's body is poisoned already, and poisoning
 			// it again would cost every collection the whole heap in shadow writes.
-			body := page[slot * size + size_of(Free_Slot):]
-			sanitizer.address_poison(body, size - size_of(Free_Slot))
+			body := page[slot * size + size_of(abi.Free_Slot):]
+			sanitizer.address_poison(body, size - size_of(abi.Free_Slot))
 		}
-		free := (^Free_Slot)(cell)
+		free := (^abi.Free_Slot)(cell)
 		free^ = {
 			header = {type_table = FREE},
 			next = heap.free[class],

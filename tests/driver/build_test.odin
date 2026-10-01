@@ -2,6 +2,7 @@ package driver_tests
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
 
@@ -196,6 +197,38 @@ the_thread_count_changes_no_byte_of_any_artifact :: proc(t: ^testing.T) {
 		"10\nVEC=5 [ 5, 10 ]\n[ 3, 4 ] 12 vec 3,4 number 7 string seven\n11 4\n1 2\n",
 	)
 	testing.expect_value(t, state.exit_code, 0)
+}
+
+// TSNC_GC_STATS counts each cell generated code takes off a free list as one the runtime hands
+// out, and the collector still runs once those cells pass the trigger.
+@(test)
+the_cells_generated_code_takes_are_counted_and_collected :: proc(t: ^testing.T) {
+	built := build_project(build_options("cells", "main.ts", "driver-cells.exe"))
+	defer driver.destroy(&built.report.check)
+	if !expect_built(t, built) {
+		return
+	}
+
+	environment, _ := os.environ(context.temp_allocator)
+	env := make([dynamic]string, 0, len(environment) + 1, context.temp_allocator)
+	append(&env, ..environment)
+	append(&env, "TSNC_GC_STATS=1")
+	state, stdout, stderr, run_err := os.process_exec(
+		{command = {built.report.output}, env = env[:]},
+		context.allocator,
+	)
+	defer delete(stdout)
+	defer delete(stderr)
+	if !testing.expectf(t, run_err == nil, "run %s: %v", built.report.output, run_err) {
+		return
+	}
+	testing.expect_value(t, string(stdout), "1000001\n")
+	testing.expect_value(t, state.exit_code, 0)
+	stats := string(stderr)
+	testing.expectf(t, strings.contains(stats, " 1000001 cells, "), "%s", stats)
+	fields := strings.fields(stats, context.temp_allocator)
+	collections := strconv.atoi(fields[1]) if len(fields) > 1 else 0
+	testing.expectf(t, collections > 0, "%s", stats)
 }
 
 // driver.run itself. The fixture prints nothing, so inherited stdio leaves the test log alone and

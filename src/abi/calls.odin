@@ -15,6 +15,11 @@ TYPE_TABLES_SYMBOL :: "tsnc_type_tables"
 // TYPE_TABLES_SYMBOL is one.
 ROOTS_SYMBOL :: "tsnc_roots"
 
+// HEAP_SYMBOL names a proc "c" (head: ^Heap_Head) that the compiler emits. The runtime's main passes
+// the head of its heap before it calls MAIN_SYMBOL. A procedure for the reason TYPE_TABLES_SYMBOL is
+// one.
+HEAP_SYMBOL :: "tsnc_heap"
+
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
 // maps each to one LLVM type, a Tagged parameter to two words and a Tagged result to a leading
 // slot. A boolean is b64 here, the width the package uses for a boolean slot, so no export depends
@@ -96,7 +101,8 @@ Runtime_Proc :: enum u8 {
 	Array_Join, // (array, separator) -> ^String_Cell; fails on a function, as Value_To_String does
 	Array_Sort, // (array, compare: ^Closure_Cell) -> the array
 	Array_Sort_Default, // (array) -> the array, in the order of its strings; fails as Array_Join does
-	// Cells generated code fills itself: codegen calls these for ir.Alloc and ir.New_Array.
+	// Cells generated code fills itself: codegen calls these for ir.Alloc and ir.New_Array, Alloc
+	// only where Heap_Head gives it no cell.
 	Alloc, // (table) -> ^Cell_Header: a zero-filled cell of the table's size
 	Array_New, // (table, length) -> ^Array_Cell: `length` elements, each the zero of its kind
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1

@@ -104,7 +104,8 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	patch_phis(m, &body, phis[:])
 }
 
-// STACK_CELL_ALIGNMENT is what a cell gets on the heap too: its size class steps by 16 bytes.
+// STACK_CELL_ALIGNMENT is twice what a cell needs (abi.CLASS_SIZE): the frame is 16-byte aligned
+// anyway, and the memset that starts the cell may use aligned vector stores.
 @(private)
 STACK_CELL_ALIGNMENT :: 16
 

@@ -1,8 +1,10 @@
 package codegen_tests
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 
+import "../../src/abi"
 import "../../src/ir"
 
 /*
@@ -78,4 +80,70 @@ globals_that_hold_a_reference_become_roots :: proc(t: ^testing.T) {
 	empty := hello_program("no roots")
 	no_roots := []string{"@roots.slice = private constant { ptr, i64 } zeroinitializer"}
 	expect_text(t, llvm_text(t, &empty, "program-no-roots"), no_roots)
+}
+
+// A small cell comes off its free list inline, so tsnc_alloc stands only in the block the fast
+// path falls back to, alone before the jump to the join. The closure takes the builtin table 2.
+@(test)
+a_small_cell_calls_the_runtime_only_on_the_slow_path :: proc(t: ^testing.T) {
+	source :=
+		"function counter(): () => number {\n" +
+		"  let n = 0;\n" +
+		"  return () => ++n;\n" +
+		"}\n" +
+		"const p = { a: 1, b: 2 };\n" +
+		"console.log(p.a, counter()());\n"
+	output := compile_text(t, source)
+	text := llvm_text(t, &output, "program-alloc")
+	if text == "" {
+		return
+	}
+	wants := []string {
+		"@heap = internal global ptr null",
+		"define void @tsnc_heap(ptr %0)",
+		"store ptr %0, ptr @heap",
+		"call ptr @tsnc_alloc(i64 2)",
+		"icmp sle i64",
+		"= and i1 ",
+	}
+	expect_text(t, text, wants)
+
+	lines := strings.split_lines(text, context.temp_allocator)
+	calls := 0
+	for line, i in lines {
+		if !strings.contains(line, "call ptr @tsnc_alloc(") {
+			continue
+		}
+		calls += 1
+		alone :=
+			strings.contains(lines[i - 1], "; preds = %") &&
+			strings.has_prefix(lines[i + 1], "  br label %")
+		testing.expectf(
+			t,
+			alone,
+			"a call outside a slow block:\n%s\n%s\n%s",
+			lines[i - 1],
+			line,
+			lines[i + 1],
+		)
+	}
+	testing.expectf(t, calls >= 3, "%d calls of tsnc_alloc", calls)
+	testing.expect_value(t, strings.count(text, "load ptr, ptr @heap"), calls)
+}
+
+// A cell past abi.MAX_SMALL takes whole pages, which only the runtime hands out.
+@(test)
+a_large_cell_calls_the_runtime_at_once :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	slots := make([]abi.Slot_Kind, abi.MAX_SMALL / 8, context.temp_allocator)
+	large := ir.environment_layout(&p, slots)
+	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, at(0))
+	f := ir.begin_func(&p, main)
+	ir.emit(&f, ir.Type{kind = .Ref, layout = large}, ir.Alloc{layout = large}, at(0))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(0))
+	ir.end_func(&f)
+	output := finish_program(t, &p, main)
+	text := llvm_text(t, &output, "program-large-alloc")
+	expect_text(t, text, []string{fmt.tprintf("call ptr @tsnc_alloc(i64 %d)", ir.table_id(large))})
+	testing.expectf(t, !strings.contains(text, "load ptr, ptr @heap"), "an inline path:\n%s", text)
 }

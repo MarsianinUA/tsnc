@@ -39,8 +39,8 @@ a_new_cell_is_addressable_for_its_size_alone :: proc(t: ^testing.T) {
 		expect_poisoned(t, point[POINT_SIZE:], POINT_SLOT - POINT_SIZE)
 		// The next slot waits on the free list: its link is addressable, its body is not.
 		next := point[POINT_SLOT:]
-		expect_addressable(t, next, size_of(gc.Free_Slot))
-		expect_poisoned(t, next[size_of(gc.Free_Slot):], POINT_SLOT - size_of(gc.Free_Slot))
+		expect_addressable(t, next, size_of(abi.Free_Slot))
+		expect_poisoned(t, next[size_of(abi.Free_Slot):], POINT_SLOT - size_of(abi.Free_Slot))
 		page := heap.base[page_index(&heap, point) * gc.PAGE_SIZE:]
 		tail := gc.PAGE_SIZE % POINT_SLOT
 		expect_poisoned(t, page[gc.PAGE_SIZE - tail:], tail)
@@ -56,15 +56,15 @@ a_freed_slot_is_poisoned_past_its_link_until_it_is_handed_out_again :: proc(t: ^
 
 free_a_point :: proc(t: ^testing.T, heap: ^gc.Heap) {
 	// The kept point shares the page, so the page stays Small and only the slot is freed.
-	kept, dropped := keep_one_of_two_points(heap)
+	kept, dropped := keep_one_of_two(heap, POINT, POINT_SIZE)
 	scrub_stack()
 	gc.collect(heap)
 
 	cell := ([^]byte)(unhide(dropped))
 	testing.expect(t, gc.owner(heap, cell) == nil, "the dropped point was kept")
 	testing.expect_value(t, gc.owner(heap, kept), kept)
-	expect_addressable(t, cell, size_of(gc.Free_Slot))
-	expect_poisoned(t, cell[size_of(gc.Free_Slot):], POINT_SLOT - size_of(gc.Free_Slot))
+	expect_addressable(t, cell, size_of(abi.Free_Slot))
+	expect_poisoned(t, cell[size_of(abi.Free_Slot):], POINT_SLOT - size_of(abi.Free_Slot))
 
 	again := ([^]byte)(gc.alloc(heap, POINT, POINT_SIZE))
 	testing.expect_value(t, again, cell)
@@ -73,15 +73,37 @@ free_a_point :: proc(t: ^testing.T, heap: ^gc.Heap) {
 }
 
 @(private = "file")
-keep_one_of_two_points :: #force_no_inline proc(
+keep_one_of_two :: #force_no_inline proc(
 	heap: ^gc.Heap,
+	table: abi.Type_Table_ID,
+	size: int,
 ) -> (
 	kept: ^abi.Cell_Header,
 	dropped: uintptr,
 ) {
-	kept = gc.alloc(heap, POINT, POINT_SIZE)
-	dropped = hide(gc.alloc(heap, POINT, POINT_SIZE))
+	kept = gc.alloc(heap, table, size)
+	dropped = hide(gc.alloc(heap, table, size))
 	return
+}
+
+@(test)
+a_24_byte_cell_is_addressable_whole_and_once_freed_up_to_its_link :: proc(t: ^testing.T) {
+	when .Address in ODIN_SANITIZER_FLAGS {
+		on_a_clean_stack(t, free_a_24_byte_cell)
+	}
+}
+
+free_a_24_byte_cell :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	SIZE :: 24
+	kept, dropped := keep_one_of_two(heap, BLOB, SIZE)
+	expect_addressable(t, ([^]byte)(kept), SIZE)
+	scrub_stack()
+	gc.collect(heap)
+
+	cell := ([^]byte)(unhide(dropped))
+	testing.expect(t, gc.owner(heap, cell) == nil, "the dropped cell was kept")
+	expect_addressable(t, cell, size_of(abi.Free_Slot))
+	expect_poisoned(t, cell[size_of(abi.Free_Slot):], SIZE - size_of(abi.Free_Slot))
 }
 
 LARGE_SIZE :: 2 * gc.PAGE_SIZE + 1

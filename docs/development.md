@@ -161,7 +161,7 @@ TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -
 TSNC_GC_STRESS=1 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
 ```
 
-Three programs of the corpus exist for the collector: `gc-objects.ts`, `gc-closures.ts` and `gc-large.ts` allocate enough to collect at least three times in the normal mode, where the first collection waits for 4 MiB. Each builds its bytes out of few allocations, long strings by doubling and whole arrays, so that under stress, where every allocation collects and checks the heap, a build still runs in about two seconds.
+Three programs of the corpus exist for the collector: `gc-objects.ts`, `gc-closures.ts` and `gc-large.ts` allocate enough to collect at least three times in the normal mode, where the first collection waits for 4 MiB and each later one for the heap to hold four times what the last one kept: they collect 3, 3 and 5 times. Each builds its bytes out of few allocations, long strings by doubling and whole arrays, so that under stress, where every allocation collects and checks the heap, a build still runs in about two seconds.
 
 ## GC statistics
 
@@ -177,7 +177,7 @@ gc: 109 collections, 293.5 ms marking, 78.9 ms sweeping, 5.4 ms longest pause, 2
 | marking | time spent marking: the stack, the roots and the cells they reach |
 | sweeping | time spent sweeping |
 | longest pause | the longest single collection, marking and sweeping |
-| cells | how many cells the program allocated |
+| cells | how many cells the program allocated, those generated code takes off a free list itself included |
 | allocated | bytes of the slots and page runs those cells took |
 | live | bytes the last collection kept, 0 when none ran |
 | heap | bytes of the heap's pages; the heap never gives a page back, so this is its peak |

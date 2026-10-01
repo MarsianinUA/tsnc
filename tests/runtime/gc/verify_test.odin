@@ -55,6 +55,25 @@ a_reference_to_no_live_cell_dangles :: proc(t: ^testing.T) {
 
 	live.first.next = (^abi.Cell_Header)(&heap.base[heap.page_count * gc.PAGE_SIZE])
 	expect_problem(t, &heap, .Dangling_Reference, live.first)
+	live.first.next = live.second
+
+	// The collector marks what every kind of reference slot holds without looking for its cell.
+	inside := (^abi.Cell_Header)(uintptr(live.second) + 8)
+	live.first.value = {
+		tag = .Object,
+		payload = {ref = inside},
+	}
+	expect_problem(t, &heap, .Dangling_Reference, live.first)
+	live.first.value = {}
+
+	env := live.closure.env
+	slot := (^^abi.Cell_Header)(&([^]byte)(env)[8])
+	slot^ = inside
+	expect_problem(t, &heap, .Dangling_Reference, env)
+	slot^ = live.first
+
+	live.closure.env = (^abi.Environment_Cell)(inside)
+	expect_problem(t, &heap, .Dangling_Reference, live.closure)
 }
 
 @(test)
@@ -106,8 +125,8 @@ contents_that_overrun_their_table_are_bad :: proc(t: ^testing.T) {
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 
-	// Three units took class 32, which has room for eight.
-	live.text.length = 9
+	// Three units took class 24, which has room for four.
+	live.text.length = 5
 	expect_problem(t, &heap, .Bad_Cell, live.text)
 	live.text.length = 3
 
@@ -168,9 +187,9 @@ free_lists_hold_exactly_the_free_slots :: proc(t: ^testing.T) {
 	head := heap.free[POINT_CLASS]
 	testing.expect_value(t, uintptr(head), uintptr(live.second) + 48)
 
-	head.next = (^gc.Free_Slot)(live.first)
+	head.next = (^abi.Free_Slot)(live.first)
 	expect_problem(t, &heap, .Bad_Free_List, live.first)
-	head.next = (^gc.Free_Slot)(uintptr(head) + 48)
+	head.next = (^abi.Free_Slot)(uintptr(head) + 48)
 
 	// A slot the program wrote to after it was freed looks live, and the list still holds it.
 	free_header := head.header
@@ -208,7 +227,7 @@ a_page_table_that_disagrees_with_itself_is_bad :: proc(t: ^testing.T) {
 	cases := [?]Case {
 		{"free page below first_free", small, {kind = .Free}},
 		{"kind outside the enum", small, {kind = gc.Page_Kind(7)}},
-		{"class outside the table", small, {kind = .Small, class = gc.CLASS_COUNT}},
+		{"class outside the table", small, {kind = .Small, class = abi.CLASS_COUNT}},
 		{"run of no pages", head, {kind = .Large}},
 		{"run past the frontier", head, {kind = .Large, run = 3}},
 		{"tail outside its run", head + 1, {kind = .Large_Tail, run = 5}},

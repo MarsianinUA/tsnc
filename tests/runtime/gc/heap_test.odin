@@ -19,7 +19,7 @@ ARRAY :: POINT + 3
 
 POINT_SIZE :: 40
 // POINT_CLASS is the class of 48 bytes, the one a point takes.
-POINT_CLASS :: 2
+POINT_CLASS :: 3
 
 TABLES := []abi.Type_Table {
 	{
@@ -31,7 +31,8 @@ TABLES := []abi.Type_Table {
 			{name = "x", offset = 32, kind = .Number},
 		},
 	},
-	{kind = .Environment, size = 16, fields = {{offset = 8, kind = .Ref}}},
+	// Ref_Or_Null, so the tests reach that kind too: it is traced as a Ref.
+	{kind = .Environment, size = 16, fields = {{offset = 8, kind = .Ref_Or_Null}}},
 	{kind = .Closure, size = size_of(abi.Closure_Cell)},
 	{kind = .Array, size = size_of(abi.Array_Cell), element = .Ref},
 }
@@ -46,14 +47,14 @@ Point :: struct {
 #assert(size_of(Point) == POINT_SIZE)
 
 @(test)
-classes_ascend_in_steps_of_16_up_to_max_small :: proc(t: ^testing.T) {
+classes_ascend_in_multiples_of_8_up_to_max_small :: proc(t: ^testing.T) {
 	previous := 0
-	for size in gc.CLASS_SIZE {
+	for size in abi.CLASS_SIZE {
 		testing.expectf(t, size > previous, "%d does not follow %d", size, previous)
-		testing.expectf(t, size % 16 == 0, "%d is not a multiple of 16", size)
+		testing.expectf(t, size % 8 == 0, "%d is not a multiple of 8", size)
 		previous = size
 	}
-	testing.expect_value(t, previous, gc.MAX_SMALL)
+	testing.expect_value(t, previous, abi.MAX_SMALL)
 }
 
 @(test)
@@ -62,10 +63,10 @@ a_cell_takes_the_smallest_class_that_holds_it :: proc(t: ^testing.T) {
 	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
-	for size, class in gc.CLASS_SIZE {
+	for size, class in abi.CLASS_SIZE {
 		cell := gc.alloc(&heap, BLOB, size)
 		expect_small(t, &heap, cell, class)
-		if class + 1 < gc.CLASS_COUNT {
+		if class + 1 < abi.CLASS_COUNT {
 			expect_small(t, &heap, gc.alloc(&heap, BLOB, size + 1), class + 1)
 		}
 	}
@@ -87,7 +88,7 @@ a_cell_is_zero_past_its_header :: proc(t: ^testing.T) {
 
 	// A cell of a header alone is shorter than the link, and its slot still loses it.
 	bare := gc.alloc(&heap, BLOB, size_of(abi.Cell_Header))
-	expect_zero(t, ([^]byte)(bare)[size_of(abi.Cell_Header):size_of(gc.Free_Slot)])
+	expect_zero(t, ([^]byte)(bare)[size_of(abi.Cell_Header):size_of(abi.Free_Slot)])
 }
 
 @(test)
@@ -104,10 +105,10 @@ cells_of_a_class_come_in_address_order_and_fill_pages :: proc(t: ^testing.T) {
 	pages := heap.page_count
 	cells: [3]^abi.Cell_Header
 	for &cell in cells {
-		cell = gc.alloc(&heap, BLOB, gc.MAX_SMALL)
+		cell = gc.alloc(&heap, BLOB, abi.MAX_SMALL)
 	}
 	testing.expect_value(t, heap.page_count, pages + 2)
-	testing.expect_value(t, uintptr(cells[1]) - uintptr(cells[0]), gc.MAX_SMALL)
+	testing.expect_value(t, uintptr(cells[1]) - uintptr(cells[0]), abi.MAX_SMALL)
 	testing.expect_value(t, page_index(&heap, cells[2]), page_index(&heap, cells[0]) + 1)
 }
 
@@ -117,7 +118,7 @@ a_large_cell_takes_a_run_of_whole_pages :: proc(t: ^testing.T) {
 	init_heap(t, &heap)
 	defer gc.heap_destroy(&heap)
 
-	one := gc.alloc(&heap, BLOB, gc.MAX_SMALL + 1)
+	one := gc.alloc(&heap, BLOB, abi.MAX_SMALL + 1)
 	testing.expect_value(t, heap.pages[page_index(&heap, one)], gc.Page{kind = .Large, run = 1})
 	two := gc.alloc(&heap, BLOB, 2 * gc.PAGE_SIZE)
 	testing.expect_value(t, heap.pages[page_index(&heap, two)], gc.Page{kind = .Large, run = 2})
@@ -167,6 +168,33 @@ an_address_outside_every_live_cell_has_no_owner :: proc(t: ^testing.T) {
 	local: int
 	testing.expect(t, gc.owner(&heap, &local) == nil, "the stack")
 	testing.expect(t, gc.owner(&heap, &TABLES[0]) == nil, "static data")
+}
+
+// 2730 cells of 24 bytes fill a page but for its last 16 bytes.
+@(test)
+every_address_of_a_24_byte_page_finds_its_cell :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	SLOT :: 24
+	first := gc.alloc(&heap, BLOB, SLOT)
+	for _ in 1 ..< gc.PAGE_SIZE / SLOT {
+		gc.alloc(&heap, BLOB, SLOT)
+	}
+	testing.expect_value(t, heap.page_count, 1)
+	page := ([^]byte)(first)
+	end := gc.PAGE_SIZE / SLOT * SLOT
+	for offset in 0 ..< end {
+		cell := (^abi.Cell_Header)(&page[offset / SLOT * SLOT])
+		if gc.owner(&heap, &page[offset]) != cell {
+			testing.expectf(t, false, "byte %d of the page has no cell", offset)
+			break
+		}
+	}
+	for offset in end ..< gc.PAGE_SIZE {
+		testing.expectf(t, gc.owner(&heap, &page[offset]) == nil, "byte %d of the tail", offset)
+	}
 }
 
 @(test)
@@ -338,8 +366,8 @@ a_heap_hands_out_every_page_it_reserved :: proc(t: ^testing.T) {
 	defer gc.heap_destroy(&heap)
 
 	gc.alloc(&heap, BLOB, gc.PAGE_SIZE + 1)
-	gc.alloc(&heap, BLOB, gc.MAX_SMALL)
-	gc.alloc(&heap, BLOB, gc.MAX_SMALL)
+	gc.alloc(&heap, BLOB, abi.MAX_SMALL)
+	gc.alloc(&heap, BLOB, abi.MAX_SMALL)
 	testing.expect_value(t, heap.page_count, heap.page_limit)
 }
 
@@ -378,5 +406,5 @@ expect_small :: proc(
 ) {
 	page := heap.pages[page_index(heap, cell)]
 	testing.expect_value(t, page, gc.Page{kind = .Small, class = u8(class)}, loc = loc)
-	testing.expectf(t, uintptr(cell) % 16 == 0, "%p is not 16-byte aligned", cell, loc = loc)
+	testing.expectf(t, uintptr(cell) % 8 == 0, "%p is not 8-byte aligned", cell, loc = loc)
 }

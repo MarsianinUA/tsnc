@@ -54,8 +54,9 @@ stress_mode_collects_before_every_allocation :: proc(t: ^testing.T) {
 	// The loop dropped about two megabytes, and a normal heap would not have collected once. The
 	// live set is a few kilobytes; the bound leaves room for a stale copy of the last large cell.
 	testing.expectf(t, heap.used < 512 * 1024, "%d bytes in use", heap.used)
-	// Even where a free list holds the slot.
-	testing.expect_value(t, heap.stats.collections, heap.stats.cells)
+	// Even where a free list holds the slot, and generated code takes none.
+	testing.expect_value(t, heap.stats.collections, heap.cells)
+	testing.expect_value(t, heap.limit, 0)
 }
 
 // More live cells than one page of the mark stack holds.
@@ -131,7 +132,7 @@ a_full_heap_collects_before_it_gives_up :: proc(t: ^testing.T) {
 
 allocate_past_the_reservation :: proc(t: ^testing.T, heap: ^gc.Heap) {
 	for _ in 0 ..< 50 {
-		gc.alloc(heap, BLOB, gc.MAX_SMALL + 1)
+		gc.alloc(heap, BLOB, abi.MAX_SMALL + 1)
 	}
 	testing.expect_value(t, heap.page_count, 8)
 	cells := 0
@@ -200,7 +201,7 @@ a_small_cell_past_the_trigger_collects_first :: proc(t: ^testing.T) {
 		used = heap.used
 		gc.alloc(&heap, POINT, POINT_SIZE)
 	}
-	crossed := used + gc.CLASS_SIZE[POINT_CLASS] > gc.MIN_TRIGGER
+	crossed := used + abi.CLASS_SIZE[POINT_CLASS] > gc.MIN_TRIGGER
 	testing.expectf(t, crossed && used <= gc.MIN_TRIGGER, "collected at %d bytes in use", used)
 }
 
@@ -407,16 +408,78 @@ fill_module_globals :: #force_no_inline proc(heap: ^gc.Heap) -> (kept, dropped: 
 }
 
 collect_around_a_large_cell :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	testing.expect_value(t, heap.trigger, gc.MIN_TRIGGER)
+	expect_limit(t, heap)
 	gc.collect(heap)
 	testing.expect_value(t, heap.used, 0)
 	testing.expect_value(t, heap.trigger, gc.MIN_TRIGGER)
 
-	// Over half of MIN_TRIGGER, so GROWTH and not MIN_TRIGGER sets the next trigger.
+	// Over a GROWTH-th of MIN_TRIGGER, so GROWTH and not MIN_TRIGGER sets the next trigger.
 	large := gc.alloc(heap, BLOB, 3 * gc.MIN_TRIGGER / 4)
 	gc.collect(heap)
 	testing.expect_value(t, heap.used, 3 * gc.MIN_TRIGGER / 4)
-	testing.expect_value(t, heap.trigger, 3 * gc.MIN_TRIGGER / 2)
+	testing.expect_value(t, heap.trigger, 3 * gc.MIN_TRIGGER / 4 * gc.GROWTH)
+	expect_limit(t, heap)
 	testing.expect_value(t, large.type_table, BLOB)
+}
+
+// Under ASan alloc unpoisons every cell it hands out, so generated code takes none.
+expect_limit :: proc(t: ^testing.T, heap: ^gc.Heap, loc := #caller_location) {
+	want := 0 if .Address in ODIN_SANITIZER_FLAGS else heap.trigger
+	testing.expect_value(t, heap.limit, want, loc = loc)
+}
+
+@(test)
+a_cell_taken_the_way_generated_code_takes_it_is_like_any :: proc(t: ^testing.T) {
+	when .Address not_in ODIN_SANITIZER_FLAGS {
+		on_a_clean_stack(t, take_cells_inline)
+	}
+}
+
+take_cells_inline :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	kept, dropped := take_two_points(heap)
+	if !testing.expect(t, kept != nil, "no cell under the limit") {
+		return
+	}
+	testing.expect_value(t, heap.cells, 3)
+	testing.expect_value(t, heap.allocated, 3 * abi.CLASS_SIZE[POINT_CLASS])
+	expect_problem(t, heap, .None, nil)
+
+	scrub_stack()
+	gc.collect(heap)
+	testing.expect(t, gc.owner(heap, unhide(dropped)) == nil, "the dropped point was kept")
+	testing.expect_value(t, gc.owner(heap, kept), &kept.header)
+	testing.expect_value(t, kept.x, 7)
+	expect_problem(t, heap, .None, nil)
+}
+
+// The first point carves the page whose free list the other two come from.
+@(private = "file")
+take_two_points :: #force_no_inline proc(heap: ^gc.Heap) -> (kept: ^Point, dropped: uintptr) {
+	kept = (^Point)(gc.alloc(heap, POINT, POINT_SIZE))
+	kept.next = take_inline(heap, POINT, POINT_SIZE)
+	dropped = hide(take_inline(heap, POINT, POINT_SIZE))
+	kept.x = 7
+	return
+}
+
+// take_inline does what codegen's build_alloc emits (abi.Heap_Head), or answers nil where that
+// calls tsnc_alloc.
+take_inline :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Header {
+	class := abi.class_of(size)
+	slot := heap.free[class]
+	slot_size := abi.CLASS_SIZE[class]
+	if slot == nil || heap.used + slot_size > heap.limit {
+		return nil
+	}
+	heap.free[class] = slot.next
+	heap.used += slot_size
+	heap.cells += 1
+	heap.allocated += slot_size
+	intrinsics.mem_zero(slot, max(size, size_of(abi.Free_Slot)))
+	cell := (^abi.Cell_Header)(slot)
+	cell.type_table = table
+	return cell
 }
 
 make_text :: proc(heap: ^gc.Heap, length: int) -> ^abi.String_Cell {
