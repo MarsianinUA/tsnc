@@ -53,24 +53,28 @@ Ranges :: struct {
 
 Func_Ranges :: struct {
 	values: []Range, // by Value_ID; Bottom for a value that is no number
-	flow:   ir.Flow,
-	// fact[block] is the nearest block on the dominator chain of `block`, itself included, entered
-	// only from a branch on a comparison of numbers; NO_BLOCK when there is none.
-	fact:   []ir.Block_ID,
-	// A retreating edge enters the block: its phis are the ones that widen.
-	header: []bool,
+	// fact[block] is that of the nearest block on the dominator chain of `block`, itself included,
+	// entered only from a branch on a comparison of numbers; nil when there is none.
+	fact:   []^Fact,
 }
 
-find_ranges :: proc(p: ir.Program_IR) -> Ranges {
+Fact :: struct {
+	compare: ir.Compare,
+	holds:   bool, // the block is the true side
+	up:      ^Fact, // the fact of the immediate dominator
+}
+
+find_ranges :: proc(p: ir.Program_IR, shapes: []Shape) -> Ranges {
 	a := Analysis {
 		program = p,
+		shapes  = shapes,
 		globals = make([]Summary, len(p.globals), context.temp_allocator),
 		params  = make([][]Summary, len(p.funcs), context.temp_allocator),
 		returns = make([]Summary, len(p.funcs), context.temp_allocator),
 		dirty   = make([]bool, len(p.funcs), context.temp_allocator),
 		readers = make([][dynamic]ir.Func_ID, len(p.globals), context.temp_allocator),
 		callers = make([][dynamic]ir.Func_ID, len(p.funcs), context.temp_allocator),
-		grown   = make([dynamic]u8, context.temp_allocator),
+		grown   = make([dynamic]int, context.temp_allocator),
 	}
 	a.ranges = {
 		funcs        = make([]Func_Ranges, len(p.funcs), context.temp_allocator),
@@ -89,7 +93,7 @@ find_ranges :: proc(p: ir.Program_IR) -> Ranges {
 	}
 	link_summaries(&a)
 	for id in 0 ..< len(p.funcs) {
-		a.ranges.funcs[id] = prepare(p.funcs[id])
+		a.ranges.funcs[id] = prepare(p.funcs[id], shapes[id].flow)
 		a.dirty[id] = true
 	}
 
@@ -113,27 +117,26 @@ find_ranges :: proc(p: ir.Program_IR) -> Ranges {
 
 // refined narrows a range by the facts that hold where `block` runs. A fact's edge ran after the
 // latest definition of the value, so its condition is about this value.
-refined :: proc(fr: Func_Ranges, func: ir.Func, value: ir.Value_ID, block: ir.Block_ID) -> Range {
+refined :: proc(fr: Func_Ranges, value: ir.Value_ID, block: ir.Block_ID) -> Range {
 	r := fr.values[value]
-	if r.kind == .Bottom || fr.flow.rank[block] < 0 {
+	if r.kind == .Bottom {
 		return r
 	}
-	walk := fr.fact[block]
-	if walk == ir.NO_BLOCK {
+	if fr.fact[block] == nil {
 		return r
 	}
 	iv := interval_of(r)
-	for walk != ir.NO_BLOCK {
-		iv = apply_fact(fr, func, walk, value, iv)
-		walk = fr.fact[fr.flow.idom[walk]]
+	for fact := fr.fact[block]; fact != nil; fact = fact.up {
+		iv = apply_fact(fr, fact^, value, iv)
 	}
 	return range_of(iv)
 }
 
 // fact_of answers the number comparison the single predecessor of `block` branched on; holds says
 // the block is its true side.
+@(private = "file")
 fact_of :: proc(
-	fr: Func_Ranges,
+	flow: ir.Flow,
 	func: ir.Func,
 	block: ir.Block_ID,
 ) -> (
@@ -141,10 +144,10 @@ fact_of :: proc(
 	holds: bool,
 	ok: bool,
 ) {
-	if len(fr.flow.preds[block]) != 1 {
+	if len(flow.preds[block]) != 1 {
 		return
 	}
-	pred := fr.flow.preds[block][0]
+	pred := flow.preds[block][0]
 	instructions := func.blocks[pred].instructions
 	branch, is_branch := func.values[instructions[len(instructions) - 1]].variant.(ir.Branch)
 	if !is_branch || branch.then_block == branch.else_block {
@@ -161,6 +164,7 @@ fact_of :: proc(
 @(private = "file")
 Analysis :: struct {
 	program: ir.Program_IR,
+	shapes:  []Shape, // by Func_ID
 	ranges:  Ranges,
 	globals: []Summary, // by Global_ID
 	params:  [][]Summary, // by Func_ID, then parameter; nil for a function called from elsewhere
@@ -168,13 +172,13 @@ Analysis :: struct {
 	dirty:   []bool, // by Func_ID: a summary it reads grew since it was last analyzed
 	readers: [][dynamic]ir.Func_ID, // by Global_ID: the functions that load it
 	callers: [][dynamic]ir.Func_ID, // by Func_ID: the functions that call it directly
-	grown:   [dynamic]u8, // by Value_ID of the function being analyzed
+	grown:   [dynamic]int, // by Value_ID of the function being analyzed
 }
 
 @(private = "file")
 Summary :: struct {
 	range: Range,
-	grown: int, // the times it grew; from the third on it widens
+	grown: int,
 }
 
 // link_summaries knows a function's callers only when no closure of it exists: the runtime calls
@@ -224,31 +228,26 @@ append_once :: proc(list: ^[dynamic]ir.Func_ID, id: ir.Func_ID) {
 
 // prepare builds what every analysis of the function reads and never changes.
 @(private = "file")
-prepare :: proc(func: ir.Func) -> Func_Ranges {
-	flow := ir.make_flow(func, context.temp_allocator)
+prepare :: proc(func: ir.Func, flow: ir.Flow) -> Func_Ranges {
 	fr := Func_Ranges {
 		values = make([]Range, len(func.values), context.temp_allocator),
-		flow   = flow,
-		fact   = make([]ir.Block_ID, len(func.blocks), context.temp_allocator),
-		header = make([]bool, len(func.blocks), context.temp_allocator),
-	}
-	for &block in fr.fact {
-		block = ir.NO_BLOCK
+		fact   = make([]^Fact, len(func.blocks), context.temp_allocator),
 	}
 	for block in flow.order {
-		for pred in flow.preds[block] {
-			if flow.rank[pred] >= flow.rank[block] {
-				fr.header[block] = true
-			}
-		}
 		if block == ir.ENTRY {
-			// ENTRY has no predecessor and dominates itself: the walk up the chain stops here.
+			// The call enters ENTRY too, so no branch speaks for it.
 			continue
 		}
-		if _, _, ok := fact_of(fr, func, block); ok {
-			fr.fact[block] = block
+		up := fr.fact[flow.idom[block]]
+		if compare, holds, ok := fact_of(flow, func, block); ok {
+			fact := Fact {
+				compare = compare,
+				holds   = holds,
+				up      = up,
+			}
+			fr.fact[block] = new_clone(fact, context.temp_allocator)
 		} else {
-			fr.fact[block] = fr.fact[flow.idom[block]]
+			fr.fact[block] = up
 		}
 	}
 	return fr
@@ -257,6 +256,7 @@ prepare :: proc(func: ir.Func) -> Func_Ranges {
 @(private = "file")
 analyze :: proc(a: ^Analysis, id: ir.Func_ID) {
 	func := a.program.funcs[id]
+	shape := a.shapes[id]
 	fr := &a.ranges.funcs[id]
 	for &r in fr.values {
 		r = {}
@@ -269,31 +269,27 @@ analyze :: proc(a: ^Analysis, id: ir.Func_ID) {
 	// Ascending.
 	for changed := true; changed; {
 		changed = false
-		for block in fr.flow.order {
+		for block in shape.flow.order {
 			for value in func.blocks[block].instructions {
 				if func.values[value].type != ir.F64 {
 					continue
 				}
-				old := fr.values[value]
-				new := join(old, compute(a, id, value, block))
-				if new == old {
-					continue
+				r := compute(a, id, value, block)
+				_, is_phi := func.values[value].variant.(ir.Phi)
+				if is_phi && shape.header[block] {
+					changed |= grow(&fr.values[value], &a.grown[value], r)
+				} else {
+					old := fr.values[value]
+					fr.values[value] = join(old, r)
+					changed |= fr.values[value] != old
 				}
-				if _, is_phi := func.values[value].variant.(ir.Phi); is_phi && fr.header[block] {
-					a.grown[value] += 1
-					if a.grown[value] > 2 {
-						new = widen(old, new)
-					}
-				}
-				fr.values[value] = new
-				changed = true
 			}
 		}
 	}
 
 	// Descending: each round starts from ranges that hold, so its result holds too.
 	for _ in 0 ..< 2 {
-		for block in fr.flow.order {
+		for block in shape.flow.order {
 			for value in func.blocks[block].instructions {
 				if func.values[value].type == ir.F64 {
 					fr.values[value] = compute(a, id, value, block)
@@ -307,14 +303,15 @@ analyze :: proc(a: ^Analysis, id: ir.Func_ID) {
 contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 	func := a.program.funcs[id]
 	fr := a.ranges.funcs[id]
-	for block in fr.flow.order {
+	for block in a.shapes[id].flow.order {
 		for value in func.blocks[block].instructions {
 			#partial switch v in func.values[value].variant {
 			case ir.Global_Store:
 				if a.program.globals[v.global].type != ir.F64 {
 					continue
 				}
-				if grow(&a.globals[v.global], refined(fr, func, v.value, block)) {
+				global := &a.globals[v.global]
+				if grow(&global.range, &global.grown, refined(fr, v.value, block)) {
 					for reader in a.readers[v.global] {
 						a.dirty[reader] = true
 					}
@@ -328,7 +325,7 @@ contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 					if func.values[arg].type != ir.F64 {
 						continue
 					}
-					if grow(&params[i], refined(fr, func, arg, block)) {
+					if grow(&params[i].range, &params[i].grown, refined(fr, arg, block)) {
 						a.dirty[v.func] = true
 					}
 				}
@@ -336,7 +333,8 @@ contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 				if func.result != ir.F64 {
 					continue
 				}
-				if grow(&a.returns[id], refined(fr, func, v.value, block)) {
+				result := &a.returns[id]
+				if grow(&result.range, &result.grown, refined(fr, v.value, block)) {
 					for caller in a.callers[id] {
 						a.dirty[caller] = true
 					}
@@ -347,16 +345,16 @@ contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 }
 
 @(private = "file")
-grow :: proc(summary: ^Summary, r: Range) -> bool {
-	new := join(summary.range, r)
-	if new == summary.range {
+grow :: proc(range: ^Range, grown: ^int, r: Range) -> bool {
+	new := join(range^, r)
+	if new == range^ {
 		return false
 	}
-	summary.grown += 1
-	if summary.grown > 2 {
-		new = widen(summary.range, new)
+	grown^ += 1
+	if grown^ > 2 {
+		new = widen(range^, new)
 	}
-	summary.range = new
+	range^ = new
 	return true
 }
 
@@ -372,9 +370,9 @@ compute :: proc(a: ^Analysis, id: ir.Func_ID, value: ir.Value_ID, block: ir.Bloc
 			return params[v.index].range
 		}
 	case ir.Binary:
-		return binary(v.op, refined(fr, func, v.left, block), refined(fr, func, v.right, block))
+		return binary(v.op, refined(fr, v.left, block), refined(fr, v.right, block))
 	case ir.Unary:
-		operand := refined(fr, func, v.operand, block)
+		operand := refined(fr, v.operand, block)
 		if operand.kind == .Bottom {
 			return {}
 		}
@@ -385,9 +383,7 @@ compute :: proc(a: ^Analysis, id: ir.Func_ID, value: ir.Value_ID, block: ir.Bloc
 	case ir.Phi:
 		r: Range
 		for edge in v.incoming {
-			if fr.flow.rank[edge.block] >= 0 {
-				r = join(r, refined(fr, func, edge.value, edge.block))
-			}
+			r = join(r, refined(fr, edge.value, edge.block))
 		}
 		return r
 	case ir.Length:
@@ -395,11 +391,9 @@ compute :: proc(a: ^Analysis, id: ir.Func_ID, value: ir.Value_ID, block: ir.Bloc
 	case ir.Unit_Load:
 		return {kind = .Integral, hi = 65535}
 	case ir.Bounds_Check:
-		return checked(refined(fr, func, v.index, block), length_limit(a, func, v.array))
-	case ir.Proved_Index:
-		return checked(refined(fr, func, v.index, block), length_limit(a, func, v.array))
+		return checked(refined(fr, v.index, block), length_limit(a, func, v.array))
 	case ir.Intrinsic:
-		return intrinsic(v.op, refined(fr, func, v.args[0], block))
+		return intrinsic(v.op, refined(fr, v.args[0], block))
 	case ir.Global_Load:
 		return a.globals[v.global].range
 	case ir.Call:
@@ -672,14 +666,8 @@ range_of :: proc(iv: Interval) -> Range {
 }
 
 @(private = "file")
-apply_fact :: proc(
-	fr: Func_Ranges,
-	func: ir.Func,
-	block: ir.Block_ID,
-	value: ir.Value_ID,
-	iv: Interval,
-) -> Interval {
-	compare, holds, _ := fact_of(fr, func, block)
+apply_fact :: proc(fr: Func_Ranges, fact: Fact, value: ir.Value_ID, iv: Interval) -> Interval {
+	compare := fact.compare
 	if compare.left == compare.right || compare.left != value && compare.right != value {
 		return iv
 	}
@@ -690,7 +678,7 @@ apply_fact :: proc(
 		other = compare.left
 	}
 	o := interval_of(fr.values[other])
-	if !holds {
+	if !fact.holds {
 		// The false side of an ordered comparison says something only when neither side is NaN.
 		if op != .Equal && op != .Not_Equal && (iv.nan || o.nan) {
 			return iv

@@ -343,16 +343,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		write_value(w, v.value) or_return
 
 	case Bounds_Check:
-		io.write_string(w, "bounds_check ") or_return
+		io.write_string(w, "proved_index " if v.proved else "bounds_check ") or_return
 		write_element(w, v.array, v.index) or_return
-		io.write_string(w, " not_integer ") or_return
-		io.write_int(w, int(v.not_integer)) or_return
-		io.write_string(w, " out_of_range ") or_return
-		io.write_int(w, int(v.out_of_range)) or_return
-
-	case Proved_Index:
-		io.write_string(w, "proved_index ") or_return
-		write_element(w, v.array, v.index) or_return
+		if !v.proved {
+			io.write_string(w, " not_integer ") or_return
+			io.write_int(w, int(v.not_integer)) or_return
+			io.write_string(w, " out_of_range ") or_return
+			io.write_int(w, int(v.out_of_range)) or_return
+		}
 
 	case Element_Load:
 		io.write_string(w, "element_load ") or_return
@@ -818,7 +816,7 @@ VIOLATION_TEXT := [Violation_Kind]string {
 	.Result_Type           = "a result type that does not suit this instruction",
 	.Argument_Count        = "the wrong number of arguments",
 	.Store_Kind            = "a store that does not match the slot it writes",
-	.Unchecked_Index       = "an index no bounds check or proved index of its array answers",
+	.Unchecked_Index       = "an index that is not the answer of a bounds check of its array",
 	.Unknown_Id            = "a layout, global, string, fail site or function that is not there",
 	.Entry_Signature       = "an entry point that does not take nothing and return void",
 	.Environment           = "an environment that does not match its function",

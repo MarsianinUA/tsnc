@@ -15,23 +15,100 @@ import "../ir"
 
 optimize :: proc(p: ^ir.Program_IR, allocator := context.allocator) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
-	place_cells(p)
-	ranges := find_ranges(p^)
-	prove_indices(p, ranges)
-	narrow(p, ranges, allocator)
+	shapes := make([]Shape, len(p.funcs), context.temp_allocator)
+	for &func, id in p.funcs {
+		flow := ir.make_flow(func, context.temp_allocator)
+		drop_unreachable(&func, &flow)
+		shapes[id] = make_shape(func, flow)
+	}
+	place_cells(p, shapes)
+	ranges := find_ranges(p^, shapes)
+	prove_indices(p, ranges, shapes)
+	narrow(p, ranges, shapes, allocator)
 }
 
-// home_blocks gives NO_BLOCK to a value no block holds.
+// Shape holds for every pass: none moves an instruction before narrow's end_edit.
 @(private)
-home_blocks :: proc(func: ir.Func) -> []ir.Block_ID {
-	home := make([]ir.Block_ID, len(func.values), context.temp_allocator)
-	for &block in home {
-		block = ir.NO_BLOCK
+Shape :: struct {
+	flow:   ir.Flow,
+	places: []Place, // by Value_ID
+	header: []bool, // by Block_ID: a retreating edge enters the block
+}
+
+// Place has block NO_BLOCK for a value no block holds.
+@(private)
+Place :: struct {
+	block:    ir.Block_ID,
+	position: int, // inside the block
+}
+
+@(private)
+make_shape :: proc(func: ir.Func, flow: ir.Flow) -> Shape {
+	shape := Shape {
+		flow   = flow,
+		places = make([]Place, len(func.values), context.temp_allocator),
+		header = make([]bool, len(func.blocks), context.temp_allocator),
+	}
+	for &place in shape.places {
+		place.block = ir.NO_BLOCK
 	}
 	for block, id in func.blocks {
-		for value in block.instructions {
-			home[value] = ir.Block_ID(id)
+		for value, position in block.instructions {
+			shape.places[value] = {ir.Block_ID(id), position}
 		}
 	}
-	return home
+	for block in flow.order {
+		for pred in flow.preds[block] {
+			if flow.rank[pred] >= flow.rank[block] {
+				shape.header[block] = true
+			}
+		}
+	}
+	return shape
+}
+
+// drop_unreachable leaves a block the entry never reaches only its terminator, made Unreachable,
+// and takes its edges off the flow and every phi: no pass meets its code, and its values belong to
+// no block. Order, ranks and dominators stay as they were.
+@(private)
+drop_unreachable :: proc(func: ^ir.Func, flow: ^ir.Flow) {
+	for &block, id in func.blocks {
+		if flow.rank[id] >= 0 {
+			continue
+		}
+		last := block.instructions[len(block.instructions) - 1]
+		func.values[last].type = ir.VOID
+		func.values[last].variant = ir.Unreachable{}
+		block.instructions = block.instructions[len(block.instructions) - 1:]
+		flow.preds[id] = nil
+	}
+	for block in flow.order {
+		preds := flow.preds[block]
+		kept := 0
+		for pred in preds {
+			if flow.rank[pred] >= 0 {
+				preds[kept] = pred
+				kept += 1
+			}
+		}
+		if kept == len(preds) {
+			continue
+		}
+		flow.preds[block] = preds[:kept]
+		phis: for value in func.blocks[block].instructions {
+			#partial switch &v in func.values[value].variant {
+			case ir.Phi:
+				kept = 0
+				for edge in v.incoming {
+					if flow.rank[edge.block] >= 0 {
+						v.incoming[kept] = edge
+						kept += 1
+					}
+				}
+				v.incoming = v.incoming[:kept]
+			case:
+				break phis
+			}
+		}
+	}
 }

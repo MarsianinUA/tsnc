@@ -185,14 +185,9 @@ a_cell_of_an_inner_loop_stored_into_one_of_an_outer_loop_stays_on_the_heap :: pr
 
 @(private = "file")
 cell_places :: proc(body: ir.Func) -> (places: bit_set[ir.Cell_Place]) {
-	for instruction in body.values {
-		#partial switch v in instruction.variant {
-		case ir.Alloc:
-			places += {v.place}
-		case ir.New_Array:
-			places += {v.place}
-		case ir.Make_Closure:
-			places += {v.place}
+	for &instruction in body.values {
+		if place := ir.cell_place(&instruction.variant); place != nil {
+			places += {place^}
 		}
 	}
 	return

@@ -1,75 +1,22 @@
 package opt_tests
 
-import "base:runtime"
 import "core:fmt"
-import "core:strings"
 import "core:testing"
 
-import "../../src/ast"
-import "../../src/bind"
-import "../../src/check"
-import "../../src/diag"
 import "../../src/ir"
-import "../../src/lower"
 import "../../src/opt"
-import "../../src/parse"
-import "../../src/program"
-import "../../src/source"
-
-/*
-The harness builds one source with the real lib the way driver does, and verifies the IR on both
-sides of opt. No test reads `before`: it is there to compare with while a decision is debugged.
-
-Everything lives in the temp allocator, which the test runner frees between tests.
-*/
-
-LIB_TEXT :: #load("../../src/lib/lib.d.ts", string)
+import "../harness"
 
 Optimized :: struct {
 	output: ir.Program_IR,
-	before: string, // the -emit-ir dump at -o:none
-	after:  string, // and at -o:speed
+	after:  string, // the -emit-ir dump at -o:speed
 }
 
 optimize_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Optimized {
-	texts := [?]string{LIB_TEXT, text}
-	files := make([]source.File, len(texts), context.temp_allocator)
-	trees := make([]ast.File_AST, len(texts), context.temp_allocator)
-	bound := make([]bind.Bound_File, len(texts), context.temp_allocator)
-	// One source imports nothing: an edge would need another one.
-	imports := make([][]program.Import_Edge, len(texts), context.temp_allocator)
-
-	for source_text, i in texts {
-		path := "lib.d.ts" if i == 0 else "m1.ts"
-		files[i] = source.make_file(path, source_text, context.temp_allocator)
-		tree, parse_diagnostics := parse.parse_file(
-			source_text,
-			source.File_ID(i),
-			context.temp_allocator,
-		)
-		trees[i] = tree
-		bind_diagnostics: []diag.Diagnostic
-		bound[i], bind_diagnostics = bind.bind_file(&trees[i], context.temp_allocator)
-		testing.expectf(t, len(parse_diagnostics) == 0, "parse %v", parse_diagnostics, loc = loc)
-		testing.expectf(t, len(bind_diagnostics) == 0, "bind %v", bind_diagnostics, loc = loc)
-	}
-
-	prog, graph_diagnostics := program.build(files, trees, bound, imports, context.temp_allocator)
-	testing.expectf(t, len(graph_diagnostics) == 0, "program %v", graph_diagnostics, loc = loc)
-	partition := [?]source.File_ID{1}
-	result, check_diagnostics := check.check(&prog, partition[:], context.temp_allocator)
-	testing.expectf(t, len(check_diagnostics) == 0, "check %v", check_diagnostics, loc = loc)
-
-	results := [?]check.Check_Result{result}
-	output, lower_diagnostics := lower.lower(&prog, results[:], context.temp_allocator)
-	testing.expectf(t, len(lower_diagnostics) == 0, "lower %v", lower_diagnostics, loc = loc)
-	expect_contract(t, files, output, "lower", loc)
-	before := dump(files, output)
-
+	files, output := harness.lower_sources(t, []string{text}, loc)
 	opt.optimize(&output, context.temp_allocator)
-	after := dump(files, output)
-	expect_contract(t, files, output, "opt", loc)
-	return {output = output, before = before, after = after}
+	harness.expect_contract(t, files, output, "opt", loc)
+	return {output = output, after = harness.dump(files, output)}
 }
 
 func_named :: proc(output: ir.Program_IR, name: string) -> ir.Func {
@@ -117,37 +64,4 @@ read_as :: proc(body: ir.Func, value: ir.Value_ID) -> ir.Value_ID {
 		return convert.value
 	}
 	return value
-}
-
-dump :: proc(files: []source.File, output: ir.Program_IR) -> string {
-	builder := strings.builder_make(context.temp_allocator)
-	_ = ir.write_program(strings.to_writer(&builder), files, output)
-	return strings.to_string(builder)
-}
-
-@(private = "file")
-expect_contract :: proc(
-	t: ^testing.T,
-	files: []source.File,
-	output: ir.Program_IR,
-	phase: string,
-	loc: runtime.Source_Code_Location,
-) {
-	violations := ir.verify(output, context.temp_allocator)
-	if len(violations) == 0 {
-		return
-	}
-	builder := strings.builder_make(context.temp_allocator)
-	for violation in violations {
-		_ = ir.write_violation(strings.to_writer(&builder), files, output, violation)
-	}
-	testing.expectf(
-		t,
-		false,
-		"the IR after %s breaks its contract:\n%s\n%s",
-		phase,
-		strings.to_string(builder),
-		dump(files, output),
-		loc = loc,
-	)
 }

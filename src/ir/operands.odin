@@ -31,8 +31,6 @@ operands :: proc(variant: ^Variant, found: ^[dynamic]^Value_ID) {
 		add_operands(found, &v.value)
 	case Bounds_Check:
 		add_operands(found, &v.array, &v.index)
-	case Proved_Index:
-		add_operands(found, &v.array, &v.index)
 	case Element_Load:
 		add_operands(found, &v.array, &v.index)
 	case Element_Store:

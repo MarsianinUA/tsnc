@@ -19,7 +19,7 @@ every frame; the cells after that stay on the heap.
 
 STACK_BUDGET :: 256
 
-place_cells :: proc(p: ^ir.Program_IR) {
+place_cells :: proc(p: ^ir.Program_IR, shapes: []Shape) {
 	e := Escape {
 		frames = make([]Frame, len(p.funcs), context.temp_allocator),
 		env    = make([]bool, len(p.funcs), context.temp_allocator),
@@ -28,7 +28,7 @@ place_cells :: proc(p: ^ir.Program_IR) {
 	}
 	for func, id in p.funcs {
 		e.params[id] = make([]bool, len(func.params), context.temp_allocator)
-		e.frames[id] = prepare_frame(p^, &p.funcs[id])
+		e.frames[id] = prepare_frame(p^, &p.funcs[id], shapes[id])
 	}
 	for leaked := true; leaked; {
 		leaked = false
@@ -40,7 +40,7 @@ place_cells :: proc(p: ^ir.Program_IR) {
 	for &frame in e.frames {
 		for site in frame.sites {
 			if site.stack && site.pseudo == .None {
-				set_place(&frame.func.values[site.value].variant, .Stack)
+				ir.cell_place(&frame.func.values[site.value].variant)^ = .Stack
 			}
 		}
 	}
@@ -59,7 +59,7 @@ Frame :: struct {
 	func:    ^ir.Func,
 	sites:   [dynamic]Site,
 	points:  [][dynamic]i32, // by Value_ID: the sites the value may point to
-	home:    []ir.Block_ID, // by Value_ID
+	places:  []Place, // by Value_ID
 	loop:    []ir.Block_ID, // by Block_ID: the header of its innermost loop, NO_BLOCK outside one
 	outer:   []ir.Block_ID, // by the Block_ID of a header: the header of the loop around it
 	// A retreating edge that is no back edge makes loops this analysis cannot nest, so every cell
@@ -84,21 +84,17 @@ Site :: struct {
 }
 
 @(private = "file")
-prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func) -> Frame {
+prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func, shape: Shape) -> Frame {
 	count := len(func.values)
 	frame := Frame {
 		func   = func,
 		sites  = make([dynamic]Site, context.temp_allocator),
 		points = make([][dynamic]i32, count, context.temp_allocator),
+		places = shape.places,
 		loop   = make([]ir.Block_ID, len(func.blocks), context.temp_allocator),
 		outer  = make([]ir.Block_ID, len(func.blocks), context.temp_allocator),
 	}
-	if len(func.blocks) == 0 {
-		return frame
-	}
-	flow := ir.make_flow(func^, context.temp_allocator)
-	frame.home = home_blocks(func^)
-	find_loops(&frame, flow)
+	find_loops(&frame, shape)
 
 	// Every cell points to itself.
 	for instruction, id in func.values {
@@ -126,7 +122,7 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func) -> Frame {
 			continue
 		}
 		// A cell that never runs stays as lower left it.
-		if frame.home[value] == ir.NO_BLOCK || flow.rank[frame.home[value]] < 0 {
+		if frame.places[value].block == ir.NO_BLOCK {
 			continue
 		}
 		site.size = (site.size + 15) &~ 15
@@ -168,14 +164,18 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func) -> Frame {
 // find_loops visits headers in reverse post-order, outer before inner, so an inner loop's blocks
 // end up with its own header.
 @(private = "file")
-find_loops :: proc(frame: ^Frame, flow: ir.Flow) {
+find_loops :: proc(frame: ^Frame, shape: Shape) {
 	for &block in frame.loop {
 		block = ir.NO_BLOCK
 	}
 	for &block in frame.outer {
 		block = ir.NO_BLOCK
 	}
+	flow := shape.flow
 	for header in flow.order {
+		if !shape.header[header] {
+			continue
+		}
 		latches := make([dynamic]ir.Block_ID, context.temp_allocator)
 		for pred in flow.preds[header] {
 			if flow.rank[pred] < flow.rank[header] {
@@ -186,9 +186,6 @@ find_loops :: proc(frame: ^Frame, flow: ir.Flow) {
 				return
 			}
 			append(&latches, pred)
-		}
-		if len(latches) == 0 {
-			continue
 		}
 		frame.outer[header] = frame.loop[header]
 		body := make([]bool, len(frame.loop), context.temp_allocator)
@@ -274,7 +271,7 @@ kept :: proc(
 	#partial switch &v in instruction.variant {
 	case ir.Field_Load, ir.Field_Store, ir.Element_Load, ir.Element_Store, ir.Length:
 		return true
-	case ir.Bounds_Check, ir.Proved_Index, ir.Layout_Test, ir.Null_Test, ir.Same_Cell:
+	case ir.Bounds_Check, ir.Layout_Test, ir.Null_Test, ir.Same_Cell:
 		return true
 	case ir.Compare, ir.Non_Null:
 		return true
@@ -310,9 +307,10 @@ held_here :: proc(frame: ^Frame, holder, value: ir.Value_ID) -> bool {
 		if !cell.stack || cell.pseudo != .None {
 			return false
 		}
+		inner := frame.loop[frame.places[cell.value].block]
 		for s in frame.points[value] {
-			held := frame.sites[s].value
-			if !nested(frame, frame.loop[frame.home[cell.value]], frame.loop[frame.home[held]]) {
+			outer := frame.loop[frame.places[frame.sites[s].value].block]
+			if !nested(frame, inner, outer) {
 				return false
 			}
 		}
@@ -374,18 +372,6 @@ record_leaks :: proc(e: ^Escape, id: ir.Func_ID) -> bool {
 		}
 	}
 	return learned
-}
-
-@(private = "file")
-set_place :: proc(variant: ^ir.Variant, place: ir.Cell_Place) {
-	#partial switch &v in variant {
-	case ir.Alloc:
-		v.place = place
-	case ir.New_Array:
-		v.place = place
-	case ir.Make_Closure:
-		v.place = place
-	}
 }
 
 @(private = "file")

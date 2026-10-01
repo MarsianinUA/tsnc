@@ -7,6 +7,7 @@ import "core:testing"
 import "../../src/ast"
 import "../../src/lower"
 import "../../src/parse"
+import "../harness"
 
 /*
 The lib file and the strategy table are two halves of one thing: src/lib/lib.d.ts says what the
@@ -88,7 +89,7 @@ the_math_names_the_ir_has_an_intrinsic_for_use_it :: proc(t: ^testing.T) {
 
 @(private = "file")
 lib_names :: proc(t: ^testing.T) -> []Name {
-	tree, diagnostics := parse.parse_file(LIB_TEXT, LIB, context.temp_allocator)
+	tree, diagnostics := parse.parse_file(harness.LIB_TEXT, LIB, context.temp_allocator)
 	testing.expectf(t, len(diagnostics) == 0, "the lib file does not parse: %v", diagnostics)
 
 	interfaces := make(map[string]ast.Node_ID, context.temp_allocator)

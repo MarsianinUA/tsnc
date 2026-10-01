@@ -18,9 +18,9 @@ range, not one a comparison narrowed at the use, is integral; an operation that 
 other conversion stays F64.
 */
 
-narrow :: proc(p: ^ir.Program_IR, ranges: Ranges, allocator: runtime.Allocator) {
+narrow :: proc(p: ^ir.Program_IR, ranges: Ranges, shapes: []Shape, allocator: runtime.Allocator) {
 	for id in 0 ..< len(p.funcs) {
-		narrow_func(&p.funcs[id], ranges.funcs[id], allocator)
+		narrow_func(&p.funcs[id], ranges.funcs[id], shapes[id].places, allocator)
 	}
 }
 
@@ -28,7 +28,7 @@ narrow :: proc(p: ^ir.Program_IR, ranges: Ranges, allocator: runtime.Allocator) 
 Narrowing :: struct {
 	func:      ^ir.Func,
 	fr:        Func_Ranges,
-	home:      []ir.Block_ID, // by Value_ID
+	places:    []Place, // by Value_ID
 	types:     []ir.Type, // by Value_ID: the type it ends up with
 	compared:  []ir.Type, // by Value_ID of a Compare: what both operands are read as
 	editor:    Editor,
@@ -47,16 +47,20 @@ Use :: struct {
 	field:    int, // the place of the operand in ir.operands of the consumer
 	value:    ir.Value_ID,
 	want:     ir.Type,
-	dead:     bool, // the edge of a phi out of a block nothing reaches
 }
 
 @(private = "file")
-narrow_func :: proc(func: ^ir.Func, fr: Func_Ranges, allocator: runtime.Allocator) {
+narrow_func :: proc(
+	func: ^ir.Func,
+	fr: Func_Ranges,
+	places: []Place,
+	allocator: runtime.Allocator,
+) {
 	count := len(func.values)
 	n := Narrowing {
 		func     = func,
 		fr       = fr,
-		home     = home_blocks(func^),
+		places   = places,
 		types    = make([]ir.Type, count, context.temp_allocator),
 		compared = make([]ir.Type, count, context.temp_allocator),
 	}
@@ -145,8 +149,6 @@ choose_types :: proc(n: ^Narrowing) -> bool {
 				}
 			case ir.Bounds_Check:
 				n.types[id] = n.types[v.index]
-			case ir.Proved_Index:
-				n.types[id] = n.types[v.index]
 			}
 			changed ||= n.types[id] != before
 		}
@@ -190,15 +192,10 @@ widest :: proc(n: ^Narrowing, type: ir.Type, operands: []ir.Value_ID) -> ir.Type
 	return type
 }
 
-// widest_edge skips an edge out of a block nothing reaches: a zero of the phi's type stands in for
-// what it carries.
 @(private = "file")
 widest_edge :: proc(n: ^Narrowing, type: ir.Type, incoming: []ir.Incoming) -> ir.Type {
 	type := type
 	for edge in incoming {
-		if n.fr.flow.rank[edge.block] < 0 {
-			continue
-		}
 		type = widest(n, type, {edge.value})
 		if type == ir.F64 {
 			return type
@@ -207,15 +204,11 @@ widest_edge :: proc(n: ^Narrowing, type: ir.Type, incoming: []ir.Incoming) -> ir
 	return type
 }
 
-// integer_of lets a value of an unreachable block convert to anything: that never runs.
 @(private = "file")
 integer_of :: proc(n: ^Narrowing, value: ir.Value_ID) -> (ir.Type, bool) {
 	type := n.types[value]
 	if ir.is_integer(type) {
 		return type, true
-	}
-	if n.home[value] == ir.NO_BLOCK || n.fr.flow.rank[n.home[value]] < 0 {
-		return ir.I32, true
 	}
 	r := n.fr.values[value]
 	if r.kind != .Integral {
@@ -230,6 +223,9 @@ list_uses :: proc(n: ^Narrowing) -> []Use {
 	fields := make([dynamic]^ir.Value_ID, context.temp_allocator)
 	for &instruction, id in n.func.values {
 		consumer := ir.Value_ID(id)
+		if n.places[consumer].block == ir.NO_BLOCK {
+			continue // drop_unreachable left it in no block: it never runs
+		}
 		ir.operands(&instruction.variant, &fields)
 		for field, i in fields {
 			value := field^
@@ -255,8 +251,7 @@ list_uses :: proc(n: ^Narrowing) -> []Use {
 				use.want = n.compared[consumer]
 			case ir.Phi:
 				use.want = n.types[consumer]
-				use.dead = n.fr.flow.rank[v.incoming[i].block] < 0
-			case ir.Bounds_Check, ir.Proved_Index, ir.Element_Load, ir.Unit_Load, ir.Ascii_Cell:
+			case ir.Bounds_Check, ir.Element_Load, ir.Unit_Load, ir.Ascii_Cell:
 				use.want = n.types[value]
 			case ir.Element_Store:
 				if field == &v.index {
@@ -277,7 +272,7 @@ list_uses :: proc(n: ^Narrowing) -> []Use {
 settle_constants :: proc(n: ^Narrowing, uses: []Use) {
 	wants := make([]bit_set[ir.Type_Kind], len(n.types), context.temp_allocator)
 	for use in uses {
-		if ir.is_integer(use.want) && !use.dead {
+		if ir.is_integer(use.want) {
 			wants[use.value] += {use.want.kind}
 		}
 	}
@@ -303,15 +298,6 @@ settle_constants :: proc(n: ^Narrowing, uses: []Use) {
 replacement :: proc(n: ^Narrowing, use: Use) -> ir.Value_ID {
 	value := use.value
 	source := n.func.values[value]
-	if use.dead {
-		// A value for an edge that never runs, which ir.verify does not hold to dominance.
-		zero := ir.Instruction {
-			span    = source.span,
-			type    = use.want,
-			variant = ir.Const_Number{},
-		}
-		return insert_after(&n.editor, after_phis(n, use.consumer), zero)
-	}
 	key := Conversion{value, use.want.kind}
 	if found, known := n.converted[key]; known {
 		return found
@@ -350,7 +336,7 @@ replacement :: proc(n: ^Narrowing, use: Use) -> ir.Value_ID {
 @(private = "file")
 after_phis :: proc(n: ^Narrowing, value: ir.Value_ID) -> ir.Value_ID {
 	last := ir.NO_VALUE
-	for id in n.func.blocks[n.home[value]].instructions {
+	for id in n.func.blocks[n.places[value].block].instructions {
 		if _, is_phi := n.func.values[id].variant.(ir.Phi); !is_phi {
 			break
 		}

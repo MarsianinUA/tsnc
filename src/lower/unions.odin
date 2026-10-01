@@ -151,7 +151,9 @@ tag_of :: proc(type: ir.Type) -> (abi.Tag, bool) {
 		return .Object, true
 	case .Closure:
 		return .Function, true
-	case .Void, .Tagged, .I32, .I64:
+	case .Void, .Tagged:
+	case .I32, .I64:
+		unreachable()
 	}
 	return .Undefined, false
 }

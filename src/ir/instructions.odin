@@ -48,7 +48,6 @@ Variant :: union #no_nil {
 	Field_Store_Ref,
 	Length,
 	Bounds_Check,
-	Proved_Index,
 	Element_Load,
 	Element_Store,
 	Element_Store_Ref,
@@ -164,6 +163,19 @@ Cell_Place :: enum u8 {
 
 MAX_STACK_ELEMENTS :: 16
 
+// cell_place answers nil for an instruction that makes no cell.
+cell_place :: proc(variant: ^Variant) -> ^Cell_Place {
+	#partial switch &v in variant {
+	case Alloc:
+		return &v.place
+	case New_Array:
+		return &v.place
+	case Make_Closure:
+		return &v.place
+	}
+	return nil
+}
+
 // cell_size answers the bytes a cell takes in its slot on the stack; ok is false for a value that
 // cannot go there.
 cell_size :: proc(p: Program_IR, func: Func, value: Value_ID) -> (size: int, ok: bool) {
@@ -225,23 +237,18 @@ Length :: struct {
 // Bounds_Check answers the index again, in the index's number type, once it has proved that the
 // index is an integer inside the array, or inside the string, whose unit Unit_Load then reads.
 // The element instructions take that answer, so the check cannot drift away from the access it
-// guards, and opt, which removes a check it proves, has an edge to follow.
+// guards, and opt, which proves checks away, has an edge to follow.
 Bounds_Check :: struct {
 	array:        Value_ID,
 	index:        Value_ID,
 	not_integer:  Fail_Site_ID,
 	out_of_range: Fail_Site_ID,
-}
-
-// Proved_Index replaces a Bounds_Check opt proved never fails: it answers the index, no code.
-Proved_Index :: struct {
-	array: Value_ID,
-	index: Value_ID,
+	proved:       bool, // codegen emits nothing for a check opt proved
 }
 
 Element_Load :: struct {
 	array: Value_ID,
-	index: Value_ID, // the answer of a Bounds_Check or a Proved_Index
+	index: Value_ID, // the answer of a Bounds_Check
 }
 
 // Element_Store writes a Number or a Boolean element.
@@ -261,7 +268,7 @@ Element_Store_Ref :: struct {
 // Unit_Load answers the UTF-16 unit of a Str as F64, or as I32 once opt narrowed it.
 Unit_Load :: struct {
 	text:  Value_ID,
-	index: Value_ID, // the answer of a Bounds_Check or a Proved_Index
+	index: Value_ID, // the answer of a Bounds_Check
 }
 
 // Ascii_Cell answers the one-unit string of a unit below ASCII_LIMIT, which a branch before it
@@ -415,9 +422,7 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Alloc, New_Array, Field_Load, Field_Store, Field_Store_Ref, Length:
 		return false
-	case Bounds_Check, Proved_Index, Element_Load, Element_Store, Element_Store_Ref:
-		return false
-	case Layout_Test, Null_Test:
+	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
 		return false
 	case Unit_Load, Ascii_Cell, Same_Cell, Non_Null:
 		return false

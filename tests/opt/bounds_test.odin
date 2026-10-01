@@ -83,10 +83,13 @@ the_store_of_a_compound_assignment_reuses_the_check_of_its_read :: proc(t: ^test
 	)
 	bump := func_named(result.output, "m1.bump")
 	checks, proved := check_counts(bump)
-	ids, indices := instructions_of(bump, ir.Proved_Index)
+	ids, all := instructions_of(bump, ir.Bounds_Check)
 	testing.expectf(t, checks == 1 && proved == 1, "%s", result.after)
-	for index, i in indices {
-		_, reads_the_check := bump.values[index.index].variant.(ir.Bounds_Check)
+	for check, i in all {
+		if !check.proved {
+			continue
+		}
+		_, reads_the_check := bump.values[check.index].variant.(ir.Bounds_Check)
 		testing.expectf(t, reads_the_check, "%v:\n%s", ids[i], result.after)
 	}
 }
@@ -144,7 +147,13 @@ a_check_stays_where_the_array_may_have_shrunk_or_the_index_may_be_out :: proc(t:
 
 @(private = "file")
 check_counts :: proc(body: ir.Func) -> (checks: int, proved: int) {
-	kept, _ := instructions_of(body, ir.Bounds_Check)
-	removed, _ := instructions_of(body, ir.Proved_Index)
-	return len(kept), len(removed)
+	_, all := instructions_of(body, ir.Bounds_Check)
+	for check in all {
+		if check.proved {
+			proved += 1
+		} else {
+			checks += 1
+		}
+	}
+	return
 }

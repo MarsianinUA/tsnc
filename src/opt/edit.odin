@@ -44,11 +44,22 @@ end_edit :: proc(e: ^Editor) {
 		return a.after < b.after
 	}
 	slice.stable_sort_by(e.insertions[:], by_after)
+	// first[value] is the first insertion after `value`, -1 when none follows it.
+	first := make([]i32, len(e.values), context.temp_allocator)
+	slice.fill(first, -1)
+	for insertion, i in e.insertions {
+		if first[insertion.after] < 0 {
+			first[insertion.after] = i32(i)
+		}
+	}
 
 	for &block in e.func.blocks {
+		if !has_insertion(first, block.instructions) {
+			continue
+		}
 		list := make([dynamic]ir.Value_ID, 0, len(block.instructions) + 4, e.allocator)
 		for value in block.instructions {
-			place(e, &list, value)
+			place(e, first, &list, value)
 		}
 		block.instructions = list[:]
 	}
@@ -56,18 +67,22 @@ end_edit :: proc(e: ^Editor) {
 }
 
 @(private = "file")
-place :: proc(e: ^Editor, list: ^[dynamic]ir.Value_ID, value: ir.Value_ID) {
+has_insertion :: proc(first: []i32, values: []ir.Value_ID) -> bool {
+	for value in values {
+		if first[value] >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+place :: proc(e: ^Editor, first: []i32, list: ^[dynamic]ir.Value_ID, value: ir.Value_ID) {
 	append(list, value)
-	by_value :: proc(insertion: Insertion, value: ir.Value_ID) -> slice.Ordering {
-		return slice.cmp(insertion.after, value)
+	if first[value] < 0 {
+		return
 	}
-	first, _ := slice.binary_search_by(e.insertions[:], value, by_value)
-	// binary_search_by may land on any of several equal keys; the insertions after `value` start at
-	// the first of them.
-	for first > 0 && e.insertions[first - 1].after == value {
-		first -= 1
-	}
-	for i := first; i < len(e.insertions) && e.insertions[i].after == value; i += 1 {
-		place(e, list, e.insertions[i].value)
+	for i := int(first[value]); i < len(e.insertions) && e.insertions[i].after == value; i += 1 {
+		place(e, first, list, e.insertions[i].value)
 	}
 }

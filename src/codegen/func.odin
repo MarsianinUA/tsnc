@@ -24,7 +24,13 @@ Body :: struct {
 	rest_slot:   llvm.LLVMValueRef,
 	// cells holds, by ir.Value_ID, the slot of a stack cell. Every evaluation starts it afresh: opt
 	// proved nothing still points into it by then.
-	cells:       []llvm.LLVMValueRef,
+	cells:       []Stack_Cell,
+}
+
+@(private)
+Stack_Cell :: struct {
+	slot: llvm.LLVMValueRef,
+	size: int,
 }
 
 @(private)
@@ -58,14 +64,18 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		values := llvm.LLVMArrayType2(m.types.tagged, u64(capacity))
 		body.rest_slot = llvm.LLVMBuildAlloca(m.builder, values, "")
 	}
-	body.cells = make([]llvm.LLVMValueRef, len(func.values), context.temp_allocator)
-	for _, id in func.values {
-		if size := stack_cell_size(m, func, ir.Value_ID(id)); size > 0 {
-			llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
-			bytes := llvm.LLVMArrayType2(m.types.int8, u64(size))
-			body.cells[id] = llvm.LLVMBuildAlloca(m.builder, bytes, "")
-			llvm.LLVMSetAlignment(body.cells[id], STACK_CELL_ALIGNMENT)
+	body.cells = make([]Stack_Cell, len(func.values), context.temp_allocator)
+	for &instruction, id in func.values {
+		place := ir.cell_place(&instruction.variant)
+		if place == nil || place^ != .Stack {
+			continue
 		}
+		size, _ := ir.cell_size(m.program^, func, ir.Value_ID(id))
+		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
+		bytes := llvm.LLVMArrayType2(m.types.int8, u64(size))
+		slot := llvm.LLVMBuildAlloca(m.builder, bytes, "")
+		llvm.LLVMSetAlignment(slot, STACK_CELL_ALIGNMENT)
+		body.cells[id] = {slot, size}
 	}
 
 	phis := make([dynamic]ir.Value_ID, 0, len(func.blocks), context.temp_allocator)
@@ -97,24 +107,6 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 // STACK_CELL_ALIGNMENT is what a cell gets on the heap too: its size class steps by 16 bytes.
 @(private)
 STACK_CELL_ALIGNMENT :: 16
-
-@(private)
-stack_cell_size :: proc(m: ^Module, func: ir.Func, value: ir.Value_ID) -> int {
-	stack := false
-	#partial switch v in func.values[value].variant {
-	case ir.Alloc:
-		stack = v.place == .Stack
-	case ir.New_Array:
-		stack = v.place == .Stack
-	case ir.Make_Closure:
-		stack = v.place == .Stack
-	}
-	if !stack {
-		return 0
-	}
-	size, _ := ir.cell_size(m.program^, func, value)
-	return size
-}
 
 @(private)
 calls_for_a_tagged_result :: proc(func: ir.Func) -> bool {

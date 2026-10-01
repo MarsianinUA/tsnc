@@ -50,8 +50,10 @@ to_string :: proc(
 			export = .Value_To_Primitive_String
 		}
 	case .Bool, .Closure:
-	case .Void, .I32, .I64:
+	case .Void:
 		return ir.NO_VALUE
+	case .I32, .I64:
+		unreachable()
 	}
 	call := ir.Call_Runtime {
 		export = export,

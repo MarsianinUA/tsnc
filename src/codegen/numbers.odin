@@ -47,9 +47,6 @@ build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> ll
 		if integer {
 			return llvm.LLVMBuildSRem(m.builder, left, right, "")
 		}
-		if k, is_power := power_of_two(body.func.values[v.right]); is_power {
-			return build_power_remainder(m, left, k)
-		}
 		// The remainder of a truncating division, which is what % means in ECMAScript.
 		return llvm.LLVMBuildFRem(m.builder, left, right, "")
 	case .Power:
@@ -78,36 +75,6 @@ build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> ll
 		return from_int32(m, llvm.LLVMBuildXor(m.builder, a, b, ""), type)
 	}
 	unreachable()
-}
-
-// power_of_two answers k for a divisor that is the constant ±2^k, 0 <= k <= 1022, where 2^-k is
-// still a normal number.
-@(private)
-power_of_two :: proc(divisor: ir.Instruction) -> (k: int, ok: bool) {
-	constant, is_constant := divisor.variant.(ir.Const_Number)
-	if !is_constant || divisor.type != ir.F64 {
-		return 0, false
-	}
-	fraction, exponent := math.frexp(abs(constant.value))
-	if fraction != 0.5 || exponent < 1 || exponent > 1023 {
-		return 0, false
-	}
-	return exponent - 1, true
-}
-
-// build_power_remainder is x % ±2^k without a call to fmod. x - 2^k * trunc(x * 2^-k) is exact for
-// every finite x: a scaling by a power of two, a truncation and that difference lose no bit. An
-// infinity or NaN comes out NaN, as % answers. A difference of two equal values is +0, and copysign
-// gives a negative x its -0 back: -4 % 2 is -0.
-@(private)
-build_power_remainder :: proc(m: ^Module, x: llvm.LLVMValueRef, k: int) -> llvm.LLVMValueRef {
-	down := llvm.LLVMConstReal(m.types.double, math.ldexp(f64(1), -k))
-	up := llvm.LLVMConstReal(m.types.double, math.ldexp(f64(1), k))
-	scaled := [?]llvm.LLVMValueRef{llvm.LLVMBuildFMul(m.builder, x, down, "")}
-	whole := build_number_call(m, .Trunc, scaled[:])
-	multiple := llvm.LLVMBuildFMul(m.builder, whole, up, "")
-	signs := [?]llvm.LLVMValueRef{llvm.LLVMBuildFSub(m.builder, x, multiple, ""), x}
-	return build_double_call(m, "llvm.copysign", "copysign", signs[:])
 }
 
 // to_int32 is the ECMAScript ToInt32 of a value of any number type. An integer wraps modulo 2^32,

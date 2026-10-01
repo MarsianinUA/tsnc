@@ -38,7 +38,7 @@ Violation_Kind :: enum u8 {
 	Result_Type, // a result type that does not suit the instruction
 	Argument_Count, // a call or an intrinsic with the wrong number of arguments
 	Store_Kind, // a store that does not match the slot it writes
-	Unchecked_Index, // an element access whose index no check of its array answered
+	Unchecked_Index, // an element access whose index is not the answer of a bounds check of its array
 	Unknown_Id, // a layout, global, string, fail site or function that is not in the program
 	Entry_Signature, // an entry point that does not take nothing and return void
 	// An environment that does not match the function: an Env in a function without one, an env
@@ -370,12 +370,6 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_index(c, v.index)
 		expect_site(c, v.not_integer)
 		expect_site(c, v.out_of_range)
-
-	case Proved_Index:
-		if type, known := operand(c, v.array); known && type != STR {
-			element_of(c, type)
-		}
-		expect_index(c, v.index)
 
 	case Element_Load:
 		element, known := array_element(c, v.array)
@@ -757,17 +751,10 @@ expect_checked_index :: proc(c: ^Checker, id: Value_ID, array: Value_ID) {
 	if !is_number(type) {
 		report(c, .Operand_Type)
 	}
-	#partial switch v in c.body.values[id].variant {
-	case Bounds_Check:
-		if v.array == array {
-			return
-		}
-	case Proved_Index:
-		if v.array == array {
-			return
-		}
+	bounds, checked := c.body.values[id].variant.(Bounds_Check)
+	if !checked || bounds.array != array {
+		report(c, .Unchecked_Index)
 	}
-	report(c, .Unchecked_Index)
 }
 
 // expect_index: the answer of a check is the index itself, in its own type.

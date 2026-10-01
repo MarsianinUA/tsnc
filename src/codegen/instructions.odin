@@ -102,10 +102,11 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		body.values[value] = build_length(m, body.values[v.value], instruction.type)
 
 	case ir.Bounds_Check:
-		body.values[value] = build_bounds_check(m, body, v)
-
-	case ir.Proved_Index:
-		body.values[value] = body.values[v.index]
+		if v.proved {
+			body.values[value] = body.values[v.index]
+		} else {
+			body.values[value] = build_bounds_check(m, body, v)
+		}
 
 	case ir.Element_Load:
 		address := element_address(m, body, v.array, v.index)
@@ -372,13 +373,12 @@ start_stack_cell :: proc(
 	table: abi.Type_Table_ID,
 ) -> llvm.LLVMValueRef {
 	cell := body.cells[value]
-	size := stack_cell_size(m, body.func, value)
 	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
-	length := llvm.LLVMConstInt(m.types.int64, u64(size), false)
-	llvm.LLVMBuildMemSet(m.builder, cell, zero, length, STACK_CELL_ALIGNMENT)
+	length := llvm.LLVMConstInt(m.types.int64, u64(cell.size), false)
+	llvm.LLVMBuildMemSet(m.builder, cell.slot, zero, length, STACK_CELL_ALIGNMENT)
 	#assert(offset_of(abi.Cell_Header, type_table) == 0)
-	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell)
-	return cell
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell.slot)
+	return cell.slot
 }
 
 @(private)

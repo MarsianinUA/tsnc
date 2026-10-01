@@ -6,8 +6,8 @@ import "base:runtime"
 import "../ir"
 
 /*
-Bounds check elimination. A Bounds_Check becomes a Proved_Index when the refined range of its index
-is whole and non-negative and one of these bounds it from above:
+Bounds check elimination. A Bounds_Check is proved when the refined range of its index is whole and
+non-negative and one of these bounds it from above:
 - the true edge of `index < length` or `length > index`, on every path to the check;
 - a constant index below the constant length of an array literal;
 - an earlier check of the same array, whose answer the index is.
@@ -15,18 +15,14 @@ An array's length changes only inside a call, so no call may stand between the b
 check. A string never changes.
 */
 
-prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges) {
+prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges, shapes: []Shape) {
 	for &func, id in p.funcs {
 		fr := ranges.funcs[id]
-		places := locate(func)
-		for block in fr.flow.order {
+		for block in shapes[id].flow.order {
 			for value in func.blocks[block].instructions {
-				check, is_check := func.values[value].variant.(ir.Bounds_Check)
-				if is_check && proved(func, fr, places, value, block, check) {
-					func.values[value].variant = ir.Proved_Index {
-						array = check.array,
-						index = check.index,
-					}
+				#partial switch &v in func.values[value].variant {
+				case ir.Bounds_Check:
+					v.proved = proved(func, fr, shapes[id], value, block, v)
 				}
 			}
 		}
@@ -34,32 +30,15 @@ prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges) {
 }
 
 @(private = "file")
-Place :: struct {
-	block:    ir.Block_ID,
-	position: int, // inside the block
-}
-
-@(private = "file")
-locate :: proc(func: ir.Func) -> []Place {
-	places := make([]Place, len(func.values), context.temp_allocator)
-	for block, id in func.blocks {
-		for value, position in block.instructions {
-			places[value] = {ir.Block_ID(id), position}
-		}
-	}
-	return places
-}
-
-@(private = "file")
 proved :: proc(
 	func: ir.Func,
 	fr: Func_Ranges,
-	places: []Place,
+	shape: Shape,
 	value: ir.Value_ID,
 	block: ir.Block_ID,
 	check: ir.Bounds_Check,
 ) -> bool {
-	index := refined(fr, func, check.index, block)
+	index := refined(fr, check.index, block)
 	if index.kind != .Integral || index.lo < 0 {
 		return false
 	}
@@ -68,7 +47,7 @@ proved :: proc(
 		return false
 	}
 	immutable := func.values[check.array].type == ir.STR
-	return immutable || no_call_between(func, fr.flow, places, since, value)
+	return immutable || no_call_between(func, shape, since, value)
 }
 
 // upper_bound answers the first value after which the index lies below the length, NO_VALUE when
@@ -80,15 +59,9 @@ upper_bound :: proc(
 	block: ir.Block_ID,
 	check: ir.Bounds_Check,
 ) -> ir.Value_ID {
-	#partial switch earlier in func.values[check.index].variant {
-	case ir.Bounds_Check:
-		if earlier.array == check.array {
-			return check.index
-		}
-	case ir.Proved_Index:
-		if earlier.array == check.array {
-			return check.index
-		}
+	earlier, after_check := func.values[check.index].variant.(ir.Bounds_Check)
+	if after_check && earlier.array == check.array {
+		return check.index
 	}
 
 	if made, is_new := func.values[check.array].variant.(ir.New_Array); is_new {
@@ -99,11 +72,11 @@ upper_bound :: proc(
 		}
 	}
 
-	for walk := fr.fact[block]; walk != ir.NO_BLOCK; walk = fr.fact[fr.flow.idom[walk]] {
-		compare, holds, _ := fact_of(fr, func, walk)
-		if !holds {
+	for fact := fr.fact[block]; fact != nil; fact = fact.up {
+		if !fact.holds {
 			continue
 		}
+		compare := fact.compare
 		length := ir.NO_VALUE
 		if compare.op == .Less && compare.left == check.index {
 			length = compare.right
@@ -122,13 +95,9 @@ upper_bound :: proc(
 }
 
 @(private = "file")
-no_call_between :: proc(
-	func: ir.Func,
-	flow: ir.Flow,
-	places: []Place,
-	from, to: ir.Value_ID,
-) -> bool {
-	start, end := places[from], places[to]
+no_call_between :: proc(func: ir.Func, shape: Shape, from, to: ir.Value_ID) -> bool {
+	flow := shape.flow
+	start, end := shape.places[from], shape.places[to]
 	start_block := func.blocks[start.block].instructions
 	end_block := func.blocks[end.block].instructions
 	if start.block == end.block && start.position < end.position {
@@ -148,7 +117,7 @@ no_call_between :: proc(
 	append(&stack, ..flow.preds[end.block])
 	for len(stack) > 0 {
 		block := pop(&stack)
-		if seen[block] || flow.rank[block] < 0 {
+		if seen[block] {
 			continue
 		}
 		seen[block] = true

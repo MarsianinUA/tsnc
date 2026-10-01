@@ -227,7 +227,7 @@ Only what the linked sources do not already cover. In words, without code.
 - Invariants: SSA; every block ends with a terminator; every instruction has a position; layouts are interned, one structure gives one `Layout_ID`; a reference store into a cell goes only through `store_ref`; no heap cell and no global points to a cell on the stack; pointers are not disguised; no pointer arithmetic outside the runtime (requirements, 6).
 - Table rows: a layout may have rows that list its fields in another print order, each with the same slots and offsets. Only the header of a cell names a row; every type names the layout. `Program_IR.base` gives, for each row, the layout it reorders.
 - Abstraction barrier: `codegen` relies on the closed set of instructions and types; all TS knowledge stays in `lower`.
-- Compatibility: T6.7 added the `I32` and `I64` types, `Convert`, `Proved_Index` and cells on the stack (`Cell_Place`). v2 adds stack unwinding edges for `try` and a write barrier as the implementation of `store_ref`; that barrier ignores a target off the heap, since a `store_ref` may write into a cell on the stack. The shape does not change.
+- Compatibility: T6.7 added the `I32` and `I64` types, `Convert`, `Bounds_Check.proved` and cells on the stack (`Cell_Place`). v2 adds stack unwinding edges for `try` and a write barrier as the implementation of `store_ref`; that barrier ignores a target off the heap, since a `store_ref` may write into a cell on the stack. The shape does not change.
 
 ### ABI (package `abi`)
 
