@@ -1,3 +1,4 @@
+#+private
 package opt
 
 import "base:runtime"

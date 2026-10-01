@@ -83,7 +83,6 @@ func_named :: proc(output: ir.Program_IR, name: string) -> ir.Func {
 	panic(fmt.tprintf("no function %s", name))
 }
 
-// instructions_of lists the values of one variant a function holds, with the variants.
 instructions_of :: proc(body: ir.Func, $T: typeid) -> (ids: []ir.Value_ID, variants: []T) {
 	found := make([dynamic]ir.Value_ID, context.temp_allocator)
 	out := make([dynamic]T, context.temp_allocator)

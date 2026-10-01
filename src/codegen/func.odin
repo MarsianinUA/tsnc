@@ -1,7 +1,6 @@
 package codegen
 
 import "core:fmt"
-import "core:slice"
 
 import "../abi"
 import "../ir"
@@ -40,9 +39,12 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		values   = make([]llvm.LLVMValueRef, len(func.values), context.temp_allocator),
 	}
 
+	// Reverse post-order puts every definition before the uses it dominates. The blocks lower leaves
+	// unreachable stay out: nothing promises that their operands dominate their uses, and LLVM would
+	// refuse them.
+	order := ir.make_flow(func, context.temp_allocator).order
 	// Every block exists before any instruction does, so a jump forward and a back edge both have
 	// something to name.
-	order := block_order(func)
 	for block in order {
 		name: cstring = "entry" if block == ir.ENTRY else fmt.ctprintf("b%d", block)
 		body.blocks[block] = llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, name)
@@ -98,8 +100,6 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 @(private)
 STACK_CELL_ALIGNMENT :: 16
 
-// stack_cell_size answers the bytes of the slot a cell on the stack takes, and 0 for any other
-// value.
 @(private)
 stack_cell_size :: proc(m: ^Module, func: ir.Func, value: ir.Value_ID) -> int {
 	stack := false
@@ -174,54 +174,4 @@ patch_phis :: proc(m: ^Module, body: ^Body, phis: []ir.Value_ID) {
 			u32(len(values)),
 		)
 	}
-}
-
-// block_order answers the blocks a call can reach, in reverse post-order, so every definition is
-// translated before the uses it dominates. lower leaves unreachable blocks behind - what follows a
-// return or a diverging call - and they stay out: nothing promises that their operands dominate
-// their uses, and LLVM would refuse them.
-@(private)
-block_order :: proc(func: ir.Func) -> []ir.Block_ID {
-	Step :: struct {
-		block: ir.Block_ID,
-		next:  int, // the successor to walk when this step comes up again
-	}
-	seen := make([]bool, len(func.blocks), context.temp_allocator)
-	order := make([dynamic]ir.Block_ID, 0, len(func.blocks), context.temp_allocator)
-	stack := make([dynamic]Step, 0, len(func.blocks), context.temp_allocator)
-
-	seen[ir.ENTRY] = true
-	append(&stack, Step{block = ir.ENTRY})
-	for len(stack) > 0 {
-		// By index rather than by pointer: the append below may move the backing array.
-		top := len(stack) - 1
-		targets, count := successors(func, stack[top].block)
-		if stack[top].next < count {
-			target := targets[stack[top].next]
-			stack[top].next += 1
-			if !seen[target] {
-				seen[target] = true
-				append(&stack, Step{block = target})
-			}
-			continue
-		}
-		append(&order, stack[top].block)
-		pop(&stack)
-	}
-	slice.reverse(order[:])
-	return order[:]
-}
-
-// successors reads the last instruction unchecked: the verifier promises that every block ends in
-// exactly one terminator.
-@(private)
-successors :: proc(func: ir.Func, block: ir.Block_ID) -> (targets: [2]ir.Block_ID, count: int) {
-	instructions := func.blocks[block].instructions
-	#partial switch v in func.values[instructions[len(instructions) - 1]].variant {
-	case ir.Jump:
-		return {v.target, 0}, 1
-	case ir.Branch:
-		return {v.then_block, v.else_block}, 2
-	}
-	return {}, 0
 }

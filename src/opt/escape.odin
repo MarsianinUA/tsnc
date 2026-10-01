@@ -1,3 +1,4 @@
+#+private
 package opt
 
 import "../ir"
@@ -65,7 +66,6 @@ Escape :: struct {
 	fields: [dynamic]^ir.Value_ID, // scratch of check_uses
 }
 
-// Frame is one function's cells and what may point to them.
 @(private = "file")
 Frame :: struct {
 	func:    ^ir.Func,
@@ -252,7 +252,6 @@ decide :: proc(e: ^Escape, frame: ^Frame) {
 	}
 }
 
-// check_uses lets out the sites behind every operand of the instruction it cannot keep in.
 @(private = "file")
 check_uses :: proc(
 	e: ^Escape,
@@ -350,7 +349,6 @@ nested :: proc(frame: ^Frame, inner, outer: ir.Block_ID) -> bool {
 	return false
 }
 
-// closure_function answers the function behind a closure made or named in this function.
 @(private = "file")
 closure_function :: proc(func: ir.Func, closure: ir.Value_ID) -> (ir.Func_ID, bool) {
 	#partial switch v in func.values[closure].variant {

@@ -313,14 +313,14 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 			io.write_string(w, " table ") or_return
 			io.write_int(w, int(v.table)) or_return
 		}
-		write_place_of(w, v.place) or_return
+		write_cell_place(w, v.place) or_return
 
 	case New_Array:
 		io.write_string(w, "new_array ") or_return
 		io.write_int(w, int(v.layout)) or_return
 		io.write_string(w, ", ") or_return
 		write_value(w, v.length) or_return
-		write_place_of(w, v.place) or_return
+		write_cell_place(w, v.place) or_return
 
 	case Field_Load:
 		io.write_string(w, "field_load ") or_return
@@ -444,7 +444,7 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 			write_value(w, v.env) or_return
 		}
 		io.write_byte(w, ')') or_return
-		write_place_of(w, v.place) or_return
+		write_cell_place(w, v.place) or_return
 
 	case Call:
 		io.write_string(w, "call ") or_return
@@ -494,7 +494,7 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 }
 
 @(private)
-write_place_of :: proc(w: io.Writer, place: Cell_Place) -> io.Error {
+write_cell_place :: proc(w: io.Writer, place: Cell_Place) -> io.Error {
 	if place == .Stack {
 		io.write_string(w, " stack") or_return
 	}

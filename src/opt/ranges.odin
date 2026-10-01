@@ -1,3 +1,4 @@
+#+private
 package opt
 
 import "core:math"
@@ -327,8 +328,11 @@ contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 				}
 			case ir.Call:
 				params := a.params[v.func]
+				if params == nil {
+					continue
+				}
 				for arg, i in v.args {
-					if params == nil || func.values[arg].type != ir.F64 {
+					if func.values[arg].type != ir.F64 {
 						continue
 					}
 					if grow(&params[i], refined(fr, func, arg, block)) {

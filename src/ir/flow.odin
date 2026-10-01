@@ -105,6 +105,7 @@ dominates :: proc(flow: Flow, head, block: Block_ID) -> bool {
 
 // successors answers the blocks the terminator of `block` jumps to, a target outside the function
 // included: the caller skips it, and the verifier reports it.
+@(private)
 successors :: proc(func: Func, block: Block_ID) -> (targets: [2]Block_ID, count: int) {
 	instructions := func.blocks[block].instructions
 	if len(instructions) == 0 {

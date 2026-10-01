@@ -184,7 +184,6 @@ a_cell_of_an_inner_loop_stored_into_one_of_an_outer_loop_stays_on_the_heap :: pr
 	}
 }
 
-// cell_places answers where the function puts the cells it makes.
 @(private = "file")
 cell_places :: proc(body: ir.Func) -> (places: bit_set[ir.Cell_Place]) {
 	for instruction in body.values {

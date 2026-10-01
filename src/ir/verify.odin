@@ -787,8 +787,6 @@ expect_index :: proc(c: ^Checker, id: Value_ID) {
 	}
 }
 
-// expect_arithmetic wants every operand and the result of one number type: F64, or the integer
-// type the operation was narrowed to.
 @(private)
 expect_arithmetic :: proc(c: ^Checker, ids: []Value_ID) {
 	result := c.body.values[c.value].type
@@ -1023,7 +1021,6 @@ holds_integer :: proc(type: Type, value: f64) -> bool {
 	return value >= -(1 << 63) && value < (1 << 63)
 }
 
-// converts lists what Convert does, every one exact: an integer grows, or crosses to or from F64.
 @(private)
 converts :: proc(from, to: Type) -> bool {
 	switch from {

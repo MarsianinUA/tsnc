@@ -1,4 +1,7 @@
+#+private
 package opt
+
+import "base:runtime"
 
 import "../ir"
 
@@ -62,17 +65,32 @@ proved :: proc(
 	if index.kind != .Integral || index.lo < 0 {
 		return false
 	}
+	since := upper_bound(func, fr, block, check)
+	if since == ir.NO_VALUE {
+		return false
+	}
 	immutable := func.values[check.array].type == ir.STR
+	return immutable || no_call_between(func, fr.flow, places, since, value)
+}
 
+// upper_bound answers the first value after which the index lies below the length, NO_VALUE when
+// none does.
+@(private = "file")
+upper_bound :: proc(
+	func: ir.Func,
+	fr: Func_Ranges,
+	block: ir.Block_ID,
+	check: ir.Bounds_Check,
+) -> ir.Value_ID {
 	// An earlier check of the same array answered the index.
 	#partial switch earlier in func.values[check.index].variant {
 	case ir.Bounds_Check:
 		if earlier.array == check.array {
-			return immutable || no_call_between(func, fr.flow, places, check.index, value)
+			return check.index
 		}
 	case ir.Proved_Index:
 		if earlier.array == check.array {
-			return immutable || no_call_between(func, fr.flow, places, check.index, value)
+			return check.index
 		}
 	}
 
@@ -81,7 +99,7 @@ proved :: proc(
 		length, length_known := func.values[made.length].variant.(ir.Const_Number)
 		at, at_known := func.values[check.index].variant.(ir.Const_Number)
 		if length_known && at_known && at.value < length.value {
-			return immutable || no_call_between(func, fr.flow, places, check.array, value)
+			return check.array
 		}
 	}
 
@@ -102,10 +120,10 @@ proved :: proc(
 		}
 		measured, is_length := func.values[length].variant.(ir.Length)
 		if is_length && measured.value == check.array {
-			return immutable || no_call_between(func, fr.flow, places, length, value)
+			return length
 		}
 	}
-	return false
+	return ir.NO_VALUE
 }
 
 // no_call_between walks every block on a path from `from` to `to` backwards, from the head of the
@@ -127,6 +145,9 @@ no_call_between :: proc(
 	if calls_in(func, end_block[:end.position]) {
 		return false
 	}
+
+	// Kept until optimize returns, this scratch would grow by every block for every check.
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
 	// Blocks whose whole body lies on a path; the walk stops at the block of `from`.
 	seen := make([]bool, len(func.blocks), context.temp_allocator)

@@ -166,7 +166,6 @@ to_int32 :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef 
 	)
 }
 
-// from_int32 answers a 32 bit result as the result type of the operation, F64 or I32.
 @(private)
 from_int32 :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
 	if type == ir.I32 {

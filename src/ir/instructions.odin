@@ -166,9 +166,8 @@ Cell_Place :: enum u8 {
 
 MAX_STACK_ELEMENTS :: 16
 
-// cell_size answers the bytes of the cell an Alloc, a Make_Closure, or a New_Array of a constant
-// length up to MAX_STACK_ELEMENTS makes, which is what its slot on the stack takes; ok is false for
-// any other value.
+// cell_size answers the bytes a cell takes in its slot on the stack; ok is false for a value that
+// cannot go there.
 cell_size :: proc(p: Program_IR, func: Func, value: Value_ID) -> (size: int, ok: bool) {
 	#partial switch v in func.values[value].variant {
 	case Alloc:
