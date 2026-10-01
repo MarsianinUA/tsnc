@@ -90,8 +90,8 @@ the_empty_string_is_one_static_cell :: proc(t: ^testing.T) {
 	text := str.from_utf8(&heap, "abc")
 	testing.expect_value(t, str.slice(&heap, text, 2, 1), empty)
 	testing.expect_value(t, str.trim(&heap, str.from_utf8(&heap, " \t\n")), empty)
-	// Two slots of 32 bytes, "abc" and the whitespace: no empty result took one.
-	testing.expect_value(t, heap.used, 2 * 32)
+	// Two slots of 24 bytes, "abc" and the whitespace: no empty result took one.
+	testing.expect_value(t, heap.used, 2 * 24)
 }
 
 // A result that is one of the arguments whole comes back as that cell, not a copy: concat with an

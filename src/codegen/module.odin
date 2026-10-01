@@ -70,6 +70,7 @@ Module :: struct {
 	closures:     []llvm.LLVMValueRef,
 	infos:        []llvm.LLVMValueRef,
 	ascii_cells:  llvm.LLVMValueRef,
+	heap:         llvm.LLVMValueRef,
 }
 
 @(private)
@@ -95,6 +96,7 @@ build_module :: proc(
 	add_type_tables(&m)
 	add_globals(&m)
 	add_roots(&m)
+	add_heap(&m)
 	declare_funcs(&m, unit)
 
 	for id in unit.funcs {
@@ -334,6 +336,22 @@ add_roots :: proc(m: ^Module) {
 	}
 	roots := add_constant_array(m, row_type, rows[:], "roots")
 	add_slice_procedure(m, abi.ROOTS_SYMBOL, roots, len(rows), "roots.slice")
+}
+
+// add_heap defines tsnc_heap, which keeps the head of the runtime's heap where build_alloc reads it.
+// The runtime calls it before tsnc_main, so no allocation finds the global null.
+@(private)
+add_heap :: proc(m: ^Module) {
+	m.heap = llvm.LLVMAddGlobal(m.module, m.types.ptr, "heap")
+	llvm.LLVMSetInitializer(m.heap, llvm.LLVMConstNull(m.types.ptr))
+	llvm.LLVMSetLinkage(m.heap, .LLVMInternalLinkage)
+
+	param := m.types.ptr
+	signature := llvm.LLVMFunctionType(m.types.void, &param, 1, false)
+	keep := llvm.LLVMAddFunction(m.module, abi.HEAP_SYMBOL, signature)
+	llvm.LLVMPositionBuilderAtEnd(m.builder, llvm.LLVMAppendBasicBlockInContext(m.ctx, keep, ""))
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMGetParam(keep, 0), m.heap)
+	llvm.LLVMBuildRetVoid(m.builder)
 }
 
 @(private)

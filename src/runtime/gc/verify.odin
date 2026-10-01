@@ -39,7 +39,7 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 				return .Bad_Page, &heap.base[index * PAGE_SIZE]
 			}
 		case .Small:
-			if int(page.class) >= CLASS_COUNT {
+			if int(page.class) >= abi.CLASS_COUNT {
 				return .Bad_Page, &heap.base[index * PAGE_SIZE]
 			}
 		case .Large:
@@ -64,12 +64,12 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 	}
 
 	// --- Every live cell, counting the free slots on the way.
-	free_slots: [CLASS_COUNT]int
+	free_slots: [abi.CLASS_COUNT]int
 	for index := 0; index < heap.page_count; index += 1 {
 		page := heap.pages[index]
 		#partial switch page.kind {
 		case .Small:
-			size := CLASS_SIZE[page.class]
+			size := abi.CLASS_SIZE[page.class]
 			for slot in 0 ..< PAGE_SIZE / size {
 				cell := (^abi.Cell_Header)(&heap.base[index * PAGE_SIZE + slot * size])
 				if cell.type_table == FREE {
@@ -95,7 +95,7 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 
 	// --- The free lists hold exactly the free slots. A list longer than the count holds a live
 	// cell or a cycle, and is stopped at that point.
-	for class in 0 ..< CLASS_COUNT {
+	for class in 0 ..< abi.CLASS_COUNT {
 		count := 0
 		for slot := heap.free[class]; slot != nil; slot = slot.next {
 			if count == free_slots[class] || !is_free_slot(heap, slot, class) {
@@ -229,7 +229,7 @@ verify_reference :: proc(heap: ^Heap, ref: ^abi.Cell_Header) -> Heap_Problem {
 }
 
 @(private = "file")
-is_free_slot :: proc(heap: ^Heap, slot: ^Free_Slot, class: int) -> bool {
+is_free_slot :: proc(heap: ^Heap, slot: ^abi.Free_Slot, class: int) -> bool {
 	if !in_heap(heap, slot) {
 		return false
 	}
@@ -238,7 +238,7 @@ is_free_slot :: proc(heap: ^Heap, slot: ^Free_Slot, class: int) -> bool {
 		return false
 	}
 	page := heap.pages[offset / PAGE_SIZE]
-	size := CLASS_SIZE[class]
+	size := abi.CLASS_SIZE[class]
 	in_class := page.kind == .Small && int(page.class) == class
 	on_boundary := offset % PAGE_SIZE % size == 0 && offset % PAGE_SIZE / size < PAGE_SIZE / size
 	return in_class && on_boundary && slot.header.type_table == FREE
@@ -258,7 +258,7 @@ in_heap :: proc(heap: ^Heap, p: rawptr) -> bool {
 slot_of :: proc(heap: ^Heap, cell: ^abi.Cell_Header) -> int {
 	page := heap.pages[int(uintptr(cell) - uintptr(heap.base)) / PAGE_SIZE]
 	if page.kind == .Small {
-		return CLASS_SIZE[page.class]
+		return abi.CLASS_SIZE[page.class]
 	}
 	return int(page.run) * PAGE_SIZE
 }

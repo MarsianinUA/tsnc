@@ -75,8 +75,8 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		if v.place == .Stack {
 			body.values[value] = start_stack_cell(m, body, value, ir.table_id(row))
 		} else {
-			args := [?]llvm.LLVMValueRef{table_word(m, row)}
-			body.values[value] = call_runtime(m, .Alloc, args[:])
+			size, _ := ir.cell_size(m.program^, body.func, value)
+			body.values[value] = build_alloc(m, body, ir.table_id(row), size)
 		}
 
 	case ir.New_Array:
@@ -190,8 +190,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		if v.place == .Stack {
 			cell = start_stack_cell(m, body, value, closure)
 		} else {
-			table := [?]llvm.LLVMValueRef{llvm.LLVMConstInt(m.types.int64, u64(closure), false)}
-			cell = call_runtime(m, .Alloc, table[:])
+			cell = build_alloc(m, body, closure, size_of(abi.Closure_Cell))
 		}
 		code := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, code)))
 		llvm.LLVMBuildStore(m.builder, m.funcs[v.func].function, code)
@@ -379,6 +378,72 @@ start_stack_cell :: proc(
 	#assert(offset_of(abi.Cell_Header, type_table) == 0)
 	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell.slot)
 	return cell.slot
+}
+
+// build_alloc takes a small cell off its free list the way abi.Heap_Head describes, and calls
+// tsnc_alloc where that gives none. Like a bounds check it splits the block and leaves the builder
+// in the last part.
+@(private)
+build_alloc :: proc(
+	m: ^Module,
+	body: ^Body,
+	table: abi.Type_Table_ID,
+	size: int,
+) -> llvm.LLVMValueRef {
+	args := [?]llvm.LLVMValueRef{llvm.LLVMConstInt(m.types.int64, u64(table), false)}
+	if size > abi.MAX_SMALL {
+		return call_runtime(m, .Alloc, args[:])
+	}
+	class := abi.class_of(size)
+	slot_size := llvm.LLVMConstInt(m.types.int64, u64(abi.CLASS_SIZE[class]), false)
+	head := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, m.heap, "")
+	free := byte_offset(m, head, int(offset_of(abi.Heap_Head, free)) + class * size_of(rawptr))
+	slot := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, free, "")
+	used_address := byte_offset(m, head, int(offset_of(abi.Heap_Head, used)))
+	used := llvm.LLVMBuildLoad2(m.builder, m.types.int64, used_address, "")
+	limit_address := byte_offset(m, head, int(offset_of(abi.Heap_Head, limit)))
+	limit := llvm.LLVMBuildLoad2(m.builder, m.types.int64, limit_address, "")
+	grown := llvm.LLVMBuildNSWAdd(m.builder, used, slot_size, "")
+	null := llvm.LLVMConstNull(m.types.ptr)
+	has_slot := llvm.LLVMBuildICmp(m.builder, .LLVMIntNE, slot, null, "")
+	within := llvm.LLVMBuildICmp(m.builder, .LLVMIntSLE, grown, limit, "")
+	fast := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	slow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, llvm.LLVMBuildAnd(m.builder, has_slot, within, ""), fast, slow)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, fast)
+	next_address := byte_offset(m, slot, int(offset_of(abi.Free_Slot, next)))
+	next := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, next_address, "")
+	llvm.LLVMBuildStore(m.builder, next, free)
+	llvm.LLVMBuildStore(m.builder, grown, used_address)
+	one := llvm.LLVMConstInt(m.types.int64, 1, false)
+	count(m, head, int(offset_of(abi.Heap_Head, cells)), one)
+	count(m, head, int(offset_of(abi.Heap_Head, allocated)), slot_size)
+	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
+	extent := llvm.LLVMConstInt(m.types.int64, u64(max(size, size_of(abi.Free_Slot))), false)
+	llvm.LLVMBuildMemSet(m.builder, slot, zero, extent, align_of(abi.Free_Slot))
+	#assert(offset_of(abi.Cell_Header, type_table) == 0)
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), slot)
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, slow)
+	cell := call_runtime(m, .Alloc, args[:])
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
+	answer := llvm.LLVMBuildPhi(m.builder, m.types.ptr, "")
+	values := [?]llvm.LLVMValueRef{slot, cell}
+	blocks := [?]llvm.LLVMBasicBlockRef{fast, slow}
+	llvm.LLVMAddIncoming(answer, &values[0], &blocks[0], len(values))
+	return answer
+}
+
+@(private)
+count :: proc(m: ^Module, head: llvm.LLVMValueRef, offset: int, step: llvm.LLVMValueRef) {
+	address := byte_offset(m, head, offset)
+	total := llvm.LLVMBuildLoad2(m.builder, m.types.int64, address, "")
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMBuildNSWAdd(m.builder, total, step, ""), address)
 }
 
 @(private)

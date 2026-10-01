@@ -4,6 +4,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 
+import "../../../src/abi"
 import "../../../src/runtime/gc"
 
 @(test)
@@ -16,24 +17,25 @@ stats_count_every_allocation_and_collection :: proc(t: ^testing.T) {
 		gc.alloc(&heap, POINT, POINT_SIZE)
 	}
 	gc.alloc(&heap, BLOB, 2 * gc.PAGE_SIZE + 1)
-	allocated := 3 * gc.CLASS_SIZE[2] + 3 * gc.PAGE_SIZE
-	testing.expect_value(t, heap.stats.cells, 4)
-	testing.expect_value(t, heap.stats.allocated, allocated)
+	point := abi.CLASS_SIZE[POINT_CLASS]
+	allocated := 3 * point + 3 * gc.PAGE_SIZE
+	testing.expect_value(t, heap.cells, 4)
+	testing.expect_value(t, heap.allocated, allocated)
 	testing.expect_value(t, heap.stats.collections, 0)
 
 	collect_holding_a_point(t, &heap)
 	stats := heap.stats
 	testing.expect_value(t, stats.collections, 1)
-	testing.expect_value(t, stats.cells, 5)
-	testing.expect_value(t, stats.allocated, allocated + gc.CLASS_SIZE[2])
+	testing.expect_value(t, heap.cells, 5)
+	testing.expect_value(t, heap.allocated, allocated + point)
 	// The scan is conservative, so a stale word may keep more than the point.
 	testing.expect_value(t, stats.live, heap.used)
-	testing.expect(t, stats.live >= gc.CLASS_SIZE[2])
+	testing.expect(t, stats.live >= point)
 	testing.expect_value(t, stats.longest, stats.marking + stats.sweeping)
 
 	gc.collect(&heap)
 	testing.expect_value(t, heap.stats.collections, 2)
-	testing.expect_value(t, heap.stats.allocated, allocated + gc.CLASS_SIZE[2])
+	testing.expect_value(t, heap.allocated, allocated + point)
 	testing.expect_value(t, heap.stats.live, heap.used)
 }
 
@@ -47,14 +49,13 @@ collect_holding_a_point :: proc(t: ^testing.T, heap: ^gc.Heap) {
 @(test)
 the_stats_line_reads_in_milliseconds_and_megabytes :: proc(t: ^testing.T) {
 	heap := gc.Heap {
+		head = {cells = 29_447_519, allocated = 942_344_765},
 		page_count = 373,
 		stats = {
 			collections = 109,
 			marking = 293_549 * time.Microsecond,
 			sweeping = 190 * time.Microsecond,
 			longest = 5_400 * time.Microsecond,
-			cells = 29_447_519,
-			allocated = 942_344_765,
 			live = 11_200_000,
 		},
 	}

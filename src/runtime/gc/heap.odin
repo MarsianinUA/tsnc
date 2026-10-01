@@ -15,7 +15,8 @@ index and bdwgc answers GC_base. A free slot keeps a header too, naming the FREE
 tells it from a live cell without a bitmap.
 
 The package keeps no state: the runtime's one heap is a Heap that rt holds, and tests make their
-own. Nothing here allocates through context.allocator, and the heap never becomes it.
+own. Nothing here allocates through context.allocator, and the heap never becomes it. Generated
+code takes small cells off the free lists of that heap itself, through its head (abi.Heap_Head).
 
 In a build with -sanitize:address the heap tells ASan which of its bytes a program may touch, as
 Go's sweep calls asanpoison: the first max(size, size_of(Free_Slot)) bytes of a live cell and the
@@ -37,62 +38,16 @@ import "../fail"
 // PAGE_SIZE is a multiple of every OS page size, 16 KiB on arm64 macOS included, and the
 // reservation grain of Windows.
 PAGE_SIZE :: 64 * 1024
-// MAX_SMALL is the largest cell a size class holds; a larger one takes whole pages. Half a page, as
-// in Oilpan, caps what a large cell wastes at the tail of its last page.
-MAX_SMALL :: PAGE_SIZE / 2
-CLASS_COUNT :: 40
+// A cell past abi.MAX_SMALL takes whole pages. Half a page, as in Oilpan, caps what a large cell
+// wastes at the tail of its last page.
+#assert(abi.MAX_SMALL == PAGE_SIZE / 2)
 // DEFAULT_RESERVE is address space, not memory: only the pages handed out are committed.
 DEFAULT_RESERVE :: 64 << 30
-// Go's defaults: a 4 MB minimum heap, and GOGC=100, so the heap may double between collections.
+// A collection marks every live cell, so the heap may grow to GROWTH times what one leaves before
+// the next: V8's growing factor reaches 4 where memory allows, Go's GOGC=100 is 2. MIN_TRIGGER is
+// Go's 4 MB minimum heap, which keeps a program with few live cells inside the cache.
 MIN_TRIGGER :: 4 << 20
-GROWTH :: 2
-
-// CLASS_SIZE steps by 16 bytes up to 128, then takes four classes per doubling, as Go's classes do,
-// so a cell leaves at most a fifth of its slot unused. Every size is a multiple of 16, which keeps
-// every cell 16-byte aligned.
-@(rodata)
-CLASS_SIZE := [CLASS_COUNT]int {
-	16,
-	32,
-	48,
-	64,
-	80,
-	96,
-	112,
-	128,
-	160,
-	192,
-	224,
-	256,
-	320,
-	384,
-	448,
-	512,
-	640,
-	768,
-	896,
-	1024,
-	1280,
-	1536,
-	1792,
-	2048,
-	2560,
-	3072,
-	3584,
-	4096,
-	5120,
-	6144,
-	7168,
-	8192,
-	10240,
-	12288,
-	14336,
-	16384,
-	20480,
-	24576,
-	28672,
-	32768,
-}
+GROWTH :: 4
 
 Page_Kind :: enum u8 {
 	Free, // not handed out
@@ -103,18 +58,12 @@ Page_Kind :: enum u8 {
 
 Page :: struct {
 	kind:  Page_Kind,
-	class: u8, // Small: index into CLASS_SIZE
+	class: u8, // Small: index into abi.CLASS_SIZE
 	run:   u32, // Large: pages in the cell; Large_Tail: pages back to its Large page
 }
 
-// Free_Slot is what a slot holds while it waits on the free list of its class. The smallest class
-// is its size.
-Free_Slot :: struct {
-	header: abi.Cell_Header, // type_table is FREE
-	next:   ^Free_Slot,
-}
-
 Heap :: struct {
+	using head: abi.Heap_Head,
 	tables:     []abi.Type_Table, // the program's, numbered after abi.BUILTIN_TABLES; borrowed
 	roots:      []abi.Root, // the module globals that hold a reference; borrowed
 	stack_base: rawptr, // the stack scan stops below it
@@ -124,22 +73,19 @@ Heap :: struct {
 	page_limit: int,
 	page_count: int, // the frontier: pages handed out from base
 	first_free: int, // no page below it is Free
-	free:       [CLASS_COUNT]^Free_Slot,
 	marks:      Mark_Stack,
-	used:       int, // bytes of the slots and runs that hold cells
 	trigger:    int,
 	stats:      Stats,
 }
 
-// Stats is what TSNC_GC_STATS reports at exit. Counting costs two adds per allocation and three
-// clock reads per collection, less than a check whether anyone asked, so it is always on.
+// Stats, with cells and allocated of the head, is what TSNC_GC_STATS reports at exit. Counting
+// costs two adds per allocation and three clock reads per collection, less than a check whether
+// anyone asked, so it is always on.
 Stats :: struct {
 	collections: int,
 	marking:     time.Duration,
 	sweeping:    time.Duration,
 	longest:     time.Duration, // one collection, marking and sweeping
-	cells:       int,
-	allocated:   int, // bytes of the slots and runs handed out, as used counts them
 	live:        int, // used after the last collection
 }
 
@@ -224,8 +170,8 @@ heap_init :: proc(
 		pages = ([^]Page)(raw_data(rows)),
 		page_limit = page_limit,
 		marks = {cells = ([^]^abi.Cell_Header)(raw_data(marks))},
-		trigger = MIN_TRIGGER,
 	}
+	set_trigger(heap, MIN_TRIGGER)
 	return .None
 }
 
@@ -300,9 +246,9 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	}
 
 	class, count, slot_size: int
-	if size <= MAX_SMALL {
-		class = class_of(size)
-		slot_size = CLASS_SIZE[class]
+	if size <= abi.MAX_SMALL {
+		class = abi.class_of(size)
+		slot_size = abi.CLASS_SIZE[class]
 	} else {
 		count = size / PAGE_SIZE + (1 if size % PAGE_SIZE != 0 else 0)
 		slot_size = count * PAGE_SIZE
@@ -326,20 +272,21 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 	return hand_out(heap, cell, table, size, slot_size)
 }
 
-// alloc_fast is alloc from a free list, or nil where alloc would collect or carve a page. It needs no
-// context, so an export tries it first, and asserts nothing: the caller checks as alloc does.
+// alloc_fast is alloc from a free list, the way generated code takes a cell (abi.Heap_Head), or nil
+// where alloc would collect or carve a page. It needs no context, so an export tries it first, and
+// asserts nothing: the caller checks as alloc does.
 alloc_fast :: proc "contextless" (
 	heap: ^Heap,
 	table: abi.Type_Table_ID,
 	size: int,
 ) -> ^abi.Cell_Header {
-	if size > MAX_SMALL || heap.mode == .Stress {
+	if size > abi.MAX_SMALL {
 		return nil
 	}
-	class := class_of(size)
-	slot_size := CLASS_SIZE[class]
+	class := abi.class_of(size)
+	slot_size := abi.CLASS_SIZE[class]
 	slot := heap.free[class]
-	if slot == nil || heap.used + slot_size > heap.trigger {
+	if slot == nil || heap.used + slot_size > heap.limit {
 		return nil
 	}
 	heap.free[class] = slot.next
@@ -354,12 +301,12 @@ hand_out :: proc "contextless" (
 	size, slot_size: int,
 ) -> ^abi.Cell_Header {
 	heap.used += slot_size
-	heap.stats.cells += 1
-	heap.stats.allocated += slot_size
+	heap.cells += 1
+	heap.allocated += slot_size
 
 	// A cell of a header alone still clears the free list link after it, so no stale pointer stays
 	// in its slot. The whole slot is poisoned first: a run of fresh pages never was.
-	extent := max(size, size_of(Free_Slot))
+	extent := max(size, size_of(abi.Free_Slot))
 	sanitizer.address_poison(cell, slot_size)
 	sanitizer.address_unpoison(cell, extent)
 	intrinsics.mem_zero(cell, extent)
@@ -409,7 +356,7 @@ owner :: proc(heap: ^Heap, p: rawptr) -> ^abi.Cell_Header {
 	case .Free:
 		return nil
 	case .Small:
-		size := CLASS_SIZE[page.class]
+		size := abi.CLASS_SIZE[page.class]
 		slot := offset % PAGE_SIZE / size
 		if slot >= PAGE_SIZE / size {
 			return nil
@@ -480,15 +427,12 @@ root_is_valid :: proc(root: abi.Root) -> bool {
 	return aligned && (root.kind == .Ref || root.kind == .Tagged)
 }
 
-// class_of reads the class off the layout of CLASS_SIZE: steps of 16 up to 128, then four classes
-// for each power of two, told apart by the two bits below the top one of size - 1.
+// set_trigger keeps generated code out of the free lists where every allocation has to reach alloc:
+// stress mode collects before each one, and under ASan alloc unpoisons each cell it hands out.
 @(private)
-class_of :: proc "contextless" (size: int) -> int {
-	if size <= 128 {
-		return (size - 1) >> 4
-	}
-	top := 63 - int(intrinsics.count_leading_zeros(u64(size - 1)))
-	return 4 * top - 24 + ((size - 1) >> uint(top - 2))
+set_trigger :: proc(heap: ^Heap, trigger: int) {
+	heap.trigger = trigger
+	heap.limit = 0 if heap.mode == .Stress || .Address in ODIN_SANITIZER_FLAGS else trigger
 }
 
 // carve_page threads every slot of a new page onto the free list of `class`, from the last slot
@@ -500,12 +444,12 @@ carve_page :: proc(heap: ^Heap, class: int) -> (ok: bool) {
 		kind  = .Small,
 		class = u8(class),
 	}
-	size := CLASS_SIZE[class]
+	size := abi.CLASS_SIZE[class]
 	page := heap.base[index * PAGE_SIZE:]
 	sanitizer.address_poison(page, PAGE_SIZE)
-	next: ^Free_Slot
+	next: ^abi.Free_Slot
 	for slot := PAGE_SIZE / size - 1; slot >= 0; slot -= 1 {
-		free := (^Free_Slot)(&page[slot * size])
+		free := (^abi.Free_Slot)(&page[slot * size])
 		sanitizer.address_unpoison(free)
 		free^ = {
 			header = {type_table = FREE},
@@ -571,7 +515,7 @@ page_table_size :: proc(count: int) -> int {
 
 @(private)
 mark_stack_size :: proc(count: int) -> int {
-	return round_to_pages(count * (PAGE_SIZE / CLASS_SIZE[0]) * size_of(^abi.Cell_Header))
+	return round_to_pages(count * (PAGE_SIZE / abi.CLASS_SIZE[0]) * size_of(^abi.Cell_Header))
 }
 
 @(private)
