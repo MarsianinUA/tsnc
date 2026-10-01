@@ -231,6 +231,56 @@ the_dump_spells_the_string_instructions :: proc(t: ^testing.T) {
 }
 
 @(test)
+the_dump_spells_the_integer_types :: proc(t: ^testing.T) {
+	table := file_table()
+	p := ir.make_builder(context.temp_allocator)
+	site := ir.fail_site(&p, {file = "main.ts", line = 2, column = 1, error = .Index_Out_Of_Range})
+	numbers := ir.array_layout(&p, .Number)
+	params := [?]ir.Type{ir.F64, ir.ref(numbers)}
+	count := ir.declare_func(&p, "count", params[:], ir.F64, at(table, 2))
+
+	f := ir.begin_func(&p, count)
+	number, array := ir.Value_ID(0), ir.Value_ID(1)
+	whole := ir.emit(&f, ir.I32, ir.Convert{value = number}, at(table, 3))
+	one := ir.emit(&f, ir.I32, ir.Const_Number{value = 1}, at(table, 3))
+	next := ir.emit(&f, ir.I32, ir.Binary{op = .Add, left = whole, right = one}, at(table, 3))
+	wide := ir.emit(&f, ir.I64, ir.Convert{value = next}, at(table, 3))
+	length := ir.emit(&f, ir.I64, ir.Length{value = array}, at(table, 3))
+	ir.emit(&f, ir.BOOL, ir.Compare{op = .Less, left = wide, right = length}, at(table, 3))
+	check := ir.Bounds_Check {
+		array        = array,
+		index        = wide,
+		not_integer  = site,
+		out_of_range = site,
+	}
+	ir.emit(&f, ir.I64, check, at(table, 3))
+	back := ir.emit(&f, ir.F64, ir.Convert{value = wide}, at(table, 3))
+	ir.emit(&f, ir.VOID, ir.Return{value = back}, at(table, 3))
+	ir.end_func(&f)
+	program := ir.finish(&p, count, nil)
+
+	expect_dump(
+		t,
+		func_dump(table, program, count),
+		{
+			"func 0 count(f64, ref(1)) -> f64 at main.ts:2:1",
+			"  b0:",
+			"    %0 = param 0 : f64 ; 2:1",
+			"    %1 = param 1 : ref(1) ; 2:1",
+			"    %2 = convert %0 : i32 ; 3:1",
+			"    %3 = const 1 : i32 ; 3:1",
+			"    %4 = add %2, %3 : i32 ; 3:1",
+			"    %5 = convert %4 : i64 ; 3:1",
+			"    %6 = length %1 : i64 ; 3:1",
+			"    %7 = lt %5, %6 : bool ; 3:1",
+			"    %8 = bounds_check %1[%5] not_integer 0 out_of_range 0 : i64 ; 3:1",
+			"    %9 = convert %5 : f64 ; 3:1",
+			"    return %9 ; 3:1",
+		},
+	)
+}
+
+@(test)
 a_number_prints_as_the_shortest_form_that_reads_back :: proc(t: ^testing.T) {
 	// The sign bit alone is negative zero: an Odin constant -0.0 folds to positive zero, and the
 	// dump has to tell the two apart.

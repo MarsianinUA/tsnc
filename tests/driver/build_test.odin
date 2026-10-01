@@ -166,6 +166,10 @@ the_thread_count_changes_no_byte_of_any_artifact :: proc(t: ^testing.T) {
 			options.emit_ir = artifact.emit_ir
 			options.emit_llvm = artifact.emit_llvm
 			options.jobs = jobs
+			if artifact.emit_ir {
+				// opt runs from -o:speed on; a dump shows its result without the time LLVM takes.
+				options.optimization = .speed
+			}
 			built := build_project(options)
 			defer driver.destroy(&built.report.check)
 			if !expect_built(t, built) {

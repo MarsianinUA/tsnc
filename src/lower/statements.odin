@@ -163,7 +163,7 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 		return
 	}
 	switch s.declared.kind {
-	case .Void:
+	case .Void, .I32, .I64:
 		leave(s, ir.NO_VALUE, span)
 	case .Tagged:
 		leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)

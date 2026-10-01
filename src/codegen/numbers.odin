@@ -18,69 +18,112 @@ The number functions of Math are emitted inline: an llvm intrinsic where this LL
 to libm otherwise.
 */
 
+// build_binary emits an integer operation where opt narrowed one. It proved the result never leaves
+// its type, which nsw tells LLVM, and a Remainder's dividend non-negative and its divisor never 0,
+// where srem is what % computes.
 @(private)
-build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary) -> llvm.LLVMValueRef {
+build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> llvm.LLVMValueRef {
 	left, right := body.values[v.left], body.values[v.right]
+	integer := ir.is_integer(type)
 	switch v.op {
 	case .Add:
+		if integer {
+			return llvm.LLVMBuildNSWAdd(m.builder, left, right, "")
+		}
 		return llvm.LLVMBuildFAdd(m.builder, left, right, "")
 	case .Subtract:
+		if integer {
+			return llvm.LLVMBuildNSWSub(m.builder, left, right, "")
+		}
 		return llvm.LLVMBuildFSub(m.builder, left, right, "")
 	case .Multiply:
+		if integer {
+			return llvm.LLVMBuildNSWMul(m.builder, left, right, "")
+		}
 		return llvm.LLVMBuildFMul(m.builder, left, right, "")
 	case .Divide:
 		return llvm.LLVMBuildFDiv(m.builder, left, right, "")
 	case .Remainder:
+		if integer {
+			return llvm.LLVMBuildSRem(m.builder, left, right, "")
+		}
+		if k, is_power := power_of_two(body.func.values[v.right]); is_power {
+			return build_power_remainder(m, left, k)
+		}
 		// The remainder of a truncating division, which is what % means in ECMAScript.
 		return llvm.LLVMBuildFRem(m.builder, left, right, "")
 	case .Power:
 		return build_power(m, left, right)
 	case .Shift_Left:
-		return from_int32(
-			m,
-			llvm.LLVMBuildShl(m.builder, to_int32(m, left), shift_count(m, right), ""),
-		)
+		value := to_int32(m, body, v.left)
+		shifted := llvm.LLVMBuildShl(m.builder, value, shift_count(m, body, v.right), "")
+		return from_int32(m, shifted, type)
 	case .Shift_Right:
-		return from_int32(
-			m,
-			llvm.LLVMBuildAShr(m.builder, to_int32(m, left), shift_count(m, right), ""),
-		)
+		value := to_int32(m, body, v.left)
+		shifted := llvm.LLVMBuildAShr(m.builder, value, shift_count(m, body, v.right), "")
+		return from_int32(m, shifted, type)
 	case .Shift_Right_Unsigned:
-		// ToUint32 has the bits of ToInt32; only the way back to a double differs.
-		return from_uint32(
-			m,
-			llvm.LLVMBuildLShr(m.builder, to_int32(m, left), shift_count(m, right), ""),
-		)
+		// ToUint32 has the bits of ToInt32; only the way back to a number differs.
+		value := to_int32(m, body, v.left)
+		shifted := llvm.LLVMBuildLShr(m.builder, value, shift_count(m, body, v.right), "")
+		return from_uint32(m, shifted, type)
 	case .Bit_And:
-		return from_int32(
-			m,
-			llvm.LLVMBuildAnd(m.builder, to_int32(m, left), to_int32(m, right), ""),
-		)
+		a, b := to_int32(m, body, v.left), to_int32(m, body, v.right)
+		return from_int32(m, llvm.LLVMBuildAnd(m.builder, a, b, ""), type)
 	case .Bit_Or:
-		return from_int32(
-			m,
-			llvm.LLVMBuildOr(m.builder, to_int32(m, left), to_int32(m, right), ""),
-		)
+		a, b := to_int32(m, body, v.left), to_int32(m, body, v.right)
+		return from_int32(m, llvm.LLVMBuildOr(m.builder, a, b, ""), type)
 	case .Bit_Xor:
-		return from_int32(
-			m,
-			llvm.LLVMBuildXor(m.builder, to_int32(m, left), to_int32(m, right), ""),
-		)
+		a, b := to_int32(m, body, v.left), to_int32(m, body, v.right)
+		return from_int32(m, llvm.LLVMBuildXor(m.builder, a, b, ""), type)
 	}
 	unreachable()
 }
 
+// power_of_two answers k for a divisor that is the constant ±2^k, 0 <= k <= 1022, where 2^-k is
+// still a normal number.
 @(private)
-build_bit_not :: proc(m: ^Module, operand: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
-	return from_int32(m, llvm.LLVMBuildNot(m.builder, to_int32(m, operand), ""))
+power_of_two :: proc(divisor: ir.Instruction) -> (k: int, ok: bool) {
+	constant, is_constant := divisor.variant.(ir.Const_Number)
+	if !is_constant || divisor.type != ir.F64 {
+		return 0, false
+	}
+	fraction, exponent := math.frexp(abs(constant.value))
+	if fraction != 0.5 || exponent < 1 || exponent > 1023 {
+		return 0, false
+	}
+	return exponent - 1, true
 }
 
-// to_int32 is the ECMAScript ToInt32. The reduction happens in double, because fptosi is poison
-// outside the range of an i32: after the two folds every finite input lands inside it, and what the
-// reduction leaves of NaN and of an infinity is NaN, which the saturating conversion turns into the
-// 0 the specification asks for.
+// build_power_remainder is x % ±2^k without a call to fmod. x - 2^k * trunc(x * 2^-k) is exact for
+// every finite x: a scaling by a power of two, a truncation and that difference lose no bit. An
+// infinity or NaN comes out NaN, as % answers. A difference of two equal values is +0, and copysign
+// gives a negative x its -0 back: -4 % 2 is -0.
 @(private)
-to_int32 :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+build_power_remainder :: proc(m: ^Module, x: llvm.LLVMValueRef, k: int) -> llvm.LLVMValueRef {
+	down := llvm.LLVMConstReal(m.types.double, math.ldexp(f64(1), -k))
+	up := llvm.LLVMConstReal(m.types.double, math.ldexp(f64(1), k))
+	scaled := [?]llvm.LLVMValueRef{llvm.LLVMBuildFMul(m.builder, x, down, "")}
+	whole := build_number_call(m, .Trunc, scaled[:])
+	multiple := llvm.LLVMBuildFMul(m.builder, whole, up, "")
+	signs := [?]llvm.LLVMValueRef{llvm.LLVMBuildFSub(m.builder, x, multiple, ""), x}
+	return build_double_call(m, "llvm.copysign", "copysign", signs[:])
+}
+
+// to_int32 is the ECMAScript ToInt32 of a value of any number type. An integer wraps modulo 2^32,
+// which is what dropping its high bits does. A double is reduced in double, because fptosi is
+// poison outside the range of an i32: after the two folds every finite input lands inside it, and
+// what the reduction leaves of NaN and of an infinity is NaN, which the saturating conversion turns
+// into the 0 the specification asks for.
+@(private)
+to_int32 :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef {
+	value := body.values[id]
+	#partial switch body.func.values[id].type.kind {
+	case .I32:
+		return value
+	case .I64:
+		return llvm.LLVMBuildTrunc(m.builder, value, m.types.int32, "")
+	}
 	TWO_32 :: f64(4294967296)
 	TWO_31 :: f64(2147483648)
 	two_32 := llvm.LLVMConstReal(m.types.double, TWO_32)
@@ -123,21 +166,29 @@ to_int32 :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
 	)
 }
 
+// from_int32 answers a 32 bit result as the result type of the operation, F64 or I32.
 @(private)
-from_int32 :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+from_int32 :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
+	if type == ir.I32 {
+		return value
+	}
 	return llvm.LLVMBuildSIToFP(m.builder, value, m.types.double, "")
 }
 
+// from_uint32 answers the result of an unsigned shift as F64 or I64: an I32 cannot hold it.
 @(private)
-from_uint32 :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+from_uint32 :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
+	if type == ir.I64 {
+		return llvm.LLVMBuildZExt(m.builder, value, m.types.int64, "")
+	}
 	return llvm.LLVMBuildUIToFP(m.builder, value, m.types.double, "")
 }
 
 // A shift count is taken modulo 32, which is the low five bits of ToUint32 and of ToInt32 alike.
 @(private)
-shift_count :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+shift_count :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef {
 	mask := llvm.LLVMConstInt(m.types.int32, 31, false)
-	return llvm.LLVMBuildAnd(m.builder, to_int32(m, value), mask, "")
+	return llvm.LLVMBuildAnd(m.builder, to_int32(m, body, id), mask, "")
 }
 
 // build_power is ECMAScript exponentiation. It differs from the pow of C99 in one corner: with a

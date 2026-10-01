@@ -325,7 +325,7 @@ slot_of :: proc(type: ir.Type) -> abi.Slot_Kind {
 		case .Undefined:
 			return .Ref_Or_Undefined
 		}
-	case .Tagged, .Void:
+	case .Tagged, .Void, .I32, .I64:
 		return .Tagged
 	}
 	return .Tagged

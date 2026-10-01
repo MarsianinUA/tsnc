@@ -234,3 +234,78 @@ a_function_takes_the_closure_convention :: proc(t: ^testing.T) {
 	}
 	expect_text(t, text, wants)
 }
+
+// The integer types opt narrows numbers to: each operation is the LLVM instruction the IR means,
+// with the no-overflow flag opt proved, and a bitwise operator reads any number type.
+@(test)
+the_integer_types_map_to_llvm_integers :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	main := declare_main(&p)
+	site := ir.fail_site(
+		&p,
+		abi.Fail_Site{file = "main.ts", line = 1, column = 1, error = .Index_Out_Of_Range},
+	)
+	numbers := ir.array_layout(&p, .Number)
+	params := [?]ir.Type{ir.F64, ir.ref(numbers), ir.STR}
+	id := ir.declare_func(&p, "m1.count", params[:], ir.F64, at(1))
+
+	f := ir.begin_func(&p, id)
+	number, array, text := ir.Value_ID(0), ir.Value_ID(1), ir.Value_ID(2)
+	whole := ir.emit(&f, ir.I32, ir.Convert{value = number}, at(2))
+	wide := ir.emit(&f, ir.I64, ir.Convert{value = number}, at(2))
+	grown := ir.emit(&f, ir.I64, ir.Convert{value = whole}, at(2))
+	seven := ir.emit(&f, ir.I32, ir.Const_Number{value = 7}, at(2))
+	sum := ir.emit(&f, ir.I32, ir.Binary{op = .Add, left = whole, right = seven}, at(2))
+	ir.emit(&f, ir.I32, ir.Binary{op = .Subtract, left = sum, right = whole}, at(2))
+	product := ir.emit(&f, ir.I64, ir.Binary{op = .Multiply, left = wide, right = grown}, at(2))
+	ir.emit(&f, ir.I32, ir.Binary{op = .Remainder, left = sum, right = seven}, at(2))
+	ir.emit(&f, ir.I64, ir.Unary{op = .Negate, operand = product}, at(2))
+	ir.emit(&f, ir.BOOL, ir.Compare{op = .Less, left = whole, right = seven}, at(2))
+	ir.emit(&f, ir.I32, ir.Binary{op = .Bit_And, left = whole, right = number}, at(2))
+	unsigned := ir.Binary {
+		op    = .Shift_Right_Unsigned,
+		left  = product,
+		right = seven,
+	}
+	ir.emit(&f, ir.I64, unsigned, at(2))
+	ir.emit(&f, ir.I64, ir.Length{value = array}, at(2))
+	check := ir.Bounds_Check {
+		array        = array,
+		index        = wide,
+		not_integer  = site,
+		out_of_range = site,
+	}
+	checked := ir.emit(&f, ir.I64, check, at(2))
+	ir.emit(&f, ir.F64, ir.Element_Load{array = array, index = checked}, at(2))
+	check.array, check.index = text, whole
+	unit_index := ir.emit(&f, ir.I32, check, at(3))
+	ir.emit(&f, ir.I32, ir.Unit_Load{text = text, index = unit_index}, at(3))
+	back := ir.emit(&f, ir.F64, ir.Convert{value = product}, at(3))
+	ir.emit(&f, ir.VOID, ir.Return{value = back}, at(3))
+	ir.end_func(&f)
+
+	output := finish_program(t, &p, main)
+	text_ll := llvm_text(t, &output, "integers")
+	if text_ll == "" {
+		return
+	}
+	wants := []string {
+		"fptosi double %0 to i32",
+		"fptosi double %0 to i64",
+		"sext i32 ",
+		"add nsw i32 ",
+		"sub nsw i32 ",
+		"mul nsw i64 ",
+		"srem i32 ",
+		"sub nsw i64 0, ",
+		"icmp slt i32 ",
+		"llvm.fptosi.sat.i32.f64",
+		"trunc i64 ",
+		"lshr i32 ",
+		"zext i32 ",
+		"icmp ult i64 ",
+		"zext i16 ",
+		"sitofp i64 ",
+	}
+	expect_text(t, text_ll, wants)
+}

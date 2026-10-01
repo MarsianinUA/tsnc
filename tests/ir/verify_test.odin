@@ -1019,3 +1019,101 @@ expect_kinds :: proc(
 		testing.expect_value(t, found[i].kind, kind, loc = loc)
 	}
 }
+
+@(test)
+integers_of_one_type_pass :: proc(t: ^testing.T) {
+	// Arithmetic and a comparison in one integer type, the conversions between the number types,
+	// an I64 length and a check that answers its index in the index's type.
+	expect_none(t, ir.verify(build_integers(.None), context.temp_allocator))
+}
+
+@(test)
+an_integer_only_goes_where_the_program_reads_one :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		fault: Integer_Fault,
+		kind:  ir.Violation_Kind,
+	} {
+		{.Mixed_Add, .Operand_Type},
+		{.Mixed_Compare, .Operand_Type},
+		{.Boxed, .Operand_Type},
+		{.Closure_Argument, .Operand_Type},
+		{.Unboxed, .Result_Type},
+		{.Truncated, .Operand_Type},
+		{.Minus_Zero, .Result_Type},
+		{.Divided, .Result_Type},
+	}
+	for c in cases {
+		found := ir.verify(build_integers(c.fault), context.temp_allocator)
+		testing.expectf(t, len(found) == 1 && found[0].kind == c.kind, "%v: %v", c.fault, found)
+	}
+}
+
+@(private = "file")
+Integer_Fault :: enum {
+	None,
+	Mixed_Add, // an I32 add of an F64
+	Mixed_Compare,
+	Boxed,
+	Closure_Argument, // codegen builds a closure's signature out of its arguments
+	Unboxed,
+	Truncated, // a conversion from I64 to I32
+	Minus_Zero, // an integer constant that is -0
+	Divided, // a division that answers an integer
+}
+
+@(private = "file")
+build_integers :: proc(fault: Integer_Fault) -> ir.Program_IR {
+	p := ir.make_builder(context.temp_allocator)
+	numbers := ir.array_layout(&p, .Number)
+	site := ir.fail_site(
+		&p,
+		abi.Fail_Site{file = "main.ts", line = 1, column = 1, error = .Index_Out_Of_Range},
+	)
+	params := [?]ir.Type{ir.F64, ir.ref(numbers), ir.CLOSURE, ir.TAGGED}
+	sink := ir.declare_func(&p, "sink", params[:], ir.VOID, at(1))
+	main := declare_main(&p)
+	build_return_body(&p, main)
+
+	f := ir.begin_func(&p, sink)
+	number, array, callee, tagged := ir.Value_ID(0), ir.Value_ID(1), ir.Value_ID(2), ir.Value_ID(3)
+	whole := ir.emit(&f, ir.I32, ir.Convert{value = number}, at(1))
+	minus_zero := transmute(f64)(u64(1) << 63)
+	one := ir.Const_Number {
+		value = minus_zero if fault == .Minus_Zero else 1,
+	}
+	right := number if fault == .Mixed_Add else ir.emit(&f, ir.I32, one, at(1))
+	added := ir.emit(&f, ir.I32, ir.Binary{op = .Add, left = whole, right = right}, at(1))
+	wide := ir.emit(&f, ir.I64, ir.Convert{value = added}, at(1))
+	length := ir.emit(&f, ir.I64, ir.Length{value = array}, at(1))
+	compared := number if fault == .Mixed_Compare else wide
+	ir.emit(&f, ir.BOOL, ir.Compare{op = .Less, left = compared, right = length}, at(1))
+	check := ir.Bounds_Check {
+		array        = array,
+		index        = wide,
+		not_integer  = site,
+		out_of_range = site,
+	}
+	checked := ir.emit(&f, ir.I64, check, at(1))
+	ir.emit(&f, ir.F64, ir.Element_Load{array = array, index = checked}, at(1))
+	unsigned := ir.Binary {
+		op    = .Shift_Right_Unsigned,
+		left  = number,
+		right = wide,
+	}
+	shifted := ir.emit(&f, ir.I64, unsigned, at(1))
+	ir.emit(&f, ir.I32, ir.Unary{op = .Bit_Not, operand = shifted}, at(1))
+	converted := wide if fault == .Truncated else number
+	narrowed := ir.emit(&f, ir.I32, ir.Convert{value = converted}, at(1))
+	ir.emit(&f, ir.F64, ir.Convert{value = narrowed}, at(1))
+	divided := ir.I32 if fault == .Divided else ir.F64
+	ir.emit(&f, divided, ir.Binary{op = .Divide, left = number, right = number}, at(1))
+	boxed := added if fault == .Boxed else number
+	ir.emit(&f, ir.TAGGED, ir.Box{value = boxed}, at(1))
+	argument := [?]ir.Value_ID{added if fault == .Closure_Argument else number}
+	ir.emit(&f, ir.VOID, ir.Call_Closure{callee = callee, args = argument[:]}, at(1))
+	ir.emit(&f, ir.I32 if fault == .Unboxed else ir.F64, ir.Unbox{value = tagged}, at(1))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(1))
+	ir.end_func(&f)
+
+	return ir.finish(&p, main, nil)
+}

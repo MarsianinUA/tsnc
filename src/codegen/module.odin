@@ -139,6 +139,10 @@ value_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
 		// Opaque pointers: a reference is the address of a cell, and its layout is compile time
 		// knowledge that never reaches the LLVM type.
 		return m.types.ptr
+	case .I32:
+		return m.types.int32
+	case .I64:
+		return m.types.int64
 	}
 	unreachable()
 }
@@ -335,7 +339,7 @@ add_roots :: proc(m: ^Module) {
 @(private)
 root_kind :: proc(type: ir.Type) -> (kind: abi.Slot_Kind, is_root: bool) {
 	switch type.kind {
-	case .Void, .F64, .Bool:
+	case .Void, .F64, .Bool, .I32, .I64:
 		return {}, false
 	case .Tagged:
 		return .Tagged, true

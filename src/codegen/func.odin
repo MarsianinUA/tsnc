@@ -23,6 +23,10 @@ Body :: struct {
 	// the function; nil in a function that makes none. The runtime is done with them when the call
 	// returns, so one slot serves every call.
 	rest_slot:   llvm.LLVMValueRef,
+	// cells holds, by ir.Value_ID, the stack slot of a cell opt put on the stack (ir.Cell_Place).
+	// Every evaluation of the instruction starts the slot afresh: opt proved nothing still points
+	// into it by then.
+	cells:       []llvm.LLVMValueRef,
 }
 
 @(private)
@@ -54,6 +58,15 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		values := llvm.LLVMArrayType2(m.types.tagged, u64(capacity))
 		body.rest_slot = llvm.LLVMBuildAlloca(m.builder, values, "")
 	}
+	body.cells = make([]llvm.LLVMValueRef, len(func.values), context.temp_allocator)
+	for _, id in func.values {
+		if size := stack_cell_size(m, func, ir.Value_ID(id)); size > 0 {
+			llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
+			bytes := llvm.LLVMArrayType2(m.types.int8, u64(size))
+			body.cells[id] = llvm.LLVMBuildAlloca(m.builder, bytes, "")
+			llvm.LLVMSetAlignment(body.cells[id], STACK_CELL_ALIGNMENT)
+		}
+	}
 
 	phis := make([dynamic]ir.Value_ID, 0, len(func.blocks), context.temp_allocator)
 	for block in order {
@@ -79,6 +92,30 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		body.tails[block] = llvm.LLVMGetInsertBlock(m.builder)
 	}
 	patch_phis(m, &body, phis[:])
+}
+
+// STACK_CELL_ALIGNMENT is what a cell gets on the heap too: its size class steps by 16 bytes.
+@(private)
+STACK_CELL_ALIGNMENT :: 16
+
+// stack_cell_size answers the bytes of the slot a cell on the stack takes, and 0 for any other
+// value.
+@(private)
+stack_cell_size :: proc(m: ^Module, func: ir.Func, value: ir.Value_ID) -> int {
+	stack := false
+	#partial switch v in func.values[value].variant {
+	case ir.Alloc:
+		stack = v.place == .Stack
+	case ir.New_Array:
+		stack = v.place == .Stack
+	case ir.Make_Closure:
+		stack = v.place == .Stack
+	}
+	if !stack {
+		return 0
+	}
+	size, _ := ir.cell_size(m.program^, func, value)
+	return size
 }
 
 @(private)

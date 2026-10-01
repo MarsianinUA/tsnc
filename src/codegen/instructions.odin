@@ -31,8 +31,13 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		}
 
 	case ir.Const_Number:
-		// The bits as lower computed them: -0, NaN and the infinities are all reachable.
-		body.values[value] = llvm.LLVMConstReal(m.types.double, v.value)
+		if ir.is_integer(instruction.type) {
+			whole := u64(i64(v.value))
+			body.values[value] = llvm.LLVMConstInt(value_type(m, instruction.type), whole, true)
+		} else {
+			// The bits as lower computed them: -0, NaN and the infinities are all reachable.
+			body.values[value] = llvm.LLVMConstReal(m.types.double, v.value)
+		}
 
 	case ir.Const_Bool:
 		body.values[value] = llvm.LLVMConstInt(m.types.int1, 1 if v.value else 0, false)
@@ -51,10 +56,10 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		body.values[value] = m.string_cells[v.text]
 
 	case ir.Binary:
-		body.values[value] = build_binary(m, body, v)
+		body.values[value] = build_binary(m, body, v, instruction.type)
 
 	case ir.Unary:
-		body.values[value] = build_unary(m, body.values[v.operand], v.op)
+		body.values[value] = build_unary(m, body, v, instruction.type)
 
 	case ir.Compare:
 		body.values[value] = build_compare(m, body, v)
@@ -62,14 +67,25 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Phi:
 	// Created ahead of the other instructions of its block; its edges are patched afterwards.
 
+	case ir.Convert:
+		body.values[value] = build_convert(m, body, v, instruction.type)
+
 	case ir.Alloc:
 		row := v.table if v.table != ir.NO_LAYOUT else v.layout
-		args := [?]llvm.LLVMValueRef{table_word(m, row)}
-		body.values[value] = call_runtime(m, .Alloc, args[:])
+		if v.place == .Stack {
+			body.values[value] = start_stack_cell(m, body, value, ir.table_id(row))
+		} else {
+			args := [?]llvm.LLVMValueRef{table_word(m, row)}
+			body.values[value] = call_runtime(m, .Alloc, args[:])
+		}
 
 	case ir.New_Array:
-		args := [?]llvm.LLVMValueRef{table_word(m, v.layout), body.values[v.length]}
-		body.values[value] = call_runtime(m, .Array_New, args[:])
+		if v.place == .Stack {
+			body.values[value] = build_stack_array(m, body, value, v)
+		} else {
+			args := [?]llvm.LLVMValueRef{table_word(m, v.layout), body.values[v.length]}
+			body.values[value] = call_runtime(m, .Array_New, args[:])
+		}
 
 	case ir.Field_Load:
 		address := field_address(m, body, v.cell, v.field)
@@ -83,10 +99,13 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		store(m, body, v.value, field_address(m, body, v.cell, v.field))
 
 	case ir.Length:
-		body.values[value] = build_length(m, body.values[v.value])
+		body.values[value] = build_length(m, body.values[v.value], instruction.type)
 
 	case ir.Bounds_Check:
 		body.values[value] = build_bounds_check(m, body, v)
+
+	case ir.Proved_Index:
+		body.values[value] = body.values[v.index]
 
 	case ir.Element_Load:
 		address := element_address(m, body, v.array, v.index)
@@ -101,13 +120,18 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Unit_Load:
 		units := byte_offset(m, body.values[v.text], int(offset_of(abi.String_Cell, units)))
-		position := llvm.LLVMBuildFPToSI(m.builder, body.values[v.index], m.types.int64, "")
+		position := index_word(m, body, v.index)
 		address := llvm.LLVMBuildInBoundsGEP2(m.builder, m.types.int16, units, &position, 1, "")
 		unit := llvm.LLVMBuildLoad2(m.builder, m.types.int16, address, "")
-		body.values[value] = llvm.LLVMBuildUIToFP(m.builder, unit, m.types.double, "")
+		if instruction.type == ir.I32 {
+			body.values[value] = llvm.LLVMBuildZExt(m.builder, unit, m.types.int32, "")
+		} else {
+			body.values[value] = llvm.LLVMBuildUIToFP(m.builder, unit, m.types.double, "")
+		}
 
 	case ir.Ascii_Cell:
-		row := llvm.LLVMBuildFPToSI(m.builder, body.values[v.unit], m.types.int64, "")
+		// The unit is below ir.ASCII_LIMIT, so its conversion is never poison.
+		row := index_word(m, body, v.unit)
 		body.values[value] = llvm.LLVMBuildInBoundsGEP2(
 			m.builder,
 			string_cell_type(m, 1),
@@ -160,10 +184,14 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Make_Closure:
 		// The cell comes zero filled, so a function with no environment leaves that word null.
-		table := [?]llvm.LLVMValueRef {
-			llvm.LLVMConstInt(m.types.int64, u64(abi.Builtin_Table.Closure), false),
+		closure := abi.Type_Table_ID(abi.Builtin_Table.Closure)
+		cell: llvm.LLVMValueRef
+		if v.place == .Stack {
+			cell = start_stack_cell(m, body, value, closure)
+		} else {
+			table := [?]llvm.LLVMValueRef{llvm.LLVMConstInt(m.types.int64, u64(closure), false)}
+			cell = call_runtime(m, .Alloc, table[:])
 		}
-		cell := call_runtime(m, .Alloc, table[:])
 		code := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, code)))
 		llvm.LLVMBuildStore(m.builder, m.funcs[v.func].function, code)
 		if v.env != ir.NO_VALUE {
@@ -334,6 +362,52 @@ call_runtime :: proc(
 	)
 }
 
+// start_stack_cell fills the stack slot of a cell as tsnc_alloc fills a heap cell: zeros, then the
+// type table in the header. The collector scans the slot with the rest of the stack, so the zeros
+// also clear what an earlier pass left there.
+@(private)
+start_stack_cell :: proc(
+	m: ^Module,
+	body: ^Body,
+	value: ir.Value_ID,
+	table: abi.Type_Table_ID,
+) -> llvm.LLVMValueRef {
+	cell := body.cells[value]
+	size := stack_cell_size(m, body.func, value)
+	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
+	length := llvm.LLVMConstInt(m.types.int64, u64(size), false)
+	llvm.LLVMBuildMemSet(m.builder, cell, zero, length, STACK_CELL_ALIGNMENT)
+	#assert(offset_of(abi.Cell_Header, type_table) == 0)
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell)
+	return cell
+}
+
+// build_stack_array lays the elements right after the Array_Cell in the same slot, as many as the
+// capacity says.
+@(private)
+build_stack_array :: proc(
+	m: ^Module,
+	body: ^Body,
+	value: ir.Value_ID,
+	v: ir.New_Array,
+) -> llvm.LLVMValueRef {
+	cell := start_stack_cell(m, body, value, ir.table_id(v.layout))
+	// The verifier holds the length of an array on the stack to a constant.
+	elements := int(body.func.values[v.length].variant.(ir.Const_Number).value)
+	count := llvm.LLVMConstInt(m.types.int64, u64(elements), false)
+	length := byte_offset(m, cell, int(offset_of(abi.Array_Cell, length)))
+	capacity := byte_offset(m, cell, int(offset_of(abi.Array_Cell, capacity)))
+	llvm.LLVMBuildStore(m.builder, count, length)
+	llvm.LLVMBuildStore(m.builder, count, capacity)
+	if elements > 0 {
+		// Array_Cell.elements stays nil while the capacity is 0.
+		slots := byte_offset(m, cell, size_of(abi.Array_Cell))
+		address := byte_offset(m, cell, int(offset_of(abi.Array_Cell, elements)))
+		llvm.LLVMBuildStore(m.builder, slots, address)
+	}
+	return cell
+}
+
 // table_word is the abi.C_Type.Table argument that names a layout's type table.
 @(private)
 table_word :: proc(m: ^Module, layout: ir.Layout_ID) -> llvm.LLVMValueRef {
@@ -359,14 +433,27 @@ field_address :: proc(
 	return byte_offset(m, body.values[cell], m.program.layouts[layout].fields[field].offset)
 }
 
-// element_address converts an index a bounds check answered, so the conversion is never poison.
+// element_address takes an index a bounds check answered or opt proved, so its conversion is never
+// poison.
 @(private)
 element_address :: proc(m: ^Module, body: ^Body, array, index: ir.Value_ID) -> llvm.LLVMValueRef {
 	kind := m.program.layouts[body.func.values[array].type.layout].element
 	pointer := byte_offset(m, body.values[array], int(offset_of(abi.Array_Cell, elements)))
 	elements := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, pointer, "")
-	position := llvm.LLVMBuildFPToSI(m.builder, body.values[index], m.types.int64, "")
+	position := index_word(m, body, index)
 	return llvm.LLVMBuildInBoundsGEP2(m.builder, slot_type(m, kind), elements, &position, 1, "")
+}
+
+// index_word is a number as the i64 an address takes. The caller knows it is an integer.
+@(private)
+index_word :: proc(m: ^Module, body: ^Body, index: ir.Value_ID) -> llvm.LLVMValueRef {
+	#partial switch body.func.values[index].type.kind {
+	case .I32:
+		return llvm.LLVMBuildSExt(m.builder, body.values[index], m.types.int64, "")
+	case .I64:
+		return body.values[index]
+	}
+	return llvm.LLVMBuildFPToSI(m.builder, body.values[index], m.types.int64, "")
 }
 
 @(private)
@@ -376,38 +463,48 @@ store :: proc(m: ^Module, body: ^Body, value: ir.Value_ID, address: llvm.LLVMVal
 }
 
 @(private)
-build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
 	#assert(offset_of(abi.Array_Cell, length) == offset_of(abi.String_Cell, length))
 	pointer := byte_offset(m, cell, int(offset_of(abi.String_Cell, length)))
 	length := llvm.LLVMBuildLoad2(m.builder, m.types.int64, pointer, "")
+	if type == ir.I64 {
+		return length
+	}
 	return llvm.LLVMBuildSIToFP(m.builder, length, m.types.double, "")
 }
 
 // build_bounds_check splits the block: each failure gets a block of its own, and the code after
 // the check goes on in a third, where the builder is left. An index that equals its truncation is an
-// integer, which NaN is not; an infinity passes that test and fails the range.
+// integer, which NaN is not; an infinity passes that test and fails the range. An integer index
+// needs only the range, one unsigned comparison, since a negative one reads as a huge unsigned.
 @(private)
 build_bounds_check :: proc(m: ^Module, body: ^Body, v: ir.Bounds_Check) -> llvm.LLVMValueRef {
 	index := body.values[v.index]
-	length := build_length(m, body.values[v.array])
-	argument := [?]llvm.LLVMValueRef{index}
-	whole := build_number_call(m, .Trunc, argument[:])
-	is_integer := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOEQ, index, whole, "")
+	in_range: llvm.LLVMValueRef
+	if ir.is_integer(body.func.values[v.index].type) {
+		length := build_length(m, body.values[v.array], ir.I64)
+		position := index_word(m, body, v.index)
+		in_range = llvm.LLVMBuildICmp(m.builder, .LLVMIntULT, position, length, "")
+	} else {
+		length := build_length(m, body.values[v.array], ir.F64)
+		argument := [?]llvm.LLVMValueRef{index}
+		whole := build_number_call(m, .Trunc, argument[:])
+		is_integer := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOEQ, index, whole, "")
+		integer := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+		not_integer := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+		llvm.LLVMBuildCondBr(m.builder, is_integer, integer, not_integer)
 
-	integer := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
-	not_integer := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+		llvm.LLVMPositionBuilderAtEnd(m.builder, not_integer)
+		build_fail(m, v.not_integer)
+
+		llvm.LLVMPositionBuilderAtEnd(m.builder, integer)
+		zero := llvm.LLVMConstReal(m.types.double, 0)
+		from_start := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOGE, index, zero, "")
+		before_end := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOLT, index, length, "")
+		in_range = llvm.LLVMBuildAnd(m.builder, from_start, before_end, "")
+	}
 	inside := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
 	outside := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
-	llvm.LLVMBuildCondBr(m.builder, is_integer, integer, not_integer)
-
-	llvm.LLVMPositionBuilderAtEnd(m.builder, not_integer)
-	build_fail(m, v.not_integer)
-
-	llvm.LLVMPositionBuilderAtEnd(m.builder, integer)
-	zero := llvm.LLVMConstReal(m.types.double, 0)
-	from_start := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOGE, index, zero, "")
-	before_end := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOLT, index, length, "")
-	in_range := llvm.LLVMBuildAnd(m.builder, from_start, before_end, "")
 	llvm.LLVMBuildCondBr(m.builder, in_range, inside, outside)
 
 	llvm.LLVMPositionBuilderAtEnd(m.builder, outside)
@@ -477,14 +574,20 @@ slot_type :: proc(m: ^Module, kind: abi.Slot_Kind) -> llvm.LLVMTypeRef {
 }
 
 @(private)
-build_unary :: proc(m: ^Module, operand: llvm.LLVMValueRef, op: ir.Unary_Op) -> llvm.LLVMValueRef {
-	switch op {
+build_unary :: proc(m: ^Module, body: ^Body, v: ir.Unary, type: ir.Type) -> llvm.LLVMValueRef {
+	operand := body.values[v.operand]
+	switch v.op {
 	case .Negate:
+		if ir.is_integer(type) {
+			// opt narrows a negation only of a range that holds no 0, whose negation would be -0.
+			return llvm.LLVMBuildNSWNeg(m.builder, operand, "")
+		}
 		return llvm.LLVMBuildFNeg(m.builder, operand, "")
 	case .Not:
 		return llvm.LLVMBuildNot(m.builder, operand, "")
 	case .Bit_Not:
-		return build_bit_not(m, operand)
+		inverted := llvm.LLVMBuildNot(m.builder, to_int32(m, body, v.operand), "")
+		return from_int32(m, inverted, type)
 	}
 	unreachable()
 }
@@ -492,13 +595,43 @@ build_unary :: proc(m: ^Module, operand: llvm.LLVMValueRef, op: ir.Unary_Op) -> 
 @(private)
 build_compare :: proc(m: ^Module, body: ^Body, v: ir.Compare) -> llvm.LLVMValueRef {
 	left, right := body.values[v.left], body.values[v.right]
-	if body.func.values[v.left].type == ir.F64 {
+	type := body.func.values[v.left].type
+	if type == ir.F64 {
 		return llvm.LLVMBuildFCmp(m.builder, REAL_PREDICATES[v.op], left, right, "")
+	}
+	if ir.is_integer(type) {
+		return llvm.LLVMBuildICmp(m.builder, INTEGER_PREDICATES[v.op], left, right, "")
 	}
 	// The verifier keeps the ordered comparisons on numbers, so what reaches here is the equality
 	// of two booleans, or of two references, which compare by address.
 	predicate := llvm.LLVMIntPredicate.LLVMIntEQ if v.op == .Equal else .LLVMIntNE
 	return llvm.LLVMBuildICmp(m.builder, predicate, left, right, "")
+}
+
+// INTEGER_PREDICATES are signed: a narrowed integer is a number that may be negative.
+@(private, rodata)
+INTEGER_PREDICATES := [ir.Compare_Op]llvm.LLVMIntPredicate {
+	.Less          = .LLVMIntSLT,
+	.Less_Equal    = .LLVMIntSLE,
+	.Greater       = .LLVMIntSGT,
+	.Greater_Equal = .LLVMIntSGE,
+	.Equal         = .LLVMIntEQ,
+	.Not_Equal     = .LLVMIntNE,
+}
+
+// build_convert is exact both ways: opt converts an F64 to an integer only where it proved the
+// value one that fits, so fptosi is never poison.
+@(private)
+build_convert :: proc(m: ^Module, body: ^Body, v: ir.Convert, type: ir.Type) -> llvm.LLVMValueRef {
+	value := body.values[v.value]
+	from := body.func.values[v.value].type
+	switch {
+	case from == ir.F64:
+		return llvm.LLVMBuildFPToSI(m.builder, value, value_type(m, type), "")
+	case type == ir.F64:
+		return llvm.LLVMBuildSIToFP(m.builder, value, m.types.double, "")
+	}
+	return llvm.LLVMBuildSExt(m.builder, value, m.types.int64, "")
 }
 
 // IEEE everywhere, which is what === asks of numbers: ordered predicates, so NaN compares false,
@@ -574,8 +707,8 @@ build_box :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.L
 	case .Closure:
 		tag = .Function
 		payload = llvm.LLVMBuildPtrToInt(m.builder, value, m.types.int64, "")
-	case .Void, .Tagged:
-		// The verifier keeps both out of box.
+	case .Void, .Tagged, .I32, .I64:
+		// The verifier keeps each of them out of box.
 		unreachable()
 	}
 	tag_word := llvm.LLVMConstInt(m.types.int64, u64(tag), false)
@@ -610,8 +743,8 @@ build_unbox :: proc(m: ^Module, payload: llvm.LLVMValueRef, type: ir.Type) -> ll
 		return llvm.LLVMBuildTrunc(m.builder, payload, m.types.int1, "")
 	case .Str, .Ref, .Closure:
 		return llvm.LLVMBuildIntToPtr(m.builder, payload, m.types.ptr, "")
-	case .Void, .Tagged:
-		// The verifier keeps both out of unbox.
+	case .Void, .Tagged, .I32, .I64:
+		// The verifier keeps each of them out of unbox.
 		unreachable()
 	}
 	unreachable()

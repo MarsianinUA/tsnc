@@ -332,7 +332,7 @@ truthy :: proc(
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
 	case .Tagged:
 		return truthy_tagged(s, value, read_as, span)
-	case .Void:
+	case .Void, .I32, .I64:
 	}
 	return ir.NO_VALUE
 }
@@ -691,7 +691,7 @@ lower_compare :: proc(
 		}
 	case .Str:
 		return compare_strings(s, op, left, right, span)
-	case .Tagged, .Void:
+	case .Tagged, .Void, .I32, .I64:
 	}
 	return ir.NO_VALUE
 }

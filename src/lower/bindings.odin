@@ -540,7 +540,7 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 		return ir.emit(&s.fb, ir.STR, ir.Const_String{text = text}, span)
 	case .Ref, .Closure:
 		return ir.emit(&s.fb, type, ir.Const_Null{}, span)
-	case .Void:
+	case .Void, .I32, .I64:
 		// A binding typed never holds nothing.
 		return ir.NO_VALUE
 	}

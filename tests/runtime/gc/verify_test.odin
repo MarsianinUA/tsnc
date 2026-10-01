@@ -269,3 +269,35 @@ expect_problem :: proc(
 	testing.expect_value(t, found, problem, loc = loc)
 	testing.expect_value(t, found_at, at, loc = loc)
 }
+
+@(test)
+a_reference_into_the_stack_is_a_cell_opt_misplaced :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+	live := make_live(&heap)
+	root: ^abi.Cell_Header
+	heap.roots = []abi.Root{{slot = &root, kind = .Ref}}
+
+	point_into_the_stack(t, &heap, live, &root)
+	expect_problem(t, &heap, .None, nil)
+}
+
+// point_into_the_stack keeps its cell below the frame that holds the heap, whose address is the
+// stack base of this heap.
+@(private = "file")
+point_into_the_stack :: #force_no_inline proc(
+	t: ^testing.T,
+	heap: ^gc.Heap,
+	live: Live,
+	root: ^^abi.Cell_Header,
+) {
+	cell: Point
+	live.first.next = &cell
+	expect_problem(t, heap, .Stack_Reference, live.first)
+	live.first.next = live.second
+
+	root^ = &cell
+	expect_problem(t, heap, .Stack_Reference, root)
+	root^ = nil
+}

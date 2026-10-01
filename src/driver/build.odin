@@ -11,8 +11,9 @@ it: requirements 9 lists an object file as an artifact only on request, and no f
 Errors. codegen and link each answer with an enum of their own, and build turns them into a
 Driver_Error whose detail is a sentence a user can act on.
 
-Memory. The IR goes into Build_Memory.lowering, paths and error texts into the driver arena. build
-rewinds the scratch lower, ir.verify, codegen and link leave in context.temp_allocator.
+Memory. The IR goes into Build_Memory.lowering, and so do opt's rewrites of it; paths and error
+texts go into the driver arena. build rewinds the scratch lower, ir.verify, codegen and link leave
+in context.temp_allocator.
 */
 package driver
 
@@ -29,6 +30,7 @@ import "../diag"
 import "../ir"
 import "../link"
 import "../lower"
+import "../opt"
 import "../program"
 import "../source"
 import "../target"
@@ -89,10 +91,18 @@ build :: proc(
 	}
 
 	// --- Verify. codegen relies on what the verifier promises and does not check again, so a
-	// broken instruction is caught here, where it can still be named, instead of inside LLVM.
-	if violations := ir.verify(program_ir, lowering); len(violations) > 0 {
-		text := violations_text(report.check.program.files, program_ir, violations, arena)
-		return report, {.Broken_IR, text}
+	// broken instruction is caught here, where it can still be named, instead of inside LLVM. opt
+	// rewrites the IR, so what it hands on is verified as well. -o:none optimizes nothing
+	// (requirements 9), and its -emit-ir is lower's IR.
+	files := report.check.program.files
+	if err = verify_ir(files, program_ir, lowering, arena); err.kind != .None {
+		return report, err
+	}
+	if options.optimization != .none {
+		opt.optimize(&program_ir, lowering)
+		if err = verify_ir(files, program_ir, lowering, arena); err.kind != .None {
+			return report, err
+		}
 	}
 
 	// --- Where the artifact goes, and whether it can go there. LLVM says nothing useful about a
@@ -101,7 +111,7 @@ build :: proc(
 	if output, err = output_path(options, artifact, arena); err.kind != .None {
 		return report, err
 	}
-	if source_path, is_source := source_at(output, report.check.program.files); is_source {
+	if source_path, is_source := source_at(output, files); is_source {
 		return report, {.Output_Is_Source, strings.clone(source_path, arena)}
 	}
 	if directory := os.dir(output); directory != "" && directory != "." && !os.is_dir(directory) {
@@ -118,7 +128,7 @@ build :: proc(
 
 	switch artifact {
 	case .IR_Dump:
-		err = write_dump(paths, report.check.program.files, program_ir, arena)
+		err = write_dump(paths, files, program_ir, arena)
 	case .LLVM_IR:
 		err = run_codegen(&program_ir, options, .LLVM_IR, paths, arena)
 	case .Executable:
@@ -453,23 +463,26 @@ link_failure_text :: proc(err: link.Link_Error, allocator: runtime.Allocator) ->
 	return ""
 }
 
-// violations_text exists because a violation is a bug in the compiler rather than a mistake in the
-// program: it has no diagnostic code and no place in the sorted list, so it goes out as the detail
-// of one error, a line per violation.
+// verify_ir makes a violation the detail of one error, a line per violation: it is a bug in the
+// compiler rather than a mistake in the program, with no diagnostic code and no place in the
+// sorted list.
 @(private = "file")
-violations_text :: proc(
+verify_ir :: proc(
 	files: []source.File,
 	p: ir.Program_IR,
-	violations: []ir.Violation,
-	allocator: runtime.Allocator,
-) -> string {
+	lowering, allocator: runtime.Allocator,
+) -> Driver_Error {
+	violations := ir.verify(p, lowering)
+	if len(violations) == 0 {
+		return {}
+	}
 	text := strings.builder_make(allocator)
 	w := strings.to_writer(&text)
 	for violation in violations {
 		// Nothing to do when even this cannot be written: the error kind already says what broke.
 		_ = ir.write_violation(w, files, p, violation)
 	}
-	return strings.to_string(text)
+	return {.Broken_IR, strings.to_string(text)}
 }
 
 // reason_text follows the shape Entry_Unreadable already uses: the path, then why. failure_text may

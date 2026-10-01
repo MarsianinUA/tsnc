@@ -10,6 +10,8 @@ Heap_Problem :: enum u8 {
 	Bad_Cell, // a cell's contents contradict its table or overrun its slot
 	Stray_Mark, // a cell is marked outside a collection
 	Dangling_Reference, // a reference into the heap that is not the start of a live cell
+	// A reference into the stack: opt put a cell there that a heap cell or a root still points to.
+	Stack_Reference,
 }
 
 @(private, rodata)
@@ -21,11 +23,12 @@ PROBLEM_TEXT := [Heap_Problem]string {
 	.Bad_Cell           = "bad cell",
 	.Stray_Mark         = "stray mark",
 	.Dangling_Reference = "dangling reference",
+	.Stack_Reference    = "reference into the stack",
 }
 
 // verify walks the whole heap and answers the first broken invariant with the cell, page or free
-// list where it found it. It only reads. A reference out of the heap is taken as it is: that is
-// where the compiler's static cells live.
+// list where it found it. It only reads. A reference out of the heap is taken as it is, since the
+// compiler's static cells live there, unless it points into the stack.
 verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 	// --- The page table, first: the checks below trust it when they look a reference up.
 	for index := 0; index < heap.page_count; index += 1 {
@@ -204,10 +207,20 @@ verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Prob
 	return .None
 }
 
-// verify_reference takes nil, which is what a slot holds before its first store.
+// verify_reference takes nil, which is what a slot holds before its first store, and a reference out
+// of the heap, where the compiler's static cells live, but not one between this frame and the stack
+// base: a cell of the stack goes when its frame does.
 @(private = "file")
 verify_reference :: proc(heap: ^Heap, ref: ^abi.Cell_Header) -> Heap_Problem {
-	if ref == nil || !in_heap(heap, ref) {
+	if ref == nil {
+		return .None
+	}
+	if !in_heap(heap, ref) {
+		here: uintptr
+		address := uintptr(ref)
+		if address >= uintptr(&here) && address < uintptr(heap.stack_base) {
+			return .Stack_Reference
+		}
 		return .None
 	}
 	if owner(heap, ref) != ref {

@@ -1,5 +1,7 @@
 package ir
 
+import "core:math"
+
 import "../abi"
 import "../source"
 
@@ -36,6 +38,7 @@ Variant :: union #no_nil {
 	Unary,
 	Compare,
 	Phi,
+	Convert,
 
 	// Heap cells. A field index reads the layout of the Ref type of the cell operand.
 	Alloc,
@@ -45,6 +48,7 @@ Variant :: union #no_nil {
 	Field_Store_Ref,
 	Length,
 	Bounds_Check,
+	Proved_Index,
 	Element_Load,
 	Element_Store,
 	Element_Store_Ref,
@@ -134,13 +138,55 @@ Phi :: struct {
 	incoming: []Incoming,
 }
 
-// Alloc takes a cell from the GC heap, zero filled, and answers a reference to it. Only an object
-// or an environment layout: an array is New_Array, a closure Make_Closure, and a string is made by
-// the runtime. The header names `table`, a row that lists the fields of the layout in another print
-// order (see Program_IR.base); NO_LAYOUT names the layout's own row.
+// Convert answers its number as the type of the instruction, exactly: an I32 as an I64, an integer
+// as an F64, or an F64 opt proved an integer that fits as an I32 or an I64. opt never needs a type
+// narrower than the value's own, so nothing truncates.
+Convert :: struct {
+	value: Value_ID,
+}
+
+// Alloc takes a cell, zero filled, and answers a reference to it. Only an object or an environment
+// layout: an array is New_Array, a closure Make_Closure, and a string is made by the runtime. The
+// header names `table`, a row that lists the fields of the layout in another print order (see
+// Program_IR.base); NO_LAYOUT names the layout's own row.
 Alloc :: struct {
 	layout: Layout_ID,
 	table:  Layout_ID,
+	place:  Cell_Place,
+}
+
+// Cell_Place says where Alloc, New_Array and Make_Closure put their cell. opt puts one on the stack
+// of its function when no reference to it outlives the call, nor the pass of the loop that made it,
+// and none enters a heap cell. Such a cell is never handed to the runtime, and a New_Array there
+// has a constant length of at most MAX_STACK_ELEMENTS.
+Cell_Place :: enum u8 {
+	Heap,
+	Stack,
+}
+
+MAX_STACK_ELEMENTS :: 16
+
+// cell_size answers the bytes of the cell an Alloc, a Make_Closure, or a New_Array of a constant
+// length up to MAX_STACK_ELEMENTS makes, which is what its slot on the stack takes; ok is false for
+// any other value.
+cell_size :: proc(p: Program_IR, func: Func, value: Value_ID) -> (size: int, ok: bool) {
+	#partial switch v in func.values[value].variant {
+	case Alloc:
+		return p.layouts[v.layout].size, true
+	case Make_Closure:
+		return size_of(abi.Closure_Cell), true
+	case New_Array:
+		if int(v.length) >= len(func.values) {
+			return 0, false
+		}
+		length, fixed := func.values[v.length].variant.(Const_Number)
+		n := length.value
+		if !fixed || n != math.trunc(n) || n < 0 || n > MAX_STACK_ELEMENTS {
+			return 0, false
+		}
+		return size_of(abi.Array_Cell) + int(n) * abi.SLOT_SIZE[p.layouts[v.layout].element], true
+	}
+	return 0, false
 }
 
 // New_Array answers an array of an Array layout holding `length` elements (an F64), each the zero
@@ -149,6 +195,7 @@ Alloc :: struct {
 New_Array :: struct {
 	layout: Layout_ID,
 	length: Value_ID,
+	place:  Cell_Place,
 }
 
 Field_Load :: struct {
@@ -172,16 +219,16 @@ Field_Store_Ref :: struct {
 	value: Value_ID,
 }
 
-// Length answers the length of a Str or of an array Ref as F64: one load, since abi puts the two at
-// the same offset.
+// Length answers the length of a Str or of an array Ref as F64, or as I64 once opt narrowed it: one
+// load, since abi puts the two at the same offset.
 Length :: struct {
 	value: Value_ID,
 }
 
-// Bounds_Check answers the index again, as F64, once it has proved that the index is an integer
-// inside the array, or inside the string, whose unit Unit_Load then reads.
+// Bounds_Check answers the index again, in the index's number type, once it has proved that the
+// index is an integer inside the array, or inside the string, whose unit Unit_Load then reads.
 // The element instructions take that answer, so the check cannot drift away from the access it
-// guards, and the v2 optimization that removes it has an edge to follow.
+// guards, and opt, which removes a check it proves, has an edge to follow.
 Bounds_Check :: struct {
 	array:        Value_ID,
 	index:        Value_ID,
@@ -189,9 +236,16 @@ Bounds_Check :: struct {
 	out_of_range: Fail_Site_ID,
 }
 
+// Proved_Index stands where opt removed a Bounds_Check it proved can never fail: it answers the
+// index, in its own type, and emits no code.
+Proved_Index :: struct {
+	array: Value_ID,
+	index: Value_ID,
+}
+
 Element_Load :: struct {
 	array: Value_ID,
-	index: Value_ID, // the answer of a Bounds_Check
+	index: Value_ID, // the answer of a Bounds_Check or a Proved_Index
 }
 
 // Element_Store writes a Number or a Boolean element.
@@ -208,10 +262,10 @@ Element_Store_Ref :: struct {
 	value: Value_ID,
 }
 
-// Unit_Load answers the UTF-16 unit of a Str as F64.
+// Unit_Load answers the UTF-16 unit of a Str as F64, or as I32 once opt narrowed it.
 Unit_Load :: struct {
 	text:  Value_ID,
-	index: Value_ID, // the answer of a Bounds_Check
+	index: Value_ID, // the answer of a Bounds_Check or a Proved_Index
 }
 
 // Ascii_Cell answers the one-unit string of a unit below ASCII_LIMIT, which a branch before it
@@ -297,8 +351,9 @@ Func_Ref :: struct {
 // the write barrier of v2 has to look here as well as at the stores that end in _Ref. The function
 // must be described (describe_func).
 Make_Closure :: struct {
-	func: Func_ID,
-	env:  Value_ID,
+	func:  Func_ID,
+	env:   Value_ID,
+	place: Cell_Place,
 }
 
 // Call names a function of this program, one with no environment. Every direct call resolves
@@ -360,11 +415,13 @@ terminates :: proc(variant: Variant) -> bool {
 		return true
 	case Param, Const_Number, Const_Bool, Const_Undefined, Const_Null, Const_String:
 		return false
-	case Binary, Unary, Compare, Phi:
+	case Binary, Unary, Compare, Phi, Convert:
 		return false
 	case Alloc, New_Array, Field_Load, Field_Store, Field_Store_Ref, Length:
 		return false
-	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
+	case Bounds_Check, Proved_Index, Element_Load, Element_Store, Element_Store_Ref:
+		return false
+	case Layout_Test, Null_Test:
 		return false
 	case Unit_Load, Ascii_Cell, Same_Cell, Non_Null:
 		return false
@@ -378,13 +435,17 @@ terminates :: proc(variant: Variant) -> bool {
 	return false
 }
 
-// Binary_Op takes two F64 and answers F64.
+// Binary_Op: Add, Subtract, Multiply and Remainder take two F64 and answer F64, or take and answer
+// one integer type; Divide and Power take F64 alone. The bitwise and shift operators take any
+// number type on either side and answer F64 or I32, an unsigned shift F64 or I64. An integer
+// operation computes what the F64 one would, because opt narrows only what it proved to fit, and a
+// Remainder only of a dividend it proved non-negative.
 //
 // The bitwise and shift operators are the ones ECMAScript defines, not the ones the machine has:
 // each operand goes through ToInt32, or ToUint32 on the left of an unsigned shift, the shift count
 // is taken modulo 32, and the 32-bit result converts back to f64. Naming the rule here keeps it in
-// one place: codegen implements an operation of this IR, and in v2 opt narrows it to I32 without
-// changing what it means.
+// one place: codegen implements an operation of this IR, and opt narrows it without changing what
+// it means.
 //
 // Power is ** and Math.pow, which is ECMAScript exponentiation. It differs from the pow of libm in
 // its corners, pow(1, NaN) among them, so it is not a plain call to libm.
@@ -404,10 +465,10 @@ Binary_Op :: enum u8 {
 }
 
 // Compare_Op answers Bool. Two F64 compare by IEEE rules, so NaN is equal to nothing and -0 equals
-// 0, which is what === asks for. Equal and Not_Equal also take two Bool, or two references, where
-// they compare addresses. A string and a tagged value compare through the runtime instead: one
-// holds its contents and the other its tag. lower tests two strings with Same_Cell, Length and
-// Unit_Load before it asks the runtime.
+// 0, which is what === asks for; two integers of one type compare as signed integers. Equal and
+// Not_Equal also take two Bool, or two references, where they compare addresses. A string and a
+// tagged value compare through the runtime instead: one holds its contents and the other its tag.
+// lower tests two strings with Same_Cell, Length and Unit_Load before it asks the runtime.
 Compare_Op :: enum u8 {
 	Less,
 	Less_Equal,
@@ -417,8 +478,9 @@ Compare_Op :: enum u8 {
 	Not_Equal,
 }
 
-// Unary_Op: Negate and Bit_Not take F64, Not takes Bool. Unary plus is nothing to do and typeof
-// reads a tag, so neither is here.
+// Unary_Op: Negate takes and answers one number type, Bit_Not takes any and answers F64 or I32 as
+// the bitwise Binary_Op do, Not takes Bool. Unary plus is nothing to do and typeof reads a tag, so
+// neither is here.
 Unary_Op :: enum u8 {
 	Negate,
 	Not,

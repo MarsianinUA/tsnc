@@ -50,7 +50,7 @@ to_string :: proc(
 			export = .Value_To_Primitive_String
 		}
 	case .Bool, .Closure:
-	case .Void:
+	case .Void, .I32, .I64:
 		return ir.NO_VALUE
 	}
 	call := ir.Call_Runtime {

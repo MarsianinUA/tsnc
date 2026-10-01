@@ -35,6 +35,10 @@ String_Cell :: struct {
 	units:        [0]u16, // `length` units follow the struct
 }
 
+// MAX_STRING_LENGTH is the most units a string the runtime makes holds (str.MAX_LENGTH). opt
+// bounds the length of a string by it and by the longest literal.
+MAX_STRING_LENGTH :: 536_870_888
+
 Array_Cell :: struct {
 	using header: Cell_Header,
 	length:       int,
