@@ -131,6 +131,15 @@ prepare :: proc(options: Options) -> (setup: Setup, ok: bool) {
 	setup.suffix = target.SPECS[target.HOST].executable_suffix
 	if options.against != "" {
 		setup.before = load_baseline(baseline_path(setup, options.against)) or_return
+		if now := flags_text(options); setup.before.flags != now {
+			fmt.eprintfln(
+				"bench: %s was saved with the flags %q and this run has %q; compare like with like",
+				options.against,
+				setup.before.flags,
+				now,
+			)
+			return {}, false
+		}
 	}
 	return setup, true
 }
@@ -156,11 +165,7 @@ header :: proc(setup: Setup) {
 		fmt.printfln("  flags %s", text)
 	}
 	if setup.options.against != "" {
-		fmt.printf("  before %s, %s", setup.options.against, setup.before.date)
-		if setup.before.flags != "" {
-			fmt.printf(", %s", setup.before.flags)
-		}
-		fmt.println()
+		fmt.printfln("  before %s, %s", setup.options.against, setup.before.date)
 	}
 	fmt.println()
 }

@@ -214,6 +214,11 @@ build_tsnc :: proc(setup: Setup, name: string) -> (executable: string, ok: bool)
 	if setup.options.sanitize != .none {
 		append(&command, fmt.tprintf("-sanitize:%v", setup.options.sanitize))
 	}
+	// A build that answers 0 and writes nothing must not leave the last run's program to time.
+	if err := os.remove(executable); err != nil && err != .Not_Exist {
+		fmt.eprintfln("bench: remove %s: %v", executable, err)
+		return "", false
+	}
 	build(command[:]) or_return
 	return executable, true
 }

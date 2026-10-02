@@ -3,13 +3,11 @@ The test runner: one program with a mode per kind of run, started from the repos
 
 	odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
 
-smoke (T1.8) checks the infrastructure: codegen, link and the runtime object. negative (T2.9) runs
-the corpus in tests/negative/, where every program must fail to compile the way its header says.
-diff (T4.7) runs the corpus in tests/diff/, where every program must print what Node prints. expect
-(T5.12) runs the corpus in tests/expect/, where every program must print what its header says: the
-runtime failures of requirements 3.8, where Node is no reference. With -sanitize:address (T5.10)
-both build their programs against the runtime built with AddressSanitizer. A mode prints what
-failed to stderr, and the runner exits with code 1.
+smoke checks the infrastructure: codegen, link and the runtime object. negative runs the corpus in
+tests/negative/, where every program must fail to compile the way its header says. diff runs the
+corpus in tests/diff/, where every program must print what Node prints. expect runs the corpus in
+tests/expect/, where every program must print what its header says. docs/development.md has a
+section on each corpus. A mode prints what failed to stderr, and the runner exits with code 1.
 */
 package main
 
@@ -54,9 +52,9 @@ main :: proc() {
 	case .negative:
 		passed = negative()
 	case .diff:
-		passed = diff(options.sanitize)
+		passed = run_corpus(.diff, DIFF_CORPUS, options.sanitize, diff_program)
 	case .expect:
-		passed = expect(options.sanitize)
+		passed = run_corpus(.expect, EXPECT_CORPUS, options.sanitize, expect_program)
 	}
 	if !passed {
 		os.exit(1)
@@ -66,9 +64,9 @@ main :: proc() {
 // compiler_path answers an absolute path, so that running it does not depend on how the OS resolves
 // a relative one, as smoke already found. A mode that cannot find the compiler prints the command
 // that builds it, so a fresh clone gets the fix rather than a riddle.
-compiler_path :: proc(mode: string) -> (path: string, ok: bool) {
+compiler_path :: proc(mode: Mode) -> (path: string, ok: bool) {
 	if !os.is_file(COMPILER) {
-		fmt.eprintfln("%s: %s is missing", mode, COMPILER)
+		fmt.eprintfln("%v: %s is missing", mode, COMPILER)
 		fmt.eprintln("run the runner from the repository root, and build the compiler first:")
 		fmt.eprintfln("  %s", COMPILER_BUILD)
 		return "", false
@@ -76,7 +74,7 @@ compiler_path :: proc(mode: string) -> (path: string, ok: bool) {
 
 	absolute, err := os.get_absolute_path(COMPILER, context.temp_allocator)
 	if err != nil {
-		fmt.eprintfln("%s: absolute path of %s: %v", mode, COMPILER, err)
+		fmt.eprintfln("%v: absolute path of %s: %v", mode, COMPILER, err)
 		return "", false
 	}
 	return absolute, true

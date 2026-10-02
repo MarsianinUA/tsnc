@@ -1,6 +1,6 @@
 # Task board: tsnc
 
-Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: September 28, 2026.
+Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: October 2, 2026.
 
 Purpose. The operator gives the agent a task number. The agent reads the shared handoff kit and the task kit, makes a detailed plan and writes the code. Tasks do not change the architecture. If a task runs into a key block from the section [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the work stops and the question goes back to the operator.
 
@@ -451,6 +451,20 @@ Chosen (operator, 2026-10-01): marking takes the reference in a slot as the star
 Where: requirements §6, §4.3, §4.5, §13 (the derived-pointers row); [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), rows `rt` and `gc`; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `ir`, `codegen`, `abi`; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), rows "Concurrent GC with write barriers" and "NaN-boxing, precise roots, shadow stack"; `src/runtime/gc/`, `src/codegen/instructions.odin`; `bench/ts/trees.ts`, `bench/ts/objects.ts`.
 After: T6.6.
 Done: the measurement is recorded in the plan's risk item; for what the operator accepts, the corpora are green in all passes, under stress and ASan too, a gc test pins each new invariant the way stress mode pins the v1 ones, `trees` is measured before and after, and requirements §6 and the key blocks' text say what changed.
+
+### [ ] T6.9 Recursion depth: the stack size and a message on overflow
+
+What: a program that recurses too deep ends with exit code 127 and nothing on stderr, where Node prints "RangeError: Maximum call stack size exceeded". On Windows a one-parameter function that calls itself once a frame overflowed the main thread's stack past 16 thousand frames at `-o:none` and 21 thousand at `-o:speed` (2026-10-02, i5-13600KF), Node past 15 thousand; a function with more locals overflows sooner. Two parts. The stack size at link time (`/STACK` for lld-link, the `cc` flags elsewhere), chosen for a deep but legitimate recursion. And a failure line through `fail` on overflow, with exit code 1 as for the other errors of requirements 3.8: a handler that runs on a stack of its own, a vectored exception handler for the guard page on Windows and `sigaltstack` with SIGSEGV on POSIX, as Go and Rust do.
+Where: requirements §3.8; `src/link`, `src/target`, `src/runtime/rt.odin`, `src/runtime/fail`.
+After: none.
+Done: an expect program that recurses without end fails with one line on stderr and exit code 1 on every OS, under ASan too; a diff program recurses as deep as Node does.
+
+### [ ] T6.10 `check`: a read narrowed through the flow of a module that is not walked yet
+
+What: since the review of T5.11 to T6.8, a loop of declarations is one Tarjan component and a body or an initializer whose type is written out is read once no search is open, so the split of a program into partitions changes no diagnostic of the corpora. One dependence on the order of entry is left, the plan's risk item says. A narrowed read walks the flow of its module back through the statements above it and reads the facts check recorded for them: the type of an assignment, a call that never returns, an exhausted `switch`, the body of an arrow created there. A declaration that another module asks for first is checked before its own module is walked, when those facts may be missing, so its type depends on the split. With `export let mode: string | undefined; mode = "fast"; export const name: string = mode;` in a module the entry imports `name` from, `-j:1` reports T3001 and `-j:8` does not, while tsc accepts it. The fix makes the facts of a module's flow there before any read narrows through them.
+Where: [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions); `src/check/narrow.odin`, `src/check/resolve.odin`; `tests/check/loops_test.odin`.
+After: none.
+Done: that program types alike under every split in `tests/check/loops_test.odin`, a diff program runs it, and the risk item loses the sentence.
 
 ## Milestone 7: v2 waves (epics)
 

@@ -5,7 +5,8 @@
 //
 // The code stays above 64. On Linux and macOS a program killed by a signal reports the signal's
 // number where the exit code goes, and no signal is numbered that high, so a crash can never pass
-// for the right answer. The runner refuses a corpus program that exits with 1..64.
+// for the right answer. The runner refuses a corpus program that exits with 1..64, or above 125,
+// where a shell reports a command it could not run or a signal.
 
 function code(a: number, b: number): number {
   return 70 + ((a * b) % 11);

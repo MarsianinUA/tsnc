@@ -88,7 +88,7 @@ one_cpu_work :: proc(setup: Setup, project: Project, jobs: int) -> (ratio: strin
 		all := time_check(setup, project, jobs) or_return
 		return fmt.tprintf("%.2f", ms(all.wall) / ms(one.wall)), true
 	} else {
-		// direct: pinning on Windows only; sched_setaffinity when the benchmarks run on Linux.
+		// Pinning on Windows only; sched_setaffinity when the benchmarks run on Linux.
 		return "n/a", true
 	}
 }

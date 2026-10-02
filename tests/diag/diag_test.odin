@@ -51,6 +51,35 @@ every_code_has_its_own_four_digit_number :: proc(t: ^testing.T) {
 }
 
 @(test)
+every_code_has_a_program_in_the_negative_corpus :: proc(t: ^testing.T) {
+	EXPECT :: "// expect:"
+	expected := make([dynamic]string, context.temp_allocator)
+	for program in #load_directory("../negative") {
+		text := string(program.data)
+		for line in strings.split_lines_iterator(&text) {
+			trimmed := strings.trim_space(line)
+			if trimmed != "" && !strings.has_prefix(trimmed, "//") {
+				break
+			}
+			if strings.has_prefix(trimmed, EXPECT) {
+				code, _, _ := strings.partition(strings.trim_space(trimmed[len(EXPECT):]), " ")
+				append(&expected, strings.trim_prefix(code, "T"))
+			}
+		}
+	}
+	for code in diag.Code {
+		number, _, _ := render_code(code)
+		testing.expectf(
+			t,
+			slice.contains(expected[:], number),
+			"no program of tests/negative expects T%s (%v)",
+			number,
+			code,
+		)
+	}
+}
+
+@(test)
 render_fills_the_arguments_in_the_text_and_the_hint :: proc(t: ^testing.T) {
 	file := source.make_file("src/main.ts", "f(1 }")
 	defer delete(file.line_starts)

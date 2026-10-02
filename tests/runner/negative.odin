@@ -1,40 +1,17 @@
 /*
 The negative mode: every program in tests/negative/ must fail to compile in exactly the way its own
-header says it does.
+header says it does. docs/development.md#negative-tests has the `// expect:` line and how the
+expectations are compared.
 
-A corpus program opens with a header: the run of blank and comment lines at the top, ending at the
-first line that is neither. A header line of the form
-
-	// expect: T2001 5:1
-
-names one diagnostic, spelled the way the compiler prints it: the code, then the 1-based line and
-column of its position, where a column counts UTF-16 code units (src/source). Two more parts may
-be written:
-
-	// expect: T4009 modules/relay.ts:1:10
-	// expect: T3001 4:23 "not assignable to type `number`"
-
-A file in front of the position, relative to tests/negative, puts the diagnostic in a module the
-program imports; without one, it stands in the program itself. A quoted text at the end has to
-occur in the message or in its hint. It runs to the last `"` of the line, so it may hold quotes of
-its own, as some hints do. Every other header line is prose about the rule the program pins.
-
-The expectations are the whole truth about a program. They are compared with what the compiler
-printed one for one and in print order, which is the program first and then its modules in the
-order the imports reach them, each by position. So a diagnostic the header does not mention fails
-the program exactly as a missing one does; otherwise parser recovery could start emitting noise
-and no test would notice. For the same reason a program with no expectation at all fails, and so
-does a malformed `// expect:` line: skipping either would leave a test that proves nothing.
+The expectations are the whole truth about a program: a diagnostic the header does not mention
+fails it exactly as a missing one does, or parser recovery could start emitting noise and no test
+would notice. For the same reason a program with no expectation at all fails, and so does a
+malformed `// expect:` line: skipping either would leave a test that proves nothing.
 
 The mode runs `tsnc build` with the compiler the build left in dist/, instead of calling driver in
 process, so that the rendered message, the code number, the choice of stderr and the exit code are
-covered as well as the diagnostics themselves. A build stops before lower when check reported
-anything, so a program that pins a code of lower has to pass check. The corpus holds a program for
-every code of the diag registry. The modules under tests/negative/modules/ are there to be imported
-and are never run as programs of their own.
-
-Every program is built at -j:1 and -j:8, which must print the same bytes; the header is compared
-with the first.
+covered as well as the diagnostics themselves. Of the -j:1 and -j:8 builds, which must print the
+same bytes, the header is compared with the first.
 */
 package main
 
@@ -86,7 +63,7 @@ Printed :: struct {
 // negative reports every mismatch instead of stopping at the first, so that one CI log shows all of
 // them.
 negative :: proc() -> (passed: bool) {
-	compiler := compiler_path("negative") or_return
+	compiler := compiler_path(.negative) or_return
 	names := corpus_names(.negative, NEGATIVE_CORPUS) or_return
 	dist := dist_directory(.negative) or_return
 
@@ -204,31 +181,20 @@ same_diagnostic :: proc(path: string, index: int, want: []Expectation, got: []Pr
 	return false
 }
 
-// expectations ends the header at the first line that is neither blank nor a comment, so an
-// expectation always sits above the program it describes.
 @(private = "file")
 expectations :: proc(path, text: string) -> (want: []Expectation, ok: bool) {
 	list := make([dynamic]Expectation, context.temp_allocator)
 	ok = true
 
-	rest := text
-	number := 0
-	for line in strings.split_lines_iterator(&rest) {
-		number += 1
+	for line, index in header_lines(text) {
 		trimmed := strings.trim_space(line)
-		if trimmed == "" {
-			continue
-		}
-		if !strings.has_prefix(trimmed, "//") {
-			break
-		}
 		if !strings.has_prefix(trimmed, EXPECT_PREFIX) {
 			continue
 		}
 		body := strings.trim_space(trimmed[len(EXPECT_PREFIX):])
 		expected, line_ok := parse_expectation(path, body)
 		if !line_ok {
-			fmt.eprintfln("negative: %s:%d: cannot read %q", path, number, trimmed)
+			fmt.eprintfln("negative: %s:%d: cannot read %q", path, index + 1, trimmed)
 			fmt.eprintfln("  an expectation reads: %s", EXPECT_EXAMPLE)
 			fmt.eprintfln("  or with a file and a text: %s", EXPECT_FULL_EXAMPLE)
 			ok = false
