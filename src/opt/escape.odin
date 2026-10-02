@@ -59,7 +59,7 @@ Frame :: struct {
 	func:    ^ir.Func,
 	sites:   [dynamic]Site,
 	points:  [][dynamic]i32, // by Value_ID: the sites the value may point to
-	places:  []Place, // by Value_ID
+	places:  []ir.Place, // by Value_ID
 	loop:    []ir.Block_ID, // by Block_ID: the header of its innermost loop, NO_BLOCK outside one
 	outer:   []ir.Block_ID, // by the Block_ID of a header: the header of the loop around it
 	// A retreating edge that is no back edge makes loops this analysis cannot nest, so every cell

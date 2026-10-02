@@ -343,9 +343,11 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		write_value(w, v.value) or_return
 
 	case Bounds_Check:
-		io.write_string(w, "proved_index " if v.proved else "bounds_check ") or_return
+		io.write_string(w, "bounds_check ") or_return
 		write_element(w, v.array, v.index) or_return
-		if !v.proved {
+		if v.proved {
+			io.write_string(w, " proved") or_return
+		} else {
 			io.write_string(w, " not_integer ") or_return
 			io.write_int(w, int(v.not_integer)) or_return
 			io.write_string(w, " out_of_range ") or_return

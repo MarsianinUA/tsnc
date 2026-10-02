@@ -171,7 +171,7 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 		leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
 	case .F64, .Bool, .Str, .Closure, .Ref:
 		if s.declared.nullish == .Undefined {
-			leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
+			leave(s, ir.emit(&s.fb, s.declared, ir.Const_Null{}, span), span)
 		} else {
 			ir.emit(&s.fb, ir.VOID, ir.Unreachable{}, span)
 		}
@@ -703,7 +703,7 @@ lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: so
 @(private)
 case_test :: proc(s: ^Func_State, subject: ^Switch_Subject, value: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[value].span
-	if subject.of_tagged {
+	if subject.operand != ir.NO_VALUE {
 		if test, matched := typeof_case_test(s, subject, value); matched {
 			return test
 		}

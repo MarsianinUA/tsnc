@@ -67,7 +67,7 @@ representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type
 		return .Closure, true
 	case check.Union:
 		// So that the object or the array behind the pointer is looked into, as ir_type does.
-		if held, _, member, nullable := nullable_reference(types, v); nullable && held == .Ref {
+		if member, _, held := nullable_member(types, v); held {
 			representation(types, member) or_return
 		}
 	}
@@ -116,7 +116,7 @@ map_type :: proc(
 	type: ir.Type,
 	ok: bool,
 ) {
-	kind := representation(types, id) or_return
+	representation(types, id) or_return
 	#partial switch v in types[id] {
 	case check.Object:
 		return ir.ref(object_layout(low, types, v)), true
@@ -124,15 +124,12 @@ map_type :: proc(
 		element, _ := element_slot(types, v.element)
 		return ir.ref(ir.array_layout(&low.builder, element)), true
 	case check.Union:
-		if _, nullish, member, nullable := nullable_reference(types, v); nullable {
-			if kind != .Ref {
-				return ir.nullable({kind = kind}, nullish), true
-			}
+		if member, nullish, held := nullable_member(types, v); held {
 			present := ir_type(low, types, member) or_return
 			return ir.nullable(present, nullish), true
 		}
 	}
-	return {kind = kind}, true
+	return shallow_type(types, id)
 }
 
 // construct_text feeds the Not_Lowered message. It names the part with no representation, since
@@ -263,6 +260,22 @@ nullable_reference :: proc(
 		kind, member = other, one
 	}
 	return kind, nullish, member, kind != .Void && nullish != .None
+}
+
+// nullable_member is the object or array type of a union that holds one with null or undefined,
+// which gives the pointer its layout.
+@(private)
+nullable_member :: proc(
+	types: []check.Type,
+	union_type: check.Union,
+) -> (
+	member: check.Type_ID,
+	nullish: ir.Nullish,
+	ok: bool,
+) {
+	kind: ir.Type_Kind
+	kind, nullish, member, ok = nullable_reference(types, union_type)
+	return member, nullish, ok && kind == .Ref
 }
 
 // shallow_type is shallow_kind with what 0 stands for in a reference that may hold null, which is
@@ -538,7 +551,7 @@ collect_layout :: proc(
 		element, _ := element_slot(types, v.element)
 		wanted.arrays += {element}
 	case check.Union:
-		if kind, _, member, nullable := nullable_reference(types, v); nullable && kind == .Ref {
+		if member, _, held := nullable_member(types, v); held {
 			collect_layout(low, types, member, wanted)
 		}
 	}

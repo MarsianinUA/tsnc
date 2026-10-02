@@ -28,6 +28,9 @@ Cell_Header :: struct {
 	flags:      Cell_Flags, // owned by gc
 }
 
+// Generated code reads and writes the table of a cell at the cell's own address.
+#assert(offset_of(Cell_Header, type_table) == 0)
+
 // String_Cell holds an immutable UTF-16 string.
 String_Cell :: struct {
 	using header: Cell_Header,
@@ -35,7 +38,24 @@ String_Cell :: struct {
 	units:        [0]u16, // `length` units follow the struct
 }
 
-// MAX_STRING_LENGTH is str.MAX_LENGTH, here so that opt can bound the length of a string.
+// ASCII_LIMIT bounds the one-unit strings that live in static data, so reading one out of a text
+// allocates nothing, as with the single character strings V8 keeps.
+ASCII_LIMIT :: 128
+
+// Ascii_Cell is a one-unit string cell in static data, laid out as String_Cell lays it out in the
+// heap. Ascii_Cells holds one per unit below ASCII_LIMIT, in unit order; codegen emits it
+// (ASCII_CELLS_SYMBOL) and steps through it by size, and the runtime borrows it.
+Ascii_Cell :: struct {
+	cell: String_Cell,
+	unit: u16,
+}
+#assert(offset_of(Ascii_Cell, unit) == size_of(String_Cell))
+#assert(size_of(Ascii_Cell) == 24)
+
+Ascii_Cells :: [ASCII_LIMIT]Ascii_Cell
+
+// MAX_STRING_LENGTH is the longest string Node 24 builds. str holds every string to it, and opt
+// bounds the length of a string by it.
 MAX_STRING_LENGTH :: 536_870_888
 
 Array_Cell :: struct {

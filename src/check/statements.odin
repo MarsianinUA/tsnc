@@ -116,27 +116,32 @@ check_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	type_of_symbol(c, {file = c.at.file, symbol = symbol})
 }
 
-// check_type_declaration skips a generic declaration, which is read only where it is used, with its
-// arguments in force: on its own there is nothing to put in place of its type parameters.
+// check_type_declaration reads a generic declaration once on its own, with the error type for each
+// type parameter; a use reads it again quietly (enter_instance).
 @(private)
 check_type_declaration :: proc(c: ^Checker, id: ast.Node_ID) {
 	symbol := c.at.bound.node_symbols[id]
 	if symbol == bind.NO_SYMBOL {
 		return // parse could not read the name and has reported it
 	}
-
-	type_params: []ast.Node_ID
+	ref := Symbol_Ref {
+		file   = c.at.file,
+		symbol = symbol,
+	}
 	#partial switch v in c.at.tree.nodes[id].variant {
 	case ast.Interface_Decl:
-		type_params = v.type_params
+		if len(v.type_params) > 0 {
+			body := c.at.tree.nodes[v.body].variant.(ast.Object_Type)
+			object_fields(c, body.members)
+			return
+		}
 	case ast.Type_Alias_Decl:
-		type_params = v.type_params
+		if len(v.type_params) > 0 {
+			search_alias(c, ref, nil)
+			return
+		}
 	}
-	if len(type_params) > 0 {
-		return
-	}
-
-	named_type(c, {file = c.at.file, symbol = symbol}, nil, c.at.bound.symbols[symbol].name)
+	named_type(c, ref, nil, c.at.bound.symbols[symbol].name)
 }
 
 // for_of_element knows an array and a string by itself, exactly as check_index knows that `a[i]` is

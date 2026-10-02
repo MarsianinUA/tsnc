@@ -108,7 +108,9 @@ named_type :: proc(c: ^Checker, ref: Symbol_Ref, args: []Type_ID, name: ast.Name
 
 // interface_type reserves the row before it reads the members, so a member that names the interface
 // again finds it instead of asking for it once more, which is what lets
-// `interface Node { next: Node | undefined }` exist.
+// `interface Node { next: Node | undefined }` exist. While an alias is being read, a fresh row waits
+// for its members until no alias is (Pending): `type A = I | number; interface I { a: A }` would
+// otherwise find A on the stack when read from A, and not when read from I.
 @(private)
 interface_type :: proc(
 	c: ^Checker,
@@ -118,10 +120,7 @@ interface_type :: proc(
 	name: ast.Name,
 ) -> Type_ID {
 	node := symbol.declaration
-	previous := move_to(c, ref.file)
-	defer c.at = previous
-
-	declaration := c.at.tree.nodes[node].variant.(ast.Interface_Decl)
+	declaration := c.program.trees[ref.file].nodes[node].variant.(ast.Interface_Decl)
 	if !type_args_fit(c, name, len(args), len(declaration.type_params)) {
 		return ERROR
 	}
@@ -130,8 +129,30 @@ interface_type :: proc(
 	if !fresh {
 		return id
 	}
+	if aliases_open(c) {
+		append(&c.pending, Pending{ref, id, slice.clone(args, context.temp_allocator)})
+		return id
+	}
+	read_interface(c, ref, id, args)
+	return id
+}
 
-	drop_facts_of_instance(c, args)
+@(private)
+Pending :: struct {
+	ref:  Symbol_Ref,
+	id:   Type_ID,
+	args: []Type_ID,
+}
+
+@(private)
+read_interface :: proc(c: ^Checker, ref: Symbol_Ref, id: Type_ID, args: []Type_ID) {
+	node := c.program.bound[ref.file].symbols[ref.symbol].declaration
+	previous := move_to(c, ref.file)
+	defer c.at = previous
+
+	declaration := c.at.tree.nodes[node].variant.(ast.Interface_Decl)
+	instance := enter_instance(c, node, args)
+	defer leave_instance(c, instance)
 	restore := bind_type_params(c, ref.file, declaration.type_params, args)
 	defer unbind_type_params(c, restore)
 
@@ -140,7 +161,26 @@ interface_type :: proc(
 	// The declaration itself holds the type it declares. An instantiation writes nothing, since one
 	// tree stands behind every instance of a generic declaration.
 	set_type(c, node, id)
-	return id
+}
+
+@(private)
+read_pending :: proc(c: ^Checker) {
+	for len(c.pending) > 0 {
+		next := pop_front(&c.pending)
+		read_interface(c, next.ref, next.id, next.args)
+	}
+}
+
+// aliases_open looks at the top frame only: an alias reads types and never a value, so the frames
+// of aliases are always the top of the stack.
+@(private)
+aliases_open :: proc(c: ^Checker) -> bool {
+	frames := c.search.frames[:]
+	if len(frames) == 0 {
+		return false
+	}
+	top := frames[len(frames) - 1].ref
+	return c.program.bound[top.file].symbols[top.symbol].kind == .Type_Alias
 }
 
 // alias_type rejects an alias that names itself: an alias is transparent, as it is in TypeScript,
@@ -157,78 +197,65 @@ alias_type :: proc(
 	args: []Type_ID,
 	name: ast.Name,
 ) -> Type_ID {
-	node := symbol.declaration
-	decl := Decl_Ref {
-		file = ref.file,
-		node = node,
+	declaration := c.program.trees[ref.file].nodes[symbol.declaration].variant.(ast.Type_Alias_Decl)
+	if !type_args_fit(c, name, len(args), len(declaration.type_params)) {
+		return ERROR
 	}
 	if cached, found := c.symbol_types[ref]; found && len(args) == 0 {
 		return cached
 	}
-	if decl in c.aliases {
-		report_alias_loop(c, decl, name)
+	if at, open := c.search.index[ref]; open {
+		reached(c, at)
 		return ERROR
 	}
+	return search_alias(c, ref, args)
+}
 
+// search_alias reads an alias in a frame of the search. Read with type arguments, it is an instance,
+// which is not cached; read without them, a generic one has the error type for its parameters.
+@(private)
+search_alias :: proc(c: ^Checker, ref: Symbol_Ref, args: []Type_ID) -> Type_ID {
+	node := c.program.bound[ref.file].symbols[ref.symbol].declaration
+	at, outer := enter_frame(c, ref, instance = len(args) > 0)
 	previous := move_to(c, ref.file)
 	defer c.at = previous
 
 	declaration := c.at.tree.nodes[node].variant.(ast.Type_Alias_Decl)
-	if !type_args_fit(c, name, len(args), len(declaration.type_params)) {
-		return ERROR
-	}
-
-	drop_facts_of_instance(c, args)
-	c.aliases[decl] = true
-	append(&c.alias_path, Alias_Step{decl = decl, ref = ref, name = name, plain = len(args) == 0})
-	defer {
-		pop(&c.alias_path)
-		delete_key(&c.aliases, decl)
-	}
-	restore := bind_type_params(c, ref.file, declaration.type_params, args)
-	defer unbind_type_params(c, restore)
-
+	instance := enter_instance(c, node, args)
+	restore := bind_type_params(c, ref.file, declaration.type_params[:len(args)], args)
 	type := resolve_type(c, declaration.type)
-	if len(args) == 0 {
-		if looped, found := c.symbol_types[ref]; found {
-			type = looped
-		} else {
-			c.symbol_types[ref] = type
-		}
+	unbind_type_params(c, restore)
+	leave_instance(c, instance)
+
+	type = leave_frame(c, at, outer, type)
+	if !aliases_open(c) {
+		read_pending(c)
 	}
 	return set_type(c, node, type)
 }
 
+// enter_instance stops an instantiation from writing facts about the declaration's nodes, and from
+// reporting inside it. One tree of `Array<T>` stands behind every `Array<number>` and
+// `Array<string>`, and a node holds one type, so the instance would overwrite what the declaration
+// itself recorded. lower reads the instance through the expression that used it, never through the
+// declaration. The declaration's own file reads it once without arguments, and reports there.
 @(private)
-Alias_Step :: struct {
-	decl:  Decl_Ref,
-	ref:   Symbol_Ref,
-	name:  ast.Name, // the reference the alias was entered by
-	plain: bool, // no type arguments, so cached by symbol
+enter_instance :: proc(c: ^Checker, node: ast.Node_ID, args: []Type_ID) -> bool {
+	if len(args) == 0 {
+		return false
+	}
+	c.at.node_types = nil
+	c.at.node_symbols = nil
+	c.at.node_signatures = nil
+	append(&c.muted, c.at.tree.nodes[node].span)
+	return true
 }
 
-// report_alias_loop reports at the reference, inside the loop, to the member declared first, as
-// report_loop does and for its reason. name closes the loop, so it is the reference to its start.
 @(private)
-report_alias_loop :: proc(c: ^Checker, decl: Decl_Ref, name: ast.Name) {
-	start := len(c.alias_path) - 1
-	for c.alias_path[start].decl != decl {
-		start -= 1
+leave_instance :: proc(c: ^Checker, entered: bool) {
+	if entered {
+		pop(&c.muted)
 	}
-
-	first := start
-	for i in start + 1 ..< len(c.alias_path) {
-		if compare_decls(c.alias_path[i].decl, c.alias_path[first].decl) < 0 {
-			first = i
-		}
-	}
-	for step in c.alias_path[start:] {
-		if step.plain {
-			c.symbol_types[step.ref] = ERROR
-		}
-	}
-	at := name if first == start else c.alias_path[first].name
-	report(c, .Circular_Type, at.span, at.text)
 }
 
 // type_param_type is what one type parameter stands for: the argument in force, or the type variable
@@ -290,20 +317,6 @@ unbind_type_params :: proc(c: ^Checker, restore: []Restore) {
 		}
 		delete_key(&c.bindings, entry.decl)
 	}
-}
-
-// drop_facts_of_instance stops an instantiation from writing facts about the declaration's nodes.
-// One tree of `Array<T>` stands behind every `Array<number>` and `Array<string>`, and a node holds
-// one type, so the instance would overwrite what the declaration itself recorded. lower reads the
-// instance through the expression that used it, never through the lib tree.
-@(private)
-drop_facts_of_instance :: proc(c: ^Checker, args: []Type_ID) {
-	if len(args) == 0 {
-		return
-	}
-	c.at.node_types = nil
-	c.at.node_symbols = nil
-	c.at.node_signatures = nil
 }
 
 // type_args_fit reports a name given the wrong number of type arguments.

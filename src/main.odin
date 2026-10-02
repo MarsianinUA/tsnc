@@ -8,11 +8,14 @@ import "core:os"
 import "driver"
 import "target"
 
+// Each job is a thread, and a count past the cores of any machine is a typo.
+MAX_JOBS :: 256
+
 main :: proc() {
 	options := driver.Options {
 		optimization = .speed,
 		target       = target.HOST,
-		jobs         = os.get_processor_core_count(),
+		jobs         = clamp(os.get_processor_core_count(), 1, MAX_JOBS),
 	}
 	flags.parse_or_exit(&options, command_line(), .Odin)
 
@@ -29,8 +32,8 @@ main :: proc() {
 		fmt.eprintfln("target %v is not supported yet", options.target)
 		os.exit(1)
 	}
-	if options.jobs < 1 {
-		fmt.eprintfln("-j:%d is not a thread count\n  hint: pass 1 or more", options.jobs)
+	if options.jobs < 1 || options.jobs > MAX_JOBS {
+		fmt.eprintfln("-j:%d is not a thread count\n  hint: pass 1 to %d", options.jobs, MAX_JOBS)
 		os.exit(1)
 	}
 

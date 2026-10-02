@@ -504,18 +504,15 @@ optional_argument :: proc(
 		return value
 	}
 	type := value_type(s, value)
-	if type != ir.TAGGED && type.nullish == .None {
+	if !may_be_nullish(type) {
 		return coerce(s, value, want, s.tree.nodes[arg].span)
 	}
+	// The given side reads the value as present, which only a test for null proves.
+	ensure(type.nullish != .Null, "check let a `T | null` reach an optional parameter")
 	absent := ir.add_block(&s.fb)
 	given := ir.add_block(&s.fb)
 	join := ir.add_block(&s.fb)
-	undefined: ir.Value_ID
-	if type == ir.TAGGED {
-		undefined = tag_test(s, value, {.Undefined}, span)
-	} else {
-		undefined = ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
-	}
+	undefined := nullish_test(s, value, {.Undefined}, span)
 	branch := ir.Branch {
 		condition  = undefined,
 		then_block = absent,
@@ -683,19 +680,16 @@ lower_console :: proc(
 	return ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span)
 }
 
-// console_argument boxes the argument into the tagged value the runtime takes. A tagged value is
-// printed as it is now (lower_raw), whatever check narrowed it to, since a call may have written
-// the variable after the test. Any other argument typed undefined or null is that constant, and
-// one typed void that answered nothing, as a ternary of two void calls, is undefined.
+// console_argument boxes the argument into the tagged value the runtime takes. A tagged value, or a
+// reference that may hold null, is printed as it is now (lower_raw), whatever check narrowed it to,
+// since a call may have written the variable after the test. Any other argument typed undefined
+// or null is that constant, and one typed void that answered nothing, as a ternary of two void
+// calls, is undefined.
 @(private)
 console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	value := lower_raw(s, id)
-	if value != ir.NO_VALUE && value_type(s, value) == ir.TAGGED {
-		return value
-	}
-	if value != ir.NO_VALUE && value_type(s, value).nullish != .None {
-		// Its node may be typed null where a call stored something since the test that narrowed it.
+	if value != ir.NO_VALUE && may_be_nullish(value_type(s, value)) {
 		return coerce(s, value, ir.TAGGED, span)
 	}
 	switch s.typed.node_types[id] {

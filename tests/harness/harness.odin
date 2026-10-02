@@ -119,6 +119,51 @@ lower_sources :: proc(
 	return
 }
 
+// func_named, func_prefixed and global_named stop the test where nothing has the name, so a test
+// that asserts what a function lacks cannot pass on a lookup that missed.
+func_named :: proc(
+	t: ^testing.T,
+	output: ir.Program_IR,
+	name: string,
+	loc := #caller_location,
+) -> ir.Func {
+	for body in output.funcs {
+		if body.name == name {
+			return body
+		}
+	}
+	testing.fail_now(t, fmt.tprintf("no function %s", name), loc)
+}
+
+// func_prefixed is for a nested function or an arrow, whose name ends in a node number.
+func_prefixed :: proc(
+	t: ^testing.T,
+	output: ir.Program_IR,
+	prefix: string,
+	loc := #caller_location,
+) -> ir.Func {
+	for body in output.funcs {
+		if strings.has_prefix(body.name, prefix) {
+			return body
+		}
+	}
+	testing.fail_now(t, fmt.tprintf("no function %s...", prefix), loc)
+}
+
+global_named :: proc(
+	t: ^testing.T,
+	output: ir.Program_IR,
+	name: string,
+	loc := #caller_location,
+) -> ir.Global {
+	for global in output.globals {
+		if global.name == name {
+			return global
+		}
+	}
+	testing.fail_now(t, fmt.tprintf("no global %s", name), loc)
+}
+
 dump :: proc(files: []source.File, output: ir.Program_IR) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	writer := strings.to_writer(&builder)

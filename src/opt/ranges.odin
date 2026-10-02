@@ -2,6 +2,7 @@
 package opt
 
 import "core:math"
+import "core:slice"
 
 import "../abi"
 import "../ir"
@@ -53,15 +54,18 @@ Ranges :: struct {
 
 Func_Ranges :: struct {
 	values: []Range, // by Value_ID; Bottom for a value that is no number
-	// fact[block] is that of the nearest block on the dominator chain of `block`, itself included,
-	// entered only from a branch on a comparison of numbers; nil when there is none.
-	fact:   []^Fact,
+	// facts[v] are the comparisons of v with another number that a branch into a block made, with
+	// the deepest block of the dominator tree first, so a block's nearest dominator comes first
+	// among those that dominate it.
+	facts:  [][]Fact,
+	flow:   ir.Flow,
 }
 
+// Fact holds in `block`, which only a branch on the comparison enters.
 Fact :: struct {
 	compare: ir.Compare,
 	holds:   bool, // the block is the true side
-	up:      ^Fact, // the fact of the immediate dominator
+	block:   ir.Block_ID,
 }
 
 find_ranges :: proc(p: ir.Program_IR, shapes: []Shape) -> Ranges {
@@ -119,15 +123,14 @@ find_ranges :: proc(p: ir.Program_IR, shapes: []Shape) -> Ranges {
 // latest definition of the value, so its condition is about this value.
 refined :: proc(fr: Func_Ranges, value: ir.Value_ID, block: ir.Block_ID) -> Range {
 	r := fr.values[value]
-	if r.kind == .Bottom {
-		return r
-	}
-	if fr.fact[block] == nil {
+	if r.kind == .Bottom || len(fr.facts[value]) == 0 {
 		return r
 	}
 	iv := interval_of(r)
-	for fact := fr.fact[block]; fact != nil; fact = fact.up {
-		iv = apply_fact(fr, fact^, value, iv)
+	for fact in fr.facts[value] {
+		if ir.dominates(fr.flow, fact.block, block) {
+			iv = apply_fact(fr, fact, value, iv)
+		}
 	}
 	return range_of(iv)
 }
@@ -229,26 +232,48 @@ append_once :: proc(list: ^[dynamic]ir.Func_ID, id: ir.Func_ID) {
 // prepare builds what every analysis of the function reads and never changes.
 @(private = "file")
 prepare :: proc(func: ir.Func, flow: ir.Flow) -> Func_Ranges {
+	About :: struct {
+		value: ir.Value_ID,
+		pre:   i32,
+		fact:  Fact,
+	}
 	fr := Func_Ranges {
 		values = make([]Range, len(func.values), context.temp_allocator),
-		fact   = make([]^Fact, len(func.blocks), context.temp_allocator),
+		facts  = make([][]Fact, len(func.values), context.temp_allocator),
+		flow   = flow,
 	}
+	found := make([dynamic]About, context.temp_allocator)
 	for block in flow.order {
+		// The call enters ENTRY too, so no branch speaks for it.
 		if block == ir.ENTRY {
-			// The call enters ENTRY too, so no branch speaks for it.
 			continue
 		}
-		up := fr.fact[flow.idom[block]]
-		if compare, holds, ok := fact_of(flow, func, block); ok {
-			fact := Fact {
-				compare = compare,
-				holds   = holds,
-				up      = up,
-			}
-			fr.fact[block] = new_clone(fact, context.temp_allocator)
-		} else {
-			fr.fact[block] = up
+		compare, holds, ok := fact_of(flow, func, block)
+		if !ok || compare.left == compare.right {
+			continue
 		}
+		fact := Fact {
+			compare = compare,
+			holds   = holds,
+			block   = block,
+		}
+		pre := flow.pre[block]
+		append(&found, About{compare.left, pre, fact}, About{compare.right, pre, fact})
+	}
+	slice.sort_by(found[:], proc(a, b: About) -> bool {
+		return a.value < b.value || a.value == b.value && a.pre > b.pre
+	})
+	facts := make([]Fact, len(found), context.temp_allocator)
+	for about, i in found {
+		facts[i] = about.fact
+	}
+	for start := 0; start < len(found); {
+		end := start + 1
+		for end < len(found) && found[end].value == found[start].value {
+			end += 1
+		}
+		fr.facts[found[start].value] = facts[start:end]
+		start = end
 	}
 	return fr
 }

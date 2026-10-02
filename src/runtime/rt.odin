@@ -32,6 +32,14 @@ foreign _ {
 	tsnc_roots :: proc "c" () -> ^[]abi.Root ---
 	@(link_name = abi.HEAP_SYMBOL)
 	tsnc_heap :: proc "c" (head: ^abi.Heap_Head) ---
+	@(link_name = abi.ASCII_CELLS_SYMBOL)
+	tsnc_ascii_cells :: proc "c" () -> ^abi.Ascii_Cells ---
+}
+
+// The runtime is built for Odin's default machine, which is the x86-64-v2 the compiler targets
+// (target.SPECS); the build fails here should that default move.
+when ODIN_ARCH == .amd64 {
+	#assert(ODIN_MICROARCH_STRING == "x86-64-v2")
 }
 
 // heap is the one piece of state the runtime keeps. The exports reach it here, since generated code
@@ -54,7 +62,8 @@ main :: proc() {
 	if os.get_env(STRESS_VARIABLE, context.temp_allocator) == "1" {
 		mode = .Stress
 	}
-	switch gc.heap_init(&heap, tsnc_type_tables()^, tsnc_roots()^, &stack_base, mode) {
+	tables, roots := tsnc_type_tables()^, tsnc_roots()^
+	switch gc.heap_init(&heap, tables, roots, &stack_base, mode, ascii = tsnc_ascii_cells()) {
 	case .None:
 	case .Out_Of_Memory:
 		fail.at({error = .Out_Of_Memory})

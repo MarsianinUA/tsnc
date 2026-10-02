@@ -3,6 +3,7 @@ package lower_tests
 import "core:testing"
 
 import "../../src/ir"
+import "../harness"
 
 // Arrays: the four loops lower builds around a callback.
 
@@ -31,7 +32,7 @@ the_four_callback_methods_are_loops_with_the_callback_inlined :: proc(t: ^testin
 		console.log(sum([1, 2, 3]));
 	`,
 	)
-	body, _ := func_named(result.output, "m1.sum")
+	body := harness.func_named(t, result.output, "m1.sum")
 	testing.expectf(t, len(instructions_of(body, ir.Call)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(body, ir.Call_Closure)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(body, ir.Make_Closure)) == 0, "%s", result.text)
@@ -49,7 +50,7 @@ a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 		console.log([1, 2].map(double));
 	`,
 	)
-	init, _ := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	testing.expectf(t, calls_function(result.output, init, "m1.double"), "%s", result.text)
 	testing.expectf(t, len(instructions_of(init, ir.Func_Ref)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(init, ir.Call_Closure)) == 0, "%s", result.text)

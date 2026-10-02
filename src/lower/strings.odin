@@ -243,8 +243,13 @@ equals_literal :: proc(
 
 	ir.use_block(&s.fb, unit_test)
 	zero := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
-	// It cannot fail after the length test, and it is what Unit_Load reads through.
-	checked := bounds_check(s, text, zero, span)
+	// Unit_Load reads through a check, and the length test proved this one.
+	bounds := ir.Bounds_Check {
+		array  = text,
+		index  = zero,
+		proved = true,
+	}
+	checked := ir.emit(&s.fb, ir.F64, bounds, span)
 	unit := ir.emit(&s.fb, ir.F64, ir.Unit_Load{text = text, index = checked}, span)
 	expected := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = f64(units[0])}, span)
 	same := ir.emit(&s.fb, ir.BOOL, ir.Compare{op = .Equal, left = unit, right = expected}, span)

@@ -148,8 +148,7 @@ Build_Memory :: struct {
 }
 
 // check_only reports every error it can rather than stopping at the first: a file that fails to
-// parse still gets bound, and a module that cannot be found does not end the walk. allocator must
-// be thread-safe, because the threads of the pool allocate from it too.
+// parse still gets bound, and a module that cannot be found does not end the walk.
 @(require_results)
 check_only :: proc(
 	options: Options,
@@ -190,8 +189,10 @@ check_only :: proc(
 		return {memory = memory}, err
 	}
 
+	jobs := max(options.jobs, 1)
 	pool: thread.Pool
-	thread.pool_init(&pool, allocator, max(options.jobs, 1))
+	// The heap, not the caller's allocator: the pool's threads allocate from it too.
+	thread.pool_init(&pool, runtime.heap_allocator(), jobs)
 	thread.pool_start(&pool)
 	defer {
 		thread.pool_join(&pool)
@@ -200,11 +201,9 @@ check_only :: proc(
 
 	// Growing c.files inside the loop is what makes this breadth-first: a file discovered now is
 	// numbered after every file already known, and its own imports are followed in a later wave.
-	wave: Wave
 	for first := 0; first < len(c.files); {
 		last := len(c.files)
-		wave.tasks = c.memory.tasks[first:last]
-		if parse_wave(&pool, &wave) != nil {
+		if parse_wave(&pool, c.memory.tasks[first:last]) != nil {
 			return {memory = memory}, {kind = .Out_Of_Memory}
 		}
 		for id in first ..< last {
@@ -228,7 +227,7 @@ check_only :: proc(
 	append(&c.diagnostics, ..cycle_errors)
 
 	// check reports in the order it reads declarations, which is not print order.
-	results, check_err := run_checkers(&c, &built, &pool, options.jobs)
+	results, check_err := run_checkers(&c, &built, &pool, jobs)
 	if check_err != nil {
 		return {memory = memory}, {kind = .Out_Of_Memory}
 	}

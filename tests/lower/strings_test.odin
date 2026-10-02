@@ -4,6 +4,7 @@ import "core:testing"
 
 import "../../src/abi"
 import "../../src/ir"
+import "../harness"
 
 // Strings: what reads a unit or compares without a call into the runtime.
 
@@ -18,7 +19,7 @@ an_index_below_128_reads_a_static_cell_without_a_call :: proc(t: ^testing.T) {
 		console.log(at("abc", 1));
 	`,
 	)
-	body, _ := func_named(result.output, "m1.at")
+	body := harness.func_named(t, result.output, "m1.at")
 	static, other, found := split_on_ascii(body)
 	testing.expectf(t, found, "%s", result.text)
 	testing.expectf(t, holds(body, static, ir.Ascii_Cell), "%s", result.text)
@@ -41,7 +42,7 @@ a_step_of_for_of_below_128_reads_a_static_cell_without_a_call :: proc(t: ^testin
 		console.log(units("ab"));
 	`,
 	)
-	body, _ := func_named(result.output, "m1.units")
+	body := harness.func_named(t, result.output, "m1.units")
 	static, other, found := split_on_ascii(body)
 	testing.expectf(t, found, "%s", result.text)
 	testing.expectf(t, holds(body, static, ir.Ascii_Cell), "%s", result.text)
@@ -60,7 +61,7 @@ a_literal_of_at_most_one_unit_compares_without_a_call :: proc(t: ^testing.T) {
 		console.log(word("a"));
 	`,
 	)
-	body, _ := func_named(result.output, "m1.word")
+	body := harness.func_named(t, result.output, "m1.word")
 	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
 }
 
@@ -75,7 +76,7 @@ the_runtime_compares_two_strings_only_after_identity_and_length :: proc(t: ^test
 		console.log(same("a", "b"));
 	`,
 	)
-	body, _ := func_named(result.output, "m1.same")
+	body := harness.func_named(t, result.output, "m1.same")
 	one_cell, found := branch_on(body, ir.Same_Cell{a = 0, b = 1})
 	testing.expectf(t, found, "%s", result.text)
 	lengths, is_branch := terminator(body, one_cell.else_block).(ir.Branch)

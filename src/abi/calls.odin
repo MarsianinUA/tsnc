@@ -20,6 +20,11 @@ ROOTS_SYMBOL :: "tsnc_roots"
 // one.
 HEAP_SYMBOL :: "tsnc_heap"
 
+// ASCII_CELLS_SYMBOL names a proc "c" () -> ^Ascii_Cells that the compiler emits. The runtime's main
+// lends the table to its heap, so generated code and the runtime answer one cell for one unit. A
+// procedure for the reason TYPE_TABLES_SYMBOL is one.
+ASCII_CELLS_SYMBOL :: "tsnc_ascii_cells"
+
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
 // maps each to one LLVM type, a Tagged parameter to two words and a Tagged result to a leading
 // slot. A boolean is b64 here, the width the package uses for a boolean slot, so no export depends

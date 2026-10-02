@@ -243,7 +243,7 @@ Bounds_Check :: struct {
 	index:        Value_ID,
 	not_integer:  Fail_Site_ID,
 	out_of_range: Fail_Site_ID,
-	proved:       bool, // codegen emits nothing for a check opt proved
+	proved:       bool, // codegen emits nothing for it, and the fail sites are unused
 }
 
 Element_Load :: struct {
@@ -277,7 +277,7 @@ Ascii_Cell :: struct {
 	unit: Value_ID, // the answer of a Unit_Load
 }
 
-ASCII_LIMIT :: 128
+ASCII_LIMIT :: abi.ASCII_LIMIT
 
 // Layout_Test answers Bool: whether the cell's type table is a row whose base is this layout. A
 // Tag_Test says only that a tagged value holds an object; a read of an object out of a slot that
@@ -439,7 +439,8 @@ terminates :: proc(variant: Variant) -> bool {
 // Binary_Op: Add, Subtract, Multiply and Remainder take and answer one number type, Divide and
 // Power only F64. The bitwise operators take any number type and answer F64 or I32, an unsigned
 // shift F64 or I64. An integer operation computes what the F64 one would: opt narrows only what it
-// proved to fit, and a Remainder only of a dividend it proved non-negative.
+// proved to fit, and a Remainder only of a dividend it proved non-negative and a divisor it proved
+// not 0.
 //
 // The bitwise and shift operators are the ones ECMAScript defines, not the ones the machine has:
 // each operand goes through ToInt32, or ToUint32 on the left of an unsigned shift, the shift count
@@ -448,7 +449,7 @@ terminates :: proc(variant: Variant) -> bool {
 // it means.
 //
 // Power is ** and Math.pow, which is ECMAScript exponentiation. It differs from the pow of libm in
-// its corners, pow(1, NaN) among them, so it is not a plain call to libm.
+// one corner, pow(1, NaN) is NaN, so it is not a plain call to libm.
 Binary_Op :: enum u8 {
 	Add,
 	Subtract,

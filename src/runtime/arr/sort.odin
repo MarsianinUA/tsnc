@@ -100,8 +100,8 @@ sort_default :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> (ok: bool) {
 	return true
 }
 
-// start_sort copies the array and lists the indices of its elements that are not undefined, which
-// JavaScript puts last without comparing them.
+// start_sort copies the array and lists the indices of its elements that are not undefined:
+// JavaScript puts the undefined ones last without comparing them.
 @(private)
 start_sort :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> Sort_State {
 	items := slice(heap, array, 0, f64(array.length))
@@ -255,7 +255,9 @@ less :: proc(state: ^Sort_State, a, b: int) -> bool {
 	return order < 0
 }
 
-// write_back stores the sorted elements, then the undefined ones, over the array from index 0.
+// write_back stores the sorted elements, then the undefined ones, over the array from index 0. A put
+// at the array's length appends, which is the specification's Set on an array a comparator
+// shortened.
 @(private)
 write_back :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, state: ^Sort_State) {
 	for index, i in state.order {

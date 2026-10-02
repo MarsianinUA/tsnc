@@ -182,7 +182,6 @@ load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.
 	return coerce(s, loaded, place.type, span, .Field_Holds_Other_Kind)
 }
 
-// slot_type is the type a load from a slot of this kind answers, for a field declared as type.
 @(private)
 slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
 	#partial switch kind {

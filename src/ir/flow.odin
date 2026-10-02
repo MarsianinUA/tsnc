@@ -10,6 +10,10 @@ Flow :: struct {
 	order: []Block_ID, // the blocks the entry reaches, in reverse post-order
 	rank:  []i32, // the place of each block in order, -1 when the entry never reaches it
 	idom:  []Block_ID, // the immediate dominator; ENTRY's is ENTRY, an unreached block's NO_BLOCK
+	// The numbers of each block in a preorder and a postorder walk of the dominator tree, -1 when
+	// unreached: a block dominates another whose numbers fall within its own.
+	pre:   []i32,
+	post:  []i32,
 }
 
 @(require_results)
@@ -19,6 +23,8 @@ make_flow :: proc(func: Func, allocator := context.allocator) -> Flow {
 		preds = make([][]Block_ID, count, allocator),
 		rank  = make([]i32, count, allocator),
 		idom  = make([]Block_ID, count, allocator),
+		pre   = make([]i32, count, allocator),
+		post  = make([]i32, count, allocator),
 	}
 	edges := make([][dynamic]Block_ID, count, context.temp_allocator)
 	for &list in edges {
@@ -36,8 +42,8 @@ make_flow :: proc(func: Func, allocator := context.allocator) -> Flow {
 		flow.preds[block] = make([]Block_ID, len(list), allocator)
 		copy(flow.preds[block], list[:])
 	}
-	for &rank in flow.rank {
-		rank = -1
+	for block in 0 ..< count {
+		flow.rank[block], flow.pre[block], flow.post[block] = -1, -1, -1
 	}
 	for &block in flow.idom {
 		block = NO_BLOCK
@@ -74,6 +80,7 @@ make_flow :: proc(func: Func, allocator := context.allocator) -> Flow {
 			}
 		}
 	}
+	number_dominator_tree(&flow)
 	return flow
 }
 
@@ -82,20 +89,68 @@ dominates :: proc(flow: Flow, head, block: Block_ID) -> bool {
 	if flow.rank[head] < 0 || flow.rank[block] < 0 {
 		return false
 	}
-	walk := block
-	for {
-		if walk == head {
-			return true
-		}
-		if walk == ENTRY {
-			return false
-		}
-		next := flow.idom[walk]
-		if next == NO_BLOCK || next == walk {
-			return false
-		}
-		walk = next
+	return flow.pre[head] <= flow.pre[block] && flow.post[block] <= flow.post[head]
+}
+
+// number_dominator_tree carries its own stack, as walk_post_order does.
+@(private = "file")
+number_dominator_tree :: proc(flow: ^Flow) {
+	Frame :: struct {
+		block: Block_ID,
+		next:  int, // the child to visit when this frame comes up again
 	}
+
+	children := make([][dynamic]Block_ID, len(flow.idom), context.temp_allocator)
+	for block in flow.order[1:] {
+		list := &children[flow.idom[block]]
+		if list^ == nil {
+			list^ = make([dynamic]Block_ID, context.temp_allocator)
+		}
+		append(list, block)
+	}
+	stack := make([dynamic]Frame, 0, len(flow.order), context.temp_allocator)
+	pre, post: i32
+	flow.pre[ENTRY] = pre
+	pre += 1
+	append(&stack, Frame{block = ENTRY})
+	for len(stack) > 0 {
+		top := &stack[len(stack) - 1]
+		if top.next >= len(children[top.block]) {
+			flow.post[top.block] = post
+			post += 1
+			pop(&stack)
+			continue
+		}
+		child := children[top.block][top.next]
+		top.next += 1
+		flow.pre[child] = pre
+		pre += 1
+		append(&stack, Frame{block = child})
+	}
+}
+
+// Place is where a value is defined: a block and the position there, NO_BLOCK when no block holds
+// the value.
+Place :: struct {
+	block:    Block_ID,
+	position: int,
+}
+
+// locate_values skips a value outside the function's table, which the verifier reports.
+@(require_results)
+locate_values :: proc(func: Func, allocator := context.allocator) -> []Place {
+	places := make([]Place, len(func.values), allocator)
+	for &place in places {
+		place.block = NO_BLOCK
+	}
+	for block, id in func.blocks {
+		for value, position in block.instructions {
+			if int(value) < len(func.values) {
+				places[value] = {Block_ID(id), position}
+			}
+		}
+	}
+	return places
 }
 
 // successors keeps a target outside the function: callers skip it, the verifier reports it.

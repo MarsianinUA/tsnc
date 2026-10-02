@@ -444,7 +444,7 @@ check_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 			not_yet = negated(s, ready, span)
 		} else {
 			value := ir.emit(&s.fb, type, ir.Global_Load{global = global}, span)
-			not_yet = ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+			not_yet = null_test(s, value, span)
 		}
 	} else if !s.low.closures[s.file].boxed[symbol] {
 		not_yet = ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
@@ -456,7 +456,7 @@ check_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 		type := local_type(s, symbol)
 		if holds_null(type) {
 			value := ir.emit(&s.fb, type, ir.Field_Load{cell = box, field = 0}, span)
-			not_yet = ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+			not_yet = null_test(s, value, span)
 		} else {
 			ready := ir.emit(&s.fb, ir.BOOL, ir.Field_Load{cell = box, field = 1}, span)
 			not_yet = negated(s, ready, span)
@@ -574,6 +574,32 @@ tag_test :: proc(
 	span: source.Span,
 ) -> ir.Value_ID {
 	return ir.emit(&s.fb, ir.BOOL, ir.Tag_Test{value = value, tags = tags}, span)
+}
+
+@(private)
+null_test :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+	return ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
+}
+
+// jump_if jumps to join where condition holds and goes on in a block of its own where it does not.
+// It answers the edge of the jump.
+@(private)
+jump_if :: proc(
+	s: ^Func_State,
+	condition: ir.Value_ID,
+	join: ir.Block_ID,
+	span: source.Span,
+) -> Edge {
+	otherwise := ir.add_block(&s.fb)
+	jumped := here(s)
+	branch := ir.Branch {
+		condition  = condition,
+		then_block = join,
+		else_block = otherwise,
+	}
+	ir.emit(&s.fb, ir.VOID, branch, span)
+	ir.use_block(&s.fb, otherwise)
+	return jumped
 }
 
 @(private)

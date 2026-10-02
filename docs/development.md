@@ -29,8 +29,8 @@ odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsn
 # the same runtime with AddressSanitizer, for `tsnc build -sanitize:address`
 odin build src/runtime -build-mode:obj -use-single-module -o:speed -sanitize:address -out:dist/tsnc_rt-<target>-asan.obj -vet -strict-style
 
-# test runs (smoke from T1.8, negative from T2.9, diff from T4.7, expect from T5.12); smoke
-# links against the runtime object in dist/ and the others run dist/tsnc.exe, so build both first
+# test runs; smoke links against the runtime object in dist/ and the others run dist/tsnc.exe, so
+# build both first
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative
 odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
@@ -110,13 +110,13 @@ A new case goes into an existing program on its topic where one exists: a progra
 - A program that prints must not end in `process.exit`: on macOS Node can lose the output written before it. Keep an exit path on a branch that never runs, and an exit code in 65..125, which `exit.ts` explains.
 - The runtime calls a sort comparator in another order than V8 does, so a comparator neither prints nor counts, and one that changes the array does it on its first call only.
 
-A program may start with two header lines, each at most once and in either order, and the runner applies both to the Node run and to the compiled one. `// env:` sets environment variables on top of the runner's own environment:
+A program's header may hold two lines, each at most once and in either order, and the runner applies both to the Node run and to the compiled one. `// env:` sets environment variables on top of the runner's own environment:
 
 ```ts
 // env: FORCE_COLOR=1 NO_COLOR= NODE_DISABLE_COLORS=
 ```
 
-`tests/diff/src/colors.ts` does this to see colors through the pipe the runner reads. The two empty values keep Node from warning that they are ignored, should the machine set them.
+`tests/diff/src/colors.ts` does this to see colors in the output the runner reads, which is no terminal. The two empty values keep Node from warning that they are ignored, should the machine set them.
 
 `// args:` passes command line arguments after the program. They are split on whitespace, with no quoting:
 
@@ -128,7 +128,7 @@ A program may start with two header lines, each at most once and in either order
 
 ## Expected-output tests
 
-Requirements 3.8 turns some things Node accepts into runtime errors: a failed `x!` or `as`, a read before initialization, `reduce` of an empty array, an index out of range. A compiled program writes one line to stderr and exits with code 1, where Node answers `undefined` or throws, so Node cannot be the reference. `tests/expect/` holds one program per such failure path, and `tests/runner expect` compares each with the output its header states:
+Requirements 3.8 turns some things Node accepts into runtime errors: a failed `x!` or `as`, a read before initialization, `reduce` of an empty array, an index out of range. The runtime adds its own: a conversion tsnc does not make, such as `%s` of a function, and a range Node throws a `RangeError` for, such as `process.exit(1.5)`. A compiled program writes one line to stderr and exits with code 1, where Node answers `undefined` or throws, so Node cannot be the reference. `tests/expect/` holds one program per such failure path, and `tests/runner expect` compares each with the output its header states:
 
 ```ts
 // `x!` on a value that turns out undefined: the program prints what it wrote before the check,
@@ -138,9 +138,11 @@ Requirements 3.8 turns some things Node accepts into runtime errors: a failed `x
 // exit: 1
 ```
 
-The header is the run of comment and blank lines at the top of the file. Each `// stdout:` or `// stderr:` line is one line of that stream, in order, and a bare `// stdout:` is an empty line. A stream the header gives no line must stay empty, and `// exit:` appears exactly once. Other comments are prose. A line that names one of the three keys but is spelled another way fails the program instead of being read as prose.
+The header is the run of comment and blank lines at the top of the file. Each `// stdout:` or `// stderr:` line is one line of that stream, in order, and a bare `// stdout:` is an empty line. A stream the header gives no line must stay empty, and `// exit:` appears exactly once and names 0, 1 or a code in 65..125: the others are also the number of a signal, and only the line on stderr tells 1 apart. Other comments are prose. A line that names one of the three keys but is spelled another way fails the program instead of being read as prose.
 
 The runner builds each program by its path relative to the repository root, so the location in the message reads the same on every OS. The rest works as in `diff`: the tsc gate (`tests/diff/tsconfig.json` includes `tests/expect/*.ts`, so a program imports nothing), builds at `-o:none` and `-o:speed`, `-sanitize:address` when given, and `TSNC_GC_STRESS` passed on from the runner's environment.
+
+One failure has no program: building a string past the longest one Node makes takes more than 1 GB under AddressSanitizer and GC stress (1.16 GB measured), so `tests/runtime/str` checks the limit itself (`str.length_fits`) and the call that fails is one line.
 
 Node never runs these programs, but their prose says what Node does instead, and `node tests/expect/<name>.ts` shows it. Work out the line and column of a new program's failure from the source, the start of the expression that fails, and then check the build against them rather than copying what it printed.
 
@@ -184,7 +186,7 @@ gc: 109 collections, 293.5 ms marking, 78.9 ms sweeping, 5.4 ms longest pause, 2
 
 A megabyte is 2^20 bytes, and every tenth is cut, not rounded. The line comes when `main` returns and at `process.exit`. A program that fails prints its error and no line. Under stress mode the heap checks are not counted as marking or sweeping.
 
-The counts are always kept, since two adds per allocation and three clock reads per collection cost less than asking whether anyone wants them. The variable is read only at exit. `bench/bench.sh -gc` sets it and prints the counts of each program as a table.
+The counts are always kept, since an add per allocation and three clock reads per collection cost less than asking whether anyone wants them. The variable is read only at exit. `bench/bench.sh -gc` sets it and prints the counts of each program as a table.
 
 ## AddressSanitizer
 
@@ -225,10 +227,10 @@ Before any run the runner checks that every program has both `bench/ts/<name>.ts
 | `-runs:N` | timed runs of a program, 5 by default; hello always runs 20 |
 | `-o:none`, `-o:aggressive` | the level of `tsnc build`, `speed` by default |
 | `-sanitize:address` | links the runtime built with AddressSanitizer, and builds that runtime too |
-| `-env:NAME=VALUE` | sets a variable for everything the runner starts, such as `-env:TSNC_GC_STRESS=1`; repeatable |
+| `-env:NAME=VALUE` | sets a variable for everything the runner starts, such as `-env:TSNC_GC_STRESS=1`, under which `trees` never finishes; repeatable |
 | `-rebuild` | builds the compiler and the runtime even when they are newer than `src/` |
 | `-save:NAME` | writes tsnc's median times to `dist/bench/NAME.json` |
-| `-against:NAME` | compares tsnc's times with `dist/bench/NAME.json` |
+| `-against:NAME` | compares tsnc's times with `dist/bench/NAME.json`, which must have been saved with the same flags |
 | `-gc` | runs tsnc's programs with `TSNC_GC_STATS=1` and prints their [GC statistics](#gc-statistics) from the median run |
 
 The header lists the flags that change the numbers, so a table from `-o:none` cannot pass for a default one.

@@ -1,38 +1,11 @@
 /*
-The diff mode: every program in tests/diff/ must print what Node prints, byte for byte.
-
-A corpus program is a whole program, not a fragment, and it carries no expected output of its own.
-The expectation is Node: the mode runs `node <program>`, then builds the same file with `tsnc build`
-and runs what came out, and compares stdout, stderr and the exit code (compare.odin). Nothing is
-normalized on the way, neither line endings nor encoding, because a difference in either is exactly
-the kind of thing this test exists to find.
-
-Before any of that the corpus passes a gate: `tsc --noEmit --strict` over tests/diff/tsconfig.json,
-so that a corpus program is TypeScript the real compiler accepts and not merely something tsnc
-happens to swallow (requirements 10). The gate runs once for the whole corpus and is a precondition
-rather than a test of its own: a program that does not type-check is a broken corpus, and tsc names
-every file and line it objects to, so one run still shows all of them. It covers the programs of
-tests/expect as well, which the expect mode runs it for.
-
-tests/diff is an npm project, laid out the way one is: package.json, package-lock.json and
-tsconfig.json at the top, the node_modules npm unpacks from them beside those, and the programs
-under src/. The manifests sit above the programs rather than elsewhere in tests/, because Node reads
-`"type": "module"` from the nearest package.json and it has to be an ancestor of the programs for an
-import in one of them to run at all.
-
-The walk takes only the `.ts` files directly in tests/diff/src, the way the negative corpus does:
-the modules under tests/diff/src/modules/ are there to be imported and are never run as programs of
-their own.
-
-A program may start with two header lines, each at most once and in either order, and both runs
-follow them. `// env: NAME=value ...` runs it in the runner's environment with those variables set,
-an empty value included; colors.ts sets FORCE_COLOR that way, which is the one way to see colors
-through a pipe. `// args: a b ...` passes those arguments after the program, split on whitespace
-with no quoting; process-argv.ts reads them.
+The diff mode: every program in tests/diff/src must print what Node prints, byte for byte, with
+nothing normalized on the way, neither line endings nor encoding, because a difference in either is
+exactly the kind of thing this test exists to find. docs/development.md#differential-tests has the
+layout of tests/diff, the gate and the two header lines.
 */
 package main
 
-import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -54,32 +27,8 @@ TSC_INSTALL :: "npm ci --prefix " + DIFF_PROJECT
 // pin Node 24, which runs a .ts file with no flags and is what makes it a reference at all.
 NODE :: "node"
 
-// A death by signal and an exit read the same on POSIX: os.Process_State puts the signal's number
-// where the code goes and clears success for both, and on Windows a crash is an NTSTATUS for a
-// code. So the code is all there is to compare, and a corpus program keeps its own code above
-// every signal number, where a crash can never pass for the right answer.
-SIGNAL_MAX :: 64
-
-// diff reports every mismatch instead of stopping at the first, so that one CI log shows all of
-// them.
-diff :: proc(sanitizer: link.Sanitizer) -> (passed: bool) {
-	compiler := compiler_path("diff") or_return
-	names := corpus_names(.diff, DIFF_CORPUS) or_return
-	gate(.diff) or_return
-	dist := dist_directory(.diff) or_return
-
-	passed = true
-	for name in names {
-		if !diff_program(compiler, dist, name, sanitizer) {
-			passed = false
-		}
-	}
-	if passed {
-		fmt.printfln("diff: ok (%d programs, %d builds)", len(names), len(names) * len(LEVELS))
-	}
-	return passed
-}
-
+// gate is a precondition rather than a test of its own: a program that does not type-check is a
+// broken corpus, and tsc names every file and line it objects to, so one run shows all of them.
 gate :: proc(mode: Mode) -> (ok: bool) {
 	if !os.is_file(TSC) {
 		fmt.eprintfln("%v: %s is missing", mode, TSC)
@@ -91,16 +40,9 @@ gate :: proc(mode: Mode) -> (ok: bool) {
 		return false
 	}
 
-	state, stdout, stderr, err := os.process_exec(
-		{command = {NODE, TSC, "--noEmit", "--strict", "-p", DIFF_PROJECT}},
-		context.temp_allocator,
-	)
-	if err != nil {
-		fmt.eprintfln("%v: gate: run %s: %v", mode, NODE, err)
-		fmt.eprintln("the corpus needs Node 24: it runs the reference and hosts the gate")
-		return false
-	}
-	if state.exit_code == 0 {
+	command := []string{NODE, TSC, "--noEmit", "--strict", "-p", DIFF_PROJECT}
+	output := execute(mode, DIFF_PROJECT, "the gate", command) or_return
+	if output.code == 0 {
 		return true
 	}
 
@@ -110,25 +52,22 @@ gate :: proc(mode: Mode) -> (ok: bool) {
 		DIFF_PROJECT,
 	)
 	// tsc writes its diagnostics to stdout; stderr carries whatever stopped it from starting.
-	fmt.eprint(string(stdout))
-	fmt.eprint(string(stderr))
+	fmt.eprint(output.stdout)
+	fmt.eprint(output.stderr)
 	return false
 }
 
-@(private = "file")
-diff_program :: proc(compiler, dist, name: string, sanitizer: link.Sanitizer) -> (ok: bool) {
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-
-	path := fmt.tprintf("%s/%s", DIFF_CORPUS, name)
+diff_program :: proc(compiler, dist, path: string, sanitizer: link.Sanitizer) -> (ok: bool) {
 	header := read_header(path) or_return
 	node := slice.concatenate([][]string{{NODE, path}, header.arguments}, context.temp_allocator)
 	want := execute(.diff, path, "node", node, header.environment) or_return
-	if want.code >= 1 && want.code <= SIGNAL_MAX {
+	if want.code != 0 && !own_exit_code(want.code) {
 		fmt.eprintfln(
-			"diff: %s: exit code %d is also a signal's number; a corpus program exits with 0 or %d..125",
+			"diff: %s: exit code %d: a corpus program exits with 0 or %d..%d",
 			path,
 			want.code,
 			SIGNAL_MAX + 1,
+			EXIT_MAX,
 		)
 		return false
 	}
@@ -164,10 +103,9 @@ read_header :: proc(path: string) -> (header: Header, ok: bool) {
 	// and the two runs could still agree; such a line is refused rather than read as prose.
 	settings: []string
 	has_env, has_args: bool
-	text := string(data)
-	for line in strings.split_lines_iterator(&text) {
+	for line in header_lines(string(data)) {
 		if !names_header(line) {
-			break
+			continue
 		}
 		well_formed := false
 		switch {
@@ -198,10 +136,11 @@ read_header :: proc(path: string) -> (header: Header, ok: bool) {
 // after the slashes, however it is spaced; read_header takes only the one spelling.
 @(private = "file")
 names_header :: proc(line: string) -> bool {
-	if !strings.has_prefix(line, "//") {
+	trimmed := strings.trim_space(line)
+	if !strings.has_prefix(trimmed, "//") {
 		return false
 	}
-	rest := strings.trim_left_space(line[2:])
+	rest := strings.trim_left_space(trimmed[2:])
 	return strings.has_prefix(rest, "env:") || strings.has_prefix(rest, "args:")
 }
 

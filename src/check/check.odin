@@ -17,8 +17,9 @@ signature it settled on, once the overload was picked and the type variables wor
 
 Order: a declaration is typed once, the first time anything asks for it, and the answer is cached by
 symbol. The walk over the statements asks for the same thing, so a name used above its declaration
-and a name never used at all both get the same work done exactly once. That is also why the body of
-a function is read where its type is worked out, and not where the walk reaches it.
+and a name never used at all both get the same work done exactly once. The body of a function whose
+result is inferred is read where its type is worked out, and not where the walk reaches it; a body
+or an initializer whose type is written out waits until no search is open (resolve.odin).
 
 Types: every type is interned in the table of this call, so a Type_ID is meaningful only together
 with Check_Result.types. See types.odin.
@@ -110,11 +111,12 @@ check :: proc(
 		in_partition = make([]bool, len(prog.files), context.temp_allocator),
 		facts        = make([]Facts, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
-		resolving    = make(map[Symbol_Ref]bool, context.temp_allocator),
-		path         = make([dynamic]Symbol_Ref, context.temp_allocator),
+		search       = make_search(context.temp_allocator),
+		alias_loops  = make([dynamic]Symbol_Ref, context.temp_allocator),
+		deferred     = make([dynamic]Deferred, context.temp_allocator),
 		bindings     = make(map[Decl_Ref]Type_ID, context.temp_allocator),
-		aliases      = make(map[Decl_Ref]bool, context.temp_allocator),
-		alias_path   = make([dynamic]Alias_Step, context.temp_allocator),
+		muted        = make([dynamic]source.Span, context.temp_allocator),
+		pending      = make([dynamic]Pending, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
 		widenings    = make([dynamic]Widening, context.temp_allocator),
 		narrowing    = make_narrowing(context.temp_allocator),
@@ -155,19 +157,16 @@ Checker :: struct {
 	// belongs to this call alone, as the type table does: a Type_ID of one checker means nothing
 	// in another.
 	symbol_types: map[Symbol_Ref]Type_ID,
-	// The symbols whose type is being worked out right now. A declaration that needs its own type
-	// finds itself here, which is the only way that search could fail to end. path is the same, in
-	// entry order.
-	resolving:    map[Symbol_Ref]bool,
-	path:         [dynamic]Symbol_Ref,
-	// The type arguments in force while the members of a generic lib declaration are read: `T` of
+	search:       Search,
+	alias_loops:  [dynamic]Symbol_Ref, // the first member of each alias loop reported
+	deferred:     [dynamic]Deferred,
+	// The type arguments in force while the members of a generic declaration are read: `T` of
 	// `Array<T>` stands for `number` while `Array<number>` is built. Saved and restored around one
 	// instantiation, so a nested one cannot see the outer bindings.
 	bindings:     map[Decl_Ref]Type_ID,
-	// The type aliases being resolved right now. An alias is transparent, so one that names itself
-	// has nothing to stand for; an interface needs no guard, because its row is reserved first.
-	aliases:      map[Decl_Ref]bool,
-	alias_path:   [dynamic]Alias_Step, // aliases, in entry order
+	// The generic declarations being instantiated, inside whose spans report stays quiet.
+	muted:        [dynamic]source.Span,
+	pending:      [dynamic]Pending,
 	// The lib declarations check has to know by name rather than by use. Filled on first use.
 	lib:          Lib_Types,
 	trail:        Trail,
@@ -187,8 +186,8 @@ Place :: struct {
 	tree:            ^ast.File_AST,
 	bound:           ^bind.Bound_File,
 	// The fact tables of that file, which are Checker.facts of it. They are nil only while a
-	// generic lib declaration is being instantiated, where drop_facts_of_instance clears them so
-	// that the instance does not overwrite what the declaration itself recorded.
+	// generic declaration is being instantiated, where enter_instance clears them so that the
+	// instance does not overwrite what the declaration itself recorded.
 	node_types:      []Type_ID,
 	node_symbols:    []Symbol_Ref,
 	node_signatures: []Type_ID,
@@ -283,11 +282,13 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.facts, context.temp_allocator)
 	delete(c.in_partition, context.temp_allocator)
 	delete(c.symbol_types)
-	delete(c.resolving)
-	delete(c.path)
+	delete(c.search.frames)
+	delete(c.search.index)
+	delete(c.alias_loops)
+	delete(c.deferred)
 	delete(c.bindings)
-	delete(c.aliases)
-	delete(c.alias_path)
+	delete(c.muted)
+	delete(c.pending)
 	delete(c.trail)
 	delete(c.widenings)
 	delete(c.narrowing.answers)
@@ -296,9 +297,7 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.table.key.buf)
 }
 
-// set_type hands the type back so that a caller can end on it. The tables are nil only while a
-// generic lib declaration is being instantiated, and the fact is then dropped so that the instance
-// does not overwrite what the declaration recorded. See Place.
+// set_type hands the type back so that a caller can end on it. See Place for the tables it skips.
 @(private)
 set_type :: proc(c: ^Checker, id: ast.Node_ID, type: Type_ID) -> Type_ID {
 	if c.at.node_types != nil {
@@ -321,15 +320,25 @@ set_signature :: proc(c: ^Checker, id: ast.Node_ID, signature: Type_ID) {
 	}
 }
 
-// report drops arguments past diag.MAX_ARGS: a text that needs more than the registry holds is a
-// text to rewrite.
-//
-// A diagnostic about a file outside this partition is dropped. A checker reads such a file to learn
+@(private)
+report :: proc(c: ^Checker, code: diag.Code, span: source.Span, args: ..string) {
+	for muted in c.muted {
+		if span.file == muted.file && muted.start <= span.start && span.end <= muted.end {
+			return
+		}
+	}
+	emit(c, code, span, ..args)
+}
+
+// emit drops a diagnostic about a file outside this partition. A checker reads such a file to learn
 // the type of a name used in its own, and would otherwise report what it finds there, which the
 // checker that owns the file reports as well. Since every file belongs to exactly one partition,
 // dropping it here is what makes one partition and any other split give the same diagnostics.
+//
+// It drops arguments past diag.MAX_ARGS: a text that needs more than the registry holds is a text
+// to rewrite.
 @(private)
-report :: proc(c: ^Checker, code: diag.Code, span: source.Span, args: ..string) {
+emit :: proc(c: ^Checker, code: diag.Code, span: source.Span, args: ..string) {
 	if !c.in_partition[span.file] {
 		return
 	}

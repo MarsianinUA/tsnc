@@ -3,6 +3,7 @@ package opt_tests
 import "core:testing"
 
 import "../../src/ir"
+import "../harness"
 
 // tests/diff/src/stack-cells.ts runs the same shapes while the collector runs.
 
@@ -37,7 +38,7 @@ a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
 	`,
 	)
 	for name in ([?]string{"m1.area", "m1.passed", "m1.walked"}) {
-		body := func_named(result.output, name)
+		body := harness.func_named(t, result.output, name)
 		places := cell_places(body)
 		testing.expectf(t, places == {.Stack}, "%s: %v\n%s", name, places, result.after)
 	}
@@ -61,7 +62,7 @@ the_closure_of_a_loop_and_its_environment_go_on_the_stack :: proc(t: ^testing.T)
 		console.log(made(20));
 	`,
 	)
-	made := func_named(result.output, "m1.made")
+	made := harness.func_named(t, result.output, "m1.made")
 	_, closures := instructions_of(made, ir.Make_Closure)
 	if !testing.expectf(t, len(closures) == 1, "%s", result.after) {
 		return
@@ -110,7 +111,7 @@ a_cell_a_reference_to_which_may_leave_stays_on_the_heap :: proc(t: ^testing.T) {
 	`,
 	)
 	for name in ([?]string{"m1.made", "m1.stored", "m1.pushed", "m1.logged", "m1.saved"}) {
-		body := func_named(result.output, name)
+		body := harness.func_named(t, result.output, name)
 		places := cell_places(body)
 		testing.expectf(t, places == {.Heap}, "%s: %v\n%s", name, places, result.after)
 	}
@@ -134,7 +135,7 @@ a_cell_a_closure_hands_back_out_of_its_environment_stays_on_the_heap :: proc(t: 
 		console.log(handed());
 	`,
 	)
-	handed := func_named(result.output, "m1.handed")
+	handed := harness.func_named(t, result.output, "m1.handed")
 	_, allocs := instructions_of(handed, ir.Alloc)
 	testing.expectf(t, len(allocs) == 2, "%s", result.after)
 	for alloc in allocs {
@@ -173,7 +174,7 @@ a_cell_of_an_inner_loop_stored_into_one_of_an_outer_loop_stays_on_the_heap :: pr
 		console.log(nest());
 	`,
 	)
-	nest := func_named(result.output, "m1.nest")
+	nest := harness.func_named(t, result.output, "m1.nest")
 	_, allocs := instructions_of(nest, ir.Alloc)
 	testing.expectf(t, len(allocs) == 2, "%s", result.after)
 	for alloc in allocs {

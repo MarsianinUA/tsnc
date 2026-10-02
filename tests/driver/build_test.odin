@@ -231,6 +231,41 @@ the_cells_generated_code_takes_are_counted_and_collected :: proc(t: ^testing.T) 
 	testing.expectf(t, collections > 0, "%s", stats)
 }
 
+// The runtime borrows the program's table of one-unit strings (abi.ASCII_CELLS_SYMBOL), so a split
+// into single units takes cells for its arrays only, far fewer than its 8000 pieces.
+@(test)
+a_one_unit_piece_takes_no_cell :: proc(t: ^testing.T) {
+	built := build_project(build_options("ascii", "main.ts", "driver-ascii.exe"))
+	defer driver.destroy(&built.report.check)
+	if !expect_built(t, built) {
+		return
+	}
+
+	environment, _ := os.environ(context.temp_allocator)
+	env := make([dynamic]string, 0, len(environment) + 1, context.temp_allocator)
+	append(&env, ..environment)
+	append(&env, "TSNC_GC_STATS=1")
+	state, stdout, stderr, run_err := os.process_exec(
+		{command = {built.report.output}, env = env[:]},
+		context.allocator,
+	)
+	defer delete(stdout)
+	defer delete(stderr)
+	if !testing.expectf(t, run_err == nil, "run %s: %v", built.report.output, run_err) {
+		return
+	}
+	testing.expect_value(t, string(stdout), "8000\n")
+	testing.expect_value(t, state.exit_code, 0)
+	fields := strings.fields(string(stderr), context.temp_allocator)
+	cells := -1
+	for field, i in fields {
+		if field == "cells," && i > 0 {
+			cells = strconv.atoi(fields[i - 1])
+		}
+	}
+	testing.expectf(t, 0 <= cells && cells < 8000, "%s", string(stderr))
+}
+
 // driver.run itself. The fixture prints nothing, so inherited stdio leaves the test log alone and
 // the exit code is the whole answer.
 @(test)

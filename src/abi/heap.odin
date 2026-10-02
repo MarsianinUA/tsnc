@@ -79,14 +79,13 @@ Free_Slot :: struct {
 // Heap_Head is the part of the GC heap generated code allocates from, through the pointer
 // HEAP_SYMBOL hands it. A cell of `size` bytes, at most MAX_SMALL, takes the slot at
 // free[class_of(size)] when there is one and used + CLASS_SIZE[class] stays within limit: free
-// takes the slot's next, used and allocated grow by the class size, cells by one, then the first
+// takes the slot's next, used grows by the class size and cells by one, then the first
 // max(size, size_of(Free_Slot)) bytes are zeroed and the header names the table. Anything else
 // goes to Runtime_Proc.Alloc, which may collect. The runtime keeps limit at 0 where every
 // allocation has to reach it.
 Heap_Head :: struct {
-	free:      [CLASS_COUNT]^Free_Slot,
-	used:      int, // bytes of the slots and runs that hold cells
-	limit:     int,
-	cells:     int,
-	allocated: int, // bytes of the slots and runs handed out, as used counts them
+	free:  [CLASS_COUNT]^Free_Slot,
+	used:  int, // bytes of the slots and runs that hold cells
+	limit: int,
+	cells: int,
 }

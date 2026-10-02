@@ -3,6 +3,7 @@ package opt_tests
 import "core:testing"
 
 import "../../src/ir"
+import "../harness"
 
 // tests/diff/src/integers.ts shows that the narrowed programs print what Node prints.
 
@@ -19,7 +20,7 @@ a_counter_bounded_by_a_constant_global_is_i32 :: proc(t: ^testing.T) {
 		console.log(total);
 	`,
 	)
-	init := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	phi, step, found := counter(init)
 	if !testing.expectf(t, found, "%s", result.after) {
 		return
@@ -49,7 +50,7 @@ a_counter_below_a_length_is_i64 :: proc(t: ^testing.T) {
 		console.log(sum);
 	`,
 	)
-	init := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	phi, _, found := counter(init)
 	testing.expectf(t, found && init.values[phi].type == ir.I64, "%s", result.after)
 }
@@ -72,7 +73,7 @@ what_no_bound_holds_stays_f64 :: proc(t: ^testing.T) {
 		console.log(collatz(27));
 	`,
 	)
-	collatz := func_named(result.output, "m1.collatz")
+	collatz := harness.func_named(t, result.output, "m1.collatz")
 	phi, _, found := counter(collatz)
 	testing.expectf(t, found && collatz.values[phi].type == ir.F64, "%s", result.after)
 	_, products := instructions_of(collatz, ir.Binary)
@@ -93,7 +94,7 @@ a_value_past_2_to_the_53_stays_f64 :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	init := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	phi, _, found := counter(init)
 	testing.expectf(t, found && init.values[phi].type == ir.F64, "%s", result.after)
 }
@@ -105,7 +106,7 @@ a_negation_that_may_be_minus_zero_stays_f64 :: proc(t: ^testing.T) {
 			console.log(-i);
 		}
 	`)
-	init := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	phi, _, _ := counter(init)
 	ids, unaries := instructions_of(init, ir.Unary)
 	negated := false
@@ -133,7 +134,7 @@ a_remainder_is_an_integer_only_of_a_dividend_that_is_never_negative :: proc(t: ^
 		console.log(sum);
 	`,
 	)
-	init := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	ids, binaries := instructions_of(init, ir.Binary)
 	kinds: bit_set[ir.Type_Kind]
 	for binary, i in binaries {
@@ -159,7 +160,7 @@ a_bitwise_result_feeds_the_next_bitwise_operator_as_it_is :: proc(t: ^testing.T)
 		console.log(mix(7, 2));
 	`,
 	)
-	mix := func_named(result.output, "m1.mix")
+	mix := harness.func_named(t, result.output, "m1.mix")
 	ids, binaries := instructions_of(mix, ir.Binary)
 	anded := false
 	for binary, i in binaries {
@@ -188,7 +189,7 @@ a_global_the_program_keeps_below_2_to_the_31_is_an_integer :: proc(t: ^testing.T
 		console.log(next(), next());
 	`,
 	)
-	next := func_named(result.output, "m1.next")
+	next := harness.func_named(t, result.output, "m1.next")
 	ids, binaries := instructions_of(next, ir.Binary)
 	found := false
 	for binary, i in binaries {
@@ -220,7 +221,7 @@ only_a_parameter_of_a_function_called_directly_narrows :: proc(t: ^testing.T) {
 			name: string,
 			want: ir.Type,
 		}{{"m1.direct", ir.I32}, {"m1.held", ir.F64}}) {
-		body := func_named(result.output, c.name)
+		body := harness.func_named(t, result.output, c.name)
 		ids, binaries := instructions_of(body, ir.Binary)
 		testing.expectf(t, body.values[ids[0]].type == c.want, "%s:\n%s", c.name, result.after)
 		// A parameter arrives as F64 and is read as an integer through a conversion.
