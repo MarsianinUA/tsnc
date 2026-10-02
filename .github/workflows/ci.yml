@@ -3,10 +3,13 @@
 # built with AddressSanitizer.
 name: CI
 
+# A change to the docs alone starts no run: nothing in them is built or tested.
 on:
   push:
     branches: [main, dev]
+    paths-ignore: [docs/**, "**.md", .claude/**]
   pull_request:
+    paths-ignore: [docs/**, "**.md", .claude/**]
   workflow_dispatch:
 
 concurrency:
@@ -88,33 +91,22 @@ jobs:
       - name: Benchmark runner
         run: odin check bench/runner -vet -strict-style
 
-      # Every test package: tests/<package> and tests/runtime/<package>. A failing package does not
-      # stop the others, so one log shows every failure.
+      # Built once for every step below. Each mode runs its programs on as many threads as the runner
+      # has cores and reports every failure, so one log shows all of them.
+      - name: Runner
+        run: odin build tests/runner -out:dist/runner.exe -vet -strict-style
+
+      # `odin test` on every package: tests/<package> and tests/runtime/<package>.
       - name: Unit tests
-        run: |
-          shopt -s nullglob
-          failed=()
-          for dir in tests/*/ tests/*/*/; do
-            dir=${dir%/}
-            files=("$dir"/*_test.odin)
-            [ ${#files[@]} -gt 0 ] || continue
-            name=${dir#tests/}
-            echo "::group::odin test $dir"
-            odin test "$dir" -out:"dist/${name//\//-}-tests.exe" -vet -strict-style || failed+=("$dir")
-            echo "::endgroup::"
-          done
-          if [ ${#failed[@]} -gt 0 ]; then
-            echo "::error::odin test failed: ${failed[*]}"
-            exit 1
-          fi
+        run: dist/runner.exe unit
 
       - name: Smoke
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- smoke
+        run: dist/runner.exe smoke
 
       # Runs `dist/tsnc.exe build` from the Compiler step over tests/negative/, so it needs no
       # build of its own: a program with a diagnostic never gets as far as linking.
       - name: Negative
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- negative
+        run: dist/runner.exe negative
 
       # Node is the reference of the differential corpus and hosts its tsc gate (requirements 10).
       # The version is pinned rather than taken from the image: type stripping, which is what lets
@@ -130,29 +122,18 @@ jobs:
         working-directory: tests/diff
 
       # Builds and runs every program in tests/diff/src/, so it needs both the compiler and the runtime
-      # object of the steps above.
+      # object of the steps above. Each build runs twice, the second time with the collector in
+      # stress mode (docs/development.md): every allocation collects first and checks the heap
+      # after, so a cell generated code still needs, kept where the collector does not look, fails
+      # the run instead of a program much later.
       - name: Diff
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
+        run: dist/runner.exe diff
 
       # The runtime failures of requirements 3.8, which Node cannot be the reference for: every
       # program in tests/expect/ is compared with the output its header states. It needs what Diff
       # needs, the gate included.
       - name: Expect
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
-
-      # The same corpus with the collector in stress mode (docs/development.md), which the compiled
-      # programs inherit from the runner: every allocation collects first and checks the heap
-      # after, so a cell generated code still needs, kept where the collector does not look, fails
-      # the run instead of a program much later.
-      - name: Diff under GC stress
-        env:
-          TSNC_GC_STRESS: "1"
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff
-
-      - name: Expect under GC stress
-        env:
-          TSNC_GC_STRESS: "1"
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect
+        run: dist/runner.exe expect
 
       # Under ASan the collector poisons the heap a program may not touch: slot slack, freed cells
       # past their free list link, page tails and free pages (src/runtime/gc/heap.odin). The test
@@ -171,15 +152,12 @@ jobs:
           ASAN_OPTIONS: detect_stack_use_after_return=0
         run: odin test tests/runtime/gc -out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address -define:TSNC_EXPECT_ASAN=true
 
-      # Stress mode as well: every allocation collects, so each freed cell is poisoned right away.
+      # The runner runs an ASan build under stress alone: every allocation collects, so each freed
+      # cell is poisoned right away.
       - name: Diff under ASan
         if: runner.os != 'macOS'
-        env:
-          TSNC_GC_STRESS: "1"
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- diff -sanitize:address
+        run: dist/runner.exe diff -sanitize:address
 
       - name: Expect under ASan
         if: runner.os != 'macOS'
-        env:
-          TSNC_GC_STRESS: "1"
-        run: odin run tests/runner -out:dist/runner.exe -vet -strict-style -- expect -sanitize:address
+        run: dist/runner.exe expect -sanitize:address

@@ -45,28 +45,16 @@ step "table generators" sh -c 'odin check src/runtime/str/tools -vet -strict-sty
 	odin check src/runtime/console/tools -vet -strict-style'
 step "benchmark runner" odin check bench/runner -vet -strict-style
 
-shopt -s nullglob
-for dir in tests/*/ tests/*/*/; do
-	dir=${dir%/}
-	files=("$dir"/*_test.odin)
-	[ ${#files[@]} -gt 0 ] || continue
-	name=${dir#tests/}
-	step "$name" odin test "$dir" -out:"dist/${name//\//-}-tests.exe" -vet -strict-style
-done
-
-[ -d tests/diff/node_modules ] || step "npm ci" npm ci --prefix tests/diff
 step "runner" odin build tests/runner -out:dist/runner.exe -vet -strict-style
-for mode in smoke negative diff expect; do
+[ -d tests/diff/node_modules ] || step "npm ci" npm ci --prefix tests/diff
+for mode in unit smoke negative diff expect; do
 	step "$mode" dist/runner.exe $mode
-done
-for mode in diff expect; do
-	step "$mode under GC stress" env TSNC_GC_STRESS=1 dist/runner.exe $mode
 done
 if [ $asan = yes ]; then
 	step "gc under ASan" env ASAN_OPTIONS=detect_stack_use_after_return=0 odin test tests/runtime/gc \
 		-out:dist/runtime-gc-asan-tests.exe -vet -strict-style -sanitize:address -define:TSNC_EXPECT_ASAN=true
 	for mode in diff expect; do
-		step "$mode under ASan" env TSNC_GC_STRESS=1 dist/runner.exe $mode -sanitize:address
+		step "$mode under ASan" dist/runner.exe $mode -sanitize:address
 	done
 fi
 
