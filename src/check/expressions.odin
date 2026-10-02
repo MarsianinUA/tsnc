@@ -900,7 +900,7 @@ check_mutable :: proc(c: ^Checker, target: ast.Node_ID) -> (writable: bool) {
 			return false
 		}
 		if c.at.node_types == nil {
-			return true // a generic lib declaration being instantiated records no facts
+			return true // a generic declaration being instantiated records no facts
 		}
 		field, found := field_of(c, c.at.node_types[v.object], v.name.text)
 		if found && field.readonly {
@@ -998,16 +998,8 @@ parameter_at :: proc(c: ^Checker, function: Function, index: int) -> Type_ID {
 // variable and the body delivers it. A type variable is exactly what a call reads back out of the
 // body, so `map<U>` and `reduce<U>` keep inferring; everything else reads better with the context,
 // because `r => ({ kind: "circle", r: r })` has to keep `kind` a literal.
-//
-// declaration is the node this arrow is the initializer of, when there is one. The signature lands
-// there before the body goes in, so that a call to the name inside the body finds it.
 @(private)
-check_arrow :: proc(
-	c: ^Checker,
-	node: ast.Arrow,
-	expected := ERROR,
-	declaration := ast.NO_NODE,
-) -> Type_ID {
+check_arrow :: proc(c: ^Checker, node: ast.Arrow, expected := ERROR) -> Type_ID {
 	contextual: Maybe(Function)
 	given := context_of(c, expected, .Function)
 	if signature, is_function := c.table.types[given].(Function); is_function {
@@ -1018,9 +1010,6 @@ check_arrow :: proc(
 	if node.return_type != ast.NO_NODE {
 		result := resolve_type(c, node.return_type)
 		type := function_type(&c.table, params, result, required, variadic)
-		if declaration != ast.NO_NODE {
-			set_type(c, declaration, type)
-		}
 		check_body(c, node.body, result, nil)
 		check_result_reached(c, node.body, node.return_type, result)
 		return type

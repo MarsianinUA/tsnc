@@ -18,7 +18,6 @@ package driver
 import "base:runtime"
 import "core:mem"
 import "core:mem/virtual"
-import "core:sync"
 import "core:thread"
 
 import "../check"
@@ -28,16 +27,10 @@ import "../source"
 
 Check_Task :: struct {
 	arena:       virtual.Arena, // holds the type table, the Typed_Files and the diagnostics
+	prog:        ^program.Program,
 	partition:   []source.File_ID,
 	result:      check.Check_Result,
 	diagnostics: []diag.Diagnostic,
-}
-
-// Checks is the Wave of check.
-Checks :: struct {
-	tasks: []^Check_Task,
-	prog:  ^program.Program,
-	done:  sync.Wait_Group,
 }
 
 // Measured over the test corpora: a checker takes about 5 KB, plus 94 bytes per node at the median
@@ -47,9 +40,9 @@ CHECK_ARENA_MINIMUM :: 64 * mem.Kilobyte
 
 // run_check_task leaves a result that borrows the names and the texts of the trees, so it lives
 // exactly as long as the rest of the build.
-run_check_task :: proc(task: ^Check_Task, prog: ^program.Program) {
+run_check_task :: proc(task: ^Check_Task) {
 	allocator := virtual.arena_allocator(&task.arena)
-	task.result, task.diagnostics = check.check(prog, task.partition, allocator)
+	task.result, task.diagnostics = check.check(task.prog, task.partition, allocator)
 }
 
 // partitions leaves every later partition at least one file.
@@ -59,7 +52,7 @@ partitions :: proc(
 	allocator: runtime.Allocator,
 ) -> [][]source.File_ID {
 	sources := len(prog.files) - 1
-	count := clamp(jobs, 1, max(sources, 1))
+	count := min(jobs, max(sources, 1))
 	files := make([]source.File_ID, sources, allocator)
 	total := 0
 	for i in 0 ..< sources {
@@ -102,32 +95,18 @@ run_checkers :: proc(
 		}
 		task := new(Check_Task, c.memory.allocator) or_return
 		append(&c.memory.checks, task)
+		task.prog = prog
 		task.partition = partition
 		reserved := max(uint(nodes) * CHECK_ARENA_PER_NODE, CHECK_ARENA_MINIMUM)
 		virtual.arena_init_growing(&task.arena, reserved) or_return
 	}
 
-	checks := Checks {
-		tasks = c.memory.checks[:],
-		prog  = prog,
-	}
-	sync.wait_group_add(&checks.done, len(checks.tasks))
-	for task, i in checks.tasks {
-		thread.pool_add_task(pool, virtual.arena_allocator(&task.arena), check_in_pool, &checks, i)
-	}
-	sync.wait_group_wait(&checks.done)
+	fork_join(pool, c.memory.checks[:], run_check_task)
 
-	results = make([]check.Check_Result, len(checks.tasks), c.arena)
-	for task, i in checks.tasks {
+	results = make([]check.Check_Result, len(c.memory.checks), c.arena)
+	for task, i in c.memory.checks {
 		results[i] = task.result
 		append(&c.diagnostics, ..task.diagnostics)
 	}
 	return results, nil
-}
-
-check_in_pool :: proc(task: thread.Task) {
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	checks := (^Checks)(task.data)
-	run_check_task(checks.tasks[task.user_index], checks.prog)
-	sync.wait_group_done(&checks.done)
 }

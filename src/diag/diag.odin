@@ -38,7 +38,7 @@ Diagnostic :: struct {
 
 // sort keys on every field: the checkers of a split program find diagnostics in any order.
 sort :: proc(diagnostics: []Diagnostic) {
-	slice.stable_sort_by(diagnostics, prints_before)
+	slice.sort_by(diagnostics, prints_before)
 }
 
 render :: proc(w: io.Writer, files: []source.File, d: Diagnostic) -> io.Error {

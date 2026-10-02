@@ -116,7 +116,7 @@ check_sources :: proc(
 }
 
 // every_source is the partition of a whole program: every file but the lib, which is module zero
-// and is read rather than typed, exactly as driver's source_partition passes it.
+// and is read rather than typed, as driver's partitions leave it.
 every_source :: proc(count: int) -> []source.File_ID {
 	partition := make([]source.File_ID, count, context.temp_allocator)
 	for i in 0 ..< count {
@@ -217,8 +217,6 @@ expect_checked :: proc(t: ^testing.T, text: string, loc := #caller_location) -> 
 	testing.expectf(t, len(c.errors) == 0, "%q: %v", text, c.errors, loc = loc)
 	return c
 }
-
-// Reading the result.
 
 // declared_text is the type check gave the declaration of that name, printed. It is what a test
 // about inference asks for.

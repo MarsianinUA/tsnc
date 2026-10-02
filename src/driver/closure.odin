@@ -174,7 +174,7 @@ resolve_request :: proc(c: ^Closure, request: Request) {
 	importer := c.absolute[request.file]
 	absolute := resolve_against(importer, name, c.arena)
 	// Before the key: on Windows and macOS the folded key would find the file this spelling missed.
-	if on_disk, differs := case_on_disk(c, importer, absolute); differs {
+	if on_disk, differs := case_on_disk(c, specifier, absolute); differs {
 		report(c, .Path_Case_Mismatch, request.span, specifier, on_disk)
 		return
 	}
@@ -219,24 +219,33 @@ resolve_request :: proc(c: ^Closure, request: Request) {
 	record_edge(c, request, id)
 }
 
-// case_on_disk answers the first name on disk that the path spells in another case. It checks only
-// what the specifier spells past the importer's directory: that directory was checked when the
-// importer was imported, or it came from the command line, which is not part of the program. A
-// name missing in every case is left to the read, which reports the module as not found.
-case_on_disk :: proc(c: ^Closure, importer, absolute: string) -> (on_disk: string, differs: bool) {
-	start := 0
-	base := display_of(os.dir(importer), c.arena)
-	for {
-		end := strings.index_byte(absolute[start:], '/')
-		if end < 0 {
-			break
+// case_on_disk answers the first name on disk that the path spells in another case. It checks the
+// names the specifier spells below the highest directory its `..` reach: the directories above
+// were checked when the importer was imported, or came from the command line, which is not part of
+// the program. A name missing in every case is left to the read, which reports the module as not
+// found.
+case_on_disk :: proc(
+	c: ^Closure,
+	specifier, absolute: string,
+) -> (
+	on_disk: string,
+	differs: bool,
+) {
+	depth, lowest := 0, 0
+	parts := specifier
+	for part in strings.split_iterator(&parts, "/") {
+		switch part {
+		case "", ".":
+		case "..":
+			depth -= 1
+			lowest = min(lowest, depth)
+		case:
+			depth += 1
 		}
-		base_name: string
-		base_name, base = cut_first(base)
-		if absolute[start:][:end] != base_name {
-			break
-		}
-		start += end + 1
+	}
+	start := len(absolute) + 1
+	for _ in 0 ..< depth - lowest {
+		start = strings.last_index_byte(absolute[:start - 1], '/') + 1
 	}
 
 	for start < len(absolute) {
@@ -259,15 +268,6 @@ case_on_disk :: proc(c: ^Closure, importer, absolute: string) -> (on_disk: strin
 		start += end + 1
 	}
 	return "", false
-}
-
-// cut_first splits a slashed path after its first name: "/p/q" gives "" and "p/q".
-cut_first :: proc(path: string) -> (first, rest: string) {
-	slash := strings.index_byte(path, '/')
-	if slash < 0 {
-		return path, ""
-	}
-	return path[:slash], path[slash + 1:]
 }
 
 // listing reads a directory once per build. One that cannot be read lists nothing, and the read of

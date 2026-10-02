@@ -78,6 +78,23 @@ both_import_spellings_reach_one_file :: proc(t: ^testing.T) {
 	)
 }
 
+// The entry path is spelled `APP` where the disk has `app`. The command line is not part of the
+// program, but a specifier that climbs back into that directory spells its name itself.
+@(test)
+a_specifier_spells_the_directories_it_climbs_back_into :: proc(t: ^testing.T) {
+	when ODIN_OS == .Windows || ODIN_OS == .Darwin {
+		c := check_project("case", "APP/main.ts")
+		defer driver.destroy(&c.report)
+
+		testing.expectf(
+			t,
+			slice.equal(c.errors, []Error{{"main.ts", .Path_Case_Mismatch, 2, 21}}),
+			"errors %v",
+			c.errors,
+		)
+	}
+}
+
 @(test)
 a_missing_module_is_reported_at_every_import :: proc(t: ^testing.T) {
 	c := check_project("missing", "main.ts")

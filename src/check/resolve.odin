@@ -1,9 +1,13 @@
 package check
 
+import "base:runtime"
+import "core:slice"
+
 import "../ast"
 import "../bind"
 import "../diag"
 import "../program"
+import "../source"
 
 @(private)
 resolve_type :: proc(c: ^Checker, id: ast.Node_ID) -> Type_ID {
@@ -147,12 +151,41 @@ resolve_name :: proc(
 	return {}
 }
 
-// type_of_symbol has no answer for a declaration that needs its own type to answer, and the
-// annotation has to say instead.
-//
-// A name read inside a function body is a different matter: the body runs later, so the declaration
-// may well have its type by then. The node holds it as soon as it is known without the body, which
-// is what makes a recursive arrow with a return type work.
+// Search is Tarjan's walk over the declarations whose types are being worked out: the values of
+// type_of_symbol and the aliases of alias_type. A declaration that needs its own type, through any
+// number of others, closes a loop, and the loop is a strongly connected component of the walk: the
+// same declarations whichever of them a checker asks for first. That is what gives one report per
+// loop and the same types under every split of the program.
+@(private)
+Search :: struct {
+	frames:  [dynamic]Frame, // Tarjan's stack
+	index:   map[Symbol_Ref]int, // the frame of a declaration still on the stack
+	current: int, // the frame whose declaration is being read, -1 between searches
+}
+
+@(private)
+Frame :: struct {
+	ref:      Symbol_Ref,
+	low:      int, // the lowest frame this one reaches
+	looped:   bool, // asked for again while on the stack
+	recorded: Type_ID, // the type a declarator records before its initializer is read, or ERROR
+	instance: bool, // an alias read with type arguments, which no cache holds
+}
+
+@(private)
+make_search :: proc(allocator: runtime.Allocator) -> Search {
+	return {
+		frames = make([dynamic]Frame, allocator),
+		index = make(map[Symbol_Ref]int, allocator),
+		current = -1,
+	}
+}
+
+// type_of_symbol answers from the cache, or works the type out in a frame of the search. A
+// declaration asked for while its frame is on the stack answers what it recorded so far, ERROR if
+// nothing, and joins the loop. A local with a recorded type does not join: it is reached only
+// through the one body that declares it, in that body's order, while a module global may be
+// reached first from anywhere.
 @(private)
 type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 	if ref.symbol == bind.NO_SYMBOL {
@@ -161,79 +194,137 @@ type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 	if cached, found := c.symbol_types[ref]; found {
 		return cached
 	}
-
 	symbol := c.program.bound[ref.file].symbols[ref.symbol]
-	if _, found := c.resolving[ref]; found {
-		// Outside a body only an annotation records the type this early, and then a read of the
-		// name inside its own initializer is a use before the declaration (check_declared).
-		if type := recorded_declaration(c, ref, symbol); type != ERROR {
-			return type
+	if at, open := c.search.index[ref]; open {
+		recorded := c.search.frames[at].recorded
+		if recorded == ERROR || symbol.scope == bind.MODULE_SCOPE {
+			reached(c, at)
 		}
-		report_loop(c, ref)
-		return ERROR
+		return recorded
 	}
 
-	c.resolving[ref] = true
-	append(&c.path, ref)
+	at, outer := enter_frame(c, ref)
 	previous := move_to(c, ref.file)
-	type := declared_type(c, ref, symbol)
+	type := leave_frame(c, at, outer, declared_type(c, ref, symbol))
 	c.at = previous
-	pop(&c.path)
-	delete_key(&c.resolving, ref)
-
-	// A function whose result is annotated answers before its body is read, so that a call to
-	// itself inside that body finds the answer rather than the search still running.
-	if cached, found := c.symbol_types[ref]; found {
-		return cached
+	if outer < 0 {
+		check_deferred(c)
 	}
-	c.symbol_types[ref] = type
 	return type
 }
 
-// recorded_declaration is the type the declaring node already holds, while the search for it is
-// still running further out. It is there as soon as the type is known without reading a body: an
-// annotated declarator, and an arrow whose result is written out.
 @(private)
-recorded_declaration :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type_ID {
-	types := c.facts[ref.file].node_types
-	if types == nil || symbol.declaration == ast.NO_NODE {
-		return ERROR
-	}
-	return types[symbol.declaration]
+enter_frame :: proc(c: ^Checker, ref: Symbol_Ref, instance := false) -> (at, outer: int) {
+	at = len(c.search.frames)
+	append(&c.search.frames, Frame{ref = ref, low = at, recorded = ERROR, instance = instance})
+	c.search.index[ref] = at
+	outer = c.search.current
+	c.search.current = at
+	return at, outer
 }
 
-// report_loop reports the loop at the member declared first and gives every member the error type,
-// so checkers entering it at different members of a split program report and read it alike. A
-// member with its result written out is known already and keeps its type.
+// reached joins the frame being read to a declaration still on the stack: they are one loop.
+@(private)
+reached :: proc(c: ^Checker, at: int) {
+	frames := c.search.frames[:]
+	frames[at].looped = true
+	frames[c.search.current].low = min(frames[c.search.current].low, at)
+}
+
+// leave_frame answers the type of the declaration the frame was for. Any member but the root of its
+// component answers what it recorded, ERROR if nothing; the root closes the component.
+@(private)
+leave_frame :: proc(c: ^Checker, at, outer: int, type: Type_ID) -> Type_ID {
+	frames := c.search.frames[:]
+	c.search.current = outer
+	if outer >= 0 {
+		frames[outer].low = min(frames[outer].low, frames[at].low)
+	}
+	if frames[at].low != at {
+		return frames[at].recorded
+	}
+	return close_component(c, at, type)
+}
+
+// close_component pops the component the frame at `at` is the root of, and caches the type of every
+// member but an instance: its own where nothing looped. In a loop each member keeps what it
+// recorded, and those that recorded nothing take ERROR, with one diagnostic at the one declared
+// first. The answer is the root's.
+@(private)
+close_component :: proc(c: ^Checker, at: int, type: Type_ID) -> Type_ID {
+	members := c.search.frames[at:]
+	// Every member but the root joined the loop, so two members always are one.
+	looped := len(members) > 1 || members[0].looped
+	answer := members[0].recorded if looped else type
+	first := -1
+	for member, i in members {
+		delete_key(&c.search.index, member.ref)
+		final := member.recorded if looped else type
+		if looped &&
+		   final == ERROR &&
+		   (first < 0 || declared_before(c, member.ref, members[first].ref)) {
+			first = i
+		}
+		if !member.instance {
+			c.symbol_types[member.ref] = final
+		}
+	}
+	if first >= 0 {
+		report_loop(c, members[first].ref)
+	}
+	resize(&c.search.frames, at)
+	return answer
+}
+
+// report_loop puts an alias loop past the quiet of an instance (report): the loop is the same
+// whichever instance or plain read finds it first, and only one of them may be left to close it.
+// Each instance of a loop of generic aliases closes it again, so it is reported once.
 @(private)
 report_loop :: proc(c: ^Checker, ref: Symbol_Ref) {
-	start := len(c.path) - 1
-	for c.path[start] != ref {
-		start -= 1
+	symbol := c.program.bound[ref.file].symbols[ref.symbol]
+	if symbol.kind == .Type_Alias {
+		if !slice.contains(c.alias_loops[:], ref) {
+			append(&c.alias_loops, ref)
+			emit(c, .Circular_Type, symbol.name.span, symbol.name.text)
+		}
+		return
 	}
+	report(c, recursion_code(c, ref, symbol), symbol.name.span, symbol.name.text)
+}
 
-	first := ref
-	for member in c.path[start:] {
-		if waits_on_loop(c, member) && declared_before(c, member, first) {
-			first = member
-		}
-	}
-	for member in c.path[start:] {
-		if waits_on_loop(c, member) {
-			c.symbol_types[member] = ERROR
-		}
-	}
-	symbol := c.program.bound[first.file].symbols[first.symbol]
-	report(c, recursion_code(c, first, symbol), symbol.name.span, symbol.name.text)
+// Deferred is a body or an initializer whose type is written out, so nothing has to read it to type
+// its declaration. check_deferred reads it once no search is open, so every name it uses is settled
+// by then, in whatever order the declarations were met.
+@(private)
+Deferred :: struct {
+	file:       source.File_ID,
+	value:      ast.Node_ID, // a function body, or an initializer
+	result:     Type_ID,
+	annotation: ast.Node_ID, // the written result of a body; NO_NODE for an initializer
 }
 
 @(private)
-waits_on_loop :: proc(c: ^Checker, ref: Symbol_Ref) -> bool {
-	if _, known := c.symbol_types[ref]; known {
-		return false
+defer_check :: proc(c: ^Checker, value: ast.Node_ID, result: Type_ID, annotation := ast.NO_NODE) {
+	if value != ast.NO_NODE {
+		append(&c.deferred, Deferred{c.at.file, value, result, annotation})
 	}
-	symbol := c.program.bound[ref.file].symbols[ref.symbol]
-	return recorded_declaration(c, ref, symbol) == ERROR
+}
+
+// check_deferred may run again inside a body it reads, which then goes on with the next item: the
+// order of the items changes no answer, since every name they read is settled.
+@(private)
+check_deferred :: proc(c: ^Checker) {
+	for len(c.deferred) > 0 {
+		item := pop_front(&c.deferred)
+		previous := move_to(c, item.file)
+		if item.annotation != ast.NO_NODE {
+			check_body(c, item.value, item.result, nil)
+			check_result_reached(c, item.value, item.annotation, item.result)
+		} else {
+			check_initializer(c, item.value, item.result)
+		}
+		c.at = previous
+	}
 }
 
 @(private)
@@ -268,9 +359,9 @@ declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type
 	node := symbol.declaration
 	#partial switch v in c.at.tree.nodes[node].variant {
 	case ast.Declarator:
-		return declarator_type(c, node, v, symbol.kind)
+		return declarator_type(c, node, v, symbol)
 	case ast.Function_Decl:
-		return function_decl_type(c, ref, node, v)
+		return function_decl_type(c, node, v)
 	case ast.Param:
 		// A parameter takes its type when its function is typed, which always happens before
 		// anything in the body can name it.
@@ -282,30 +373,35 @@ declared_type :: proc(c: ^Checker, ref: Symbol_Ref, symbol: bind.Symbol) -> Type
 	return ERROR
 }
 
-// declarator_type checks the initializer while it is here. The walk over the statements comes
-// through here too, so this happens exactly once.
-//
-// The node holds its type before the initializer is read wherever the type is known without it, so
-// that a name used inside its own initializer's body finds the answer rather than the search still
-// running.
+// declarator_type checks the initializer while it is here, unless the declarator writes its type
+// and a read of the name cannot be narrowed by the initializer: then nothing needs the initializer
+// to type the name, and it waits for check_deferred. An initializer that adds to the flow of its
+// function never waits, since later reads are narrowed through it, and so a local's waits only when
+// it is an arrow. The walk over the statements comes through here too, so this happens exactly
+// once.
 @(private)
 declarator_type :: proc(
 	c: ^Checker,
 	id: ast.Node_ID,
 	node: ast.Declarator,
-	kind: bind.Symbol_Kind,
+	symbol: bind.Symbol,
 ) -> Type_ID {
+	arrow, is_arrow := c.at.tree.nodes[node.init].variant.(ast.Arrow)
 	if node.type != ast.NO_NODE {
 		declared := resolve_type(c, node.type)
 		set_type(c, id, declared)
-		if node.init != ast.NO_NODE {
-			value := check_expression(c, node.init, declared)
-			if !fits(c, value, declared) {
-				report_assign_failure(c, span_of(c, node.init), value, declared)
+		c.search.frames[c.search.current].recorded = declared
+		switch {
+		case node.init == ast.NO_NODE:
+			if symbol.kind == .Let && exported(c, id) && !fits(c, UNDEFINED, declared) {
+				// No walk sees across modules, so a write in another one cannot be looked for.
+				report(c, .Used_Before_Assigned, node.name.span, node.name.text)
 			}
-		} else if kind == .Let && exported(c, id) && !fits(c, UNDEFINED, declared) {
-			// No walk sees across modules, so a write in another one cannot be looked for at all.
-			report(c, .Used_Before_Assigned, node.name.span, node.name.text)
+		case !narrows(c, declared) &&
+		     (is_arrow || symbol.scope == bind.MODULE_SCOPE && !adds_flow(c, node.init)):
+			defer_check(c, node.init, declared)
+		case:
+			check_initializer(c, node.init, declared)
 		}
 		return declared
 	}
@@ -316,20 +412,62 @@ declarator_type :: proc(
 		return set_type(c, id, ERROR)
 	}
 
-	if arrow, is_arrow := c.at.tree.nodes[node.init].variant.(ast.Arrow); is_arrow {
-		if arrow.return_type != ast.NO_NODE && !is_open_arrow(c, node.init) {
-			// The signature is known without reading the body, so check_arrow records it on this
-			// declaration before it goes in. That is what lets an arrow call itself.
-			type := check_arrow(c, arrow, ERROR, id)
-			set_type(c, node.init, type)
-			return set_type(c, id, type)
-		}
+	if is_arrow && arrow.return_type != ast.NO_NODE && !is_open_arrow(c, node.init) {
+		type := written_signature(c, arrow.params, arrow.return_type, arrow.body)
+		set_type(c, node.init, type)
+		return set_type(c, id, type)
 	}
 
 	value := check_expression(c, node.init)
 	// A `const` keeps the literal type of its value, because the binding never takes another one.
 	// A `let` widens, because it can.
-	return set_type(c, id, value if kind == .Const else widen(&c.table, value))
+	return set_type(c, id, value if symbol.kind == .Const else widen(&c.table, value))
+}
+
+// adds_flow says whether an expression adds to the flow of its function, which a later read is
+// narrowed through: an assignment, or a branch of `&&`, `||`, `??` or `?:`. An arrow's body is a
+// flow of its own.
+@(private)
+adds_flow :: proc(c: ^Checker, root: ast.Node_ID) -> bool {
+	stack := make([dynamic]ast.Node_ID, context.temp_allocator)
+	append(&stack, root)
+	for {
+		popped := len(stack) - 1
+		id := ast.walk(c.at.tree.nodes, &stack) or_break
+		#partial switch v in c.at.tree.nodes[id].variant {
+		case ast.Assign, ast.Update, ast.Conditional:
+			return true
+		case ast.Binary:
+			if v.op == .And || v.op == .Or || v.op == .Coalesce {
+				return true
+			}
+		case ast.Arrow:
+			resize(&stack, popped)
+		}
+	}
+	return false
+}
+
+@(private)
+check_initializer :: proc(c: ^Checker, init: ast.Node_ID, declared: Type_ID) {
+	value := check_expression(c, init, declared)
+	if !fits(c, value, declared) {
+		report_assign_failure(c, span_of(c, init), value, declared)
+	}
+}
+
+// written_signature types a function whose result is written out, and leaves its body for
+// check_deferred: a caller needs the signature and nothing else.
+@(private)
+written_signature :: proc(
+	c: ^Checker,
+	params: []ast.Node_ID,
+	annotation, body: ast.Node_ID,
+) -> Type_ID {
+	types, required, variadic := resolve_params(c, params)
+	result := resolve_type(c, annotation)
+	defer_check(c, body, result, annotation)
+	return function_type(&c.table, types, result, required, variadic)
 }
 
 @(private)
@@ -346,29 +484,16 @@ exported :: proc(c: ^Checker, declaration: ast.Node_ID) -> bool {
 	return false
 }
 
-// function_decl_type reads the body while it is here. An annotated result is recorded before the
-// body, so that a call to the function inside its own body finds it. An inferred one is not known
-// until the body has been read, so a call to itself there has nothing to find, which is what
-// Recursive_Return_Type says.
+// function_decl_type reads the body while it is here when the result is inferred from it. A body
+// that calls the function itself then has nothing to find, which is what Recursive_Return_Type
+// says.
 @(private)
-function_decl_type :: proc(
-	c: ^Checker,
-	ref: Symbol_Ref,
-	id: ast.Node_ID,
-	node: ast.Function_Decl,
-) -> Type_ID {
-	params, required, variadic := resolve_params(c, node.params)
-
+function_decl_type :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Function_Decl) -> Type_ID {
 	if node.return_type != ast.NO_NODE {
-		result := resolve_type(c, node.return_type)
-		type := function_type(&c.table, params, result, required, variadic)
-		c.symbol_types[ref] = type
-		set_type(c, id, type)
-		check_body(c, node.body, result, nil)
-		check_result_reached(c, node.body, node.return_type, result)
-		return type
+		return set_type(c, id, written_signature(c, node.params, node.return_type, node.body))
 	}
 
+	params, required, variadic := resolve_params(c, node.params)
 	returns := make([dynamic]Type_ID, 0, 4, context.temp_allocator)
 	check_body(c, node.body, ERROR, &returns)
 	result := inferred_result(c, node.body, returns[:])

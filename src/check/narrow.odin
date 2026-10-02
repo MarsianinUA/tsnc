@@ -63,8 +63,7 @@ make_narrowing :: proc(allocator := context.allocator) -> Narrowing {
 // imported name.
 @(private)
 narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Type_ID {
-	_, is_union := c.table.types[declared].(Union)
-	if !is_union && declared != ANY && declared != UNKNOWN {
+	if !narrows(c, declared) {
 		return declared
 	}
 	flow := c.at.bound.node_flow[id]
@@ -82,6 +81,12 @@ narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Typ
 	// value report a field that the value does have. A reached `never` is the other thing, a union
 	// whose members the tests on the way here have all ruled out, and it is let through.
 	return answer.type if answer.reached else declared
+}
+
+@(private)
+narrows :: proc(c: ^Checker, declared: Type_ID) -> bool {
+	_, is_union := c.table.types[declared].(Union)
+	return is_union || declared == ANY || declared == UNKNOWN
 }
 
 // flow_type steps over the nodes that say nothing about this reference in a loop rather than by
