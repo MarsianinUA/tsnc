@@ -6,10 +6,11 @@ platform knowledge lives in one place. The package imports nothing, not even cor
 The link flags follow Odin dev-2026-09-nightly:a2fb372, so the program links the way Odin links
 the runtime object. On Windows Odin runs lld-link, and the flags are the output of
 `odin build -linker:lld -print-linker-flags` plus tsnc's own /Brepro, which stamps the executable
-with a hash of its content instead of the time, so one program always links to the same bytes. On
-Linux and macOS Odin, like Rust, runs the system C compiler as the linker driver, because only the
-C compiler knows where crt1.o, the dynamic loader and the SDK live on a given machine. There the
-flags are what `odin build -print-linker-flags` prints, in clang syntax, read from Odin's
+with a hash of its content instead of the time, so one program always links to the same bytes, and
+/STACK, which gives the main thread the 8 MiB stack Linux and macOS give it, where Windows gives
+1 MiB. On Linux and macOS Odin, like Rust, runs the system C compiler as the linker driver, because
+only the C compiler knows where crt1.o, the dynamic loader and the SDK live on a given machine.
+There the flags are what `odin build -print-linker-flags` prints, in clang syntax, read from Odin's
 src/linker.cpp.
 
 The table leaves out everything that depends on the machine: library search paths (/LIBPATH, -L,
@@ -78,6 +79,7 @@ SPECS := #partial [Target]Spec {
 			"/subsystem:CONSOLE",
 			"/machine:x64",
 			"/Brepro",
+			"/STACK:8388608",
 			"kernel32.lib",
 			"bcrypt.lib",
 		},
