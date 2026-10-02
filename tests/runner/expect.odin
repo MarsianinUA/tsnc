@@ -12,25 +12,24 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 
-import "../../src/link"
-
 // EXPECT_CORPUS is relative to the current directory, as the compiler path in runner.odin is: the
 // runner is started from the repository root.
 EXPECT_CORPUS :: "tests/expect"
 
-expect_program :: proc(compiler, dist, path: string, sanitizer: link.Sanitizer) -> (ok: bool) {
-	want := read_expectation(path) or_return
-	return compare_builds(.expect, compiler, dist, path, sanitizer, want)
+expect_program :: proc(job: Job, path: string) -> (count: int, ok: bool) {
+	want := read_expectation(job, path) or_return
+	environments := environments_for(job, path, nil) or_return
+	return 0, compare_builds(job, path, want, nil, environments)
 }
 
 @(private = "file")
-read_expectation :: proc(path: string) -> (want: Output, ok: bool) {
+read_expectation :: proc(job: Job, path: string) -> (want: Output, ok: bool) {
 	STDOUT :: "// stdout:"
 	STDERR :: "// stderr:"
 	EXIT :: "// exit: "
 	data, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
-		fmt.eprintfln("expect: read %s: %v", path, read_err)
+		fmt.sbprintfln(job.report, "expect: read %s: %v", path, read_err)
 		return {}, false
 	}
 
@@ -58,21 +57,28 @@ read_expectation :: proc(path: string) -> (want: Output, ok: bool) {
 			want.code, well_formed = parse_number(strings.trim_prefix(line, EXIT))
 			has_exit = true
 		case strings.has_prefix(key, "exit:"):
-			fmt.eprintfln("expect: %s: a second header line %q", path, line)
+			fmt.sbprintfln(job.report, "expect: %s: a second header line %q", path, line)
 			return {}, false
 		}
 		if !well_formed {
-			fmt.eprintfln("expect: %s: a header line %q is misspelled", path, line)
-			fmt.eprintfln("  the header reads: %s text, %s text, %s1", STDOUT, STDERR, EXIT)
+			fmt.sbprintfln(job.report, "expect: %s: a header line %q is misspelled", path, line)
+			fmt.sbprintfln(
+				job.report,
+				"  the header reads: %s text, %s text, %s1",
+				STDOUT,
+				STDERR,
+				EXIT,
+			)
 			return {}, false
 		}
 	}
 	if !has_exit {
-		fmt.eprintfln("expect: %s: the header names no exit code: %s1", path, EXIT)
+		fmt.sbprintfln(job.report, "expect: %s: the header names no exit code: %s1", path, EXIT)
 		return {}, false
 	}
 	if want.code > 1 && !own_exit_code(want.code) {
-		fmt.eprintfln(
+		fmt.sbprintfln(
+			job.report,
 			"expect: %s: exit code %d: a program exits with 0, 1 or %d..%d",
 			path,
 			want.code,

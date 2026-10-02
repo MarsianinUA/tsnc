@@ -11,8 +11,6 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 
-import "../../src/link"
-
 // DIFF_PROJECT and DIFF_CORPUS are relative to the current directory, as the compiler path in
 // runner.odin is: the runner is started from the repository root.
 DIFF_PROJECT :: "tests/diff"
@@ -29,79 +27,73 @@ NODE :: "node"
 
 // gate is a precondition rather than a test of its own: a program that does not type-check is a
 // broken corpus, and tsc names every file and line it objects to, so one run shows all of them.
-gate :: proc(mode: Mode) -> (ok: bool) {
+gate :: proc(job: Job) -> (ok: bool) {
 	if !os.is_file(TSC) {
-		fmt.eprintfln("%v: %s is missing", mode, TSC)
-		fmt.eprintfln(
+		fmt.sbprintfln(job.report, "%v: %s is missing", job.mode, TSC)
+		fmt.sbprintfln(
+			job.report,
 			"the gate needs TypeScript, installed once from %s/package.json:",
 			DIFF_PROJECT,
 		)
-		fmt.eprintfln("  %s", TSC_INSTALL)
+		fmt.sbprintfln(job.report, "  %s", TSC_INSTALL)
 		return false
 	}
 
 	command := []string{NODE, TSC, "--noEmit", "--strict", "-p", DIFF_PROJECT}
-	output := execute(mode, DIFF_PROJECT, "the gate", command) or_return
+	output := execute(job, DIFF_PROJECT, "the gate", command) or_return
 	if output.code == 0 {
 		return true
 	}
 
-	fmt.eprintfln(
+	fmt.sbprintfln(
+		job.report,
 		"%v: the gate rejected the corpus: tsc --noEmit --strict -p %s",
-		mode,
+		job.mode,
 		DIFF_PROJECT,
 	)
 	// tsc writes its diagnostics to stdout; stderr carries whatever stopped it from starting.
-	fmt.eprint(output.stdout)
-	fmt.eprint(output.stderr)
+	fmt.sbprint(job.report, output.stdout)
+	fmt.sbprint(job.report, output.stderr)
 	return false
 }
 
-diff_program :: proc(compiler, dist, path: string, sanitizer: link.Sanitizer) -> (ok: bool) {
-	header := read_header(path) or_return
+diff_program :: proc(job: Job, path: string) -> (count: int, ok: bool) {
+	header := read_header(job, path) or_return
+	environments := environments_for(job, path, header.settings) or_return
 	node := slice.concatenate([][]string{{NODE, path}, header.arguments}, context.temp_allocator)
-	want := execute(.diff, path, "node", node, header.environment) or_return
+	want := execute(job, path, "node", node, environments.plain) or_return
 	if want.code != 0 && !own_exit_code(want.code) {
-		fmt.eprintfln(
+		fmt.sbprintfln(
+			job.report,
 			"diff: %s: exit code %d: a corpus program exits with 0 or %d..%d",
 			path,
 			want.code,
 			SIGNAL_MAX + 1,
 			EXIT_MAX,
 		)
-		return false
+		return 0, false
 	}
-	return compare_builds(
-		.diff,
-		compiler,
-		dist,
-		path,
-		sanitizer,
-		want,
-		header.arguments,
-		header.environment,
-	)
+	return 0, compare_builds(job, path, want, header.arguments, environments)
 }
 
 @(private = "file")
 Header :: struct {
-	environment: []string, // nil keeps the runner's own
-	arguments:   []string,
+	settings:  []string, // nil when the header sets nothing
+	arguments: []string,
 }
 
 @(private = "file")
-read_header :: proc(path: string) -> (header: Header, ok: bool) {
+read_header :: proc(job: Job, path: string) -> (header: Header, ok: bool) {
 	ENV :: "// env: "
 	ARGS :: "// args: "
 	data, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
-		fmt.eprintfln("diff: read %s: %v", path, read_err)
+		fmt.sbprintfln(job.report, "diff: read %s: %v", path, read_err)
 		return {}, false
 	}
 
 	// A header spelled another way, or with nothing after it, would run the program without it,
 	// and the two runs could still agree; such a line is refused rather than read as prose.
-	settings: []string
 	has_env, has_args: bool
 	for line in header_lines(string(data)) {
 		if !names_header(line) {
@@ -110,24 +102,26 @@ read_header :: proc(path: string) -> (header: Header, ok: bool) {
 		well_formed := false
 		switch {
 		case strings.has_prefix(line, ENV) && !has_env:
-			settings = strings.fields(line[len(ENV):], context.temp_allocator)
+			header.settings = strings.fields(line[len(ENV):], context.temp_allocator)
 			has_env = true
-			well_formed = len(settings) > 0
+			well_formed = len(header.settings) > 0
 		case strings.has_prefix(line, ARGS) && !has_args:
 			header.arguments = strings.fields(line[len(ARGS):], context.temp_allocator)
 			has_args = true
 			well_formed = len(header.arguments) > 0
 		case strings.has_prefix(line, ENV), strings.has_prefix(line, ARGS):
-			fmt.eprintfln("diff: %s: a second header line %q", path, line)
+			fmt.sbprintfln(job.report, "diff: %s: a second header line %q", path, line)
 			return {}, false
 		}
 		if !well_formed {
-			fmt.eprintfln("diff: %s: a header line %q lists nothing or is misspelled", path, line)
+			fmt.sbprintfln(
+				job.report,
+				"diff: %s: a header line %q lists nothing or is misspelled",
+				path,
+				line,
+			)
 			return {}, false
 		}
-	}
-	if has_env {
-		header.environment = environment_with(path, settings) or_return
 	}
 	return header, true
 }
@@ -142,36 +136,4 @@ names_header :: proc(line: string) -> bool {
 	}
 	rest := strings.trim_left_space(trimmed[2:])
 	return strings.has_prefix(rest, "env:") || strings.has_prefix(rest, "args:")
-}
-
-// environment_with lets a name the program sets replace the runner's own, whose case Windows
-// ignores.
-@(private = "file")
-environment_with :: proc(path: string, settings: []string) -> (environment: []string, ok: bool) {
-	inherited, env_err := os.environ(context.temp_allocator)
-	if env_err != nil {
-		fmt.eprintfln("diff: %s: read the environment: %v", path, env_err)
-		return nil, false
-	}
-	list := make([dynamic]string, context.temp_allocator)
-	for entry in inherited {
-		name, _, _ := strings.partition(entry, "=")
-		if !sets(settings, name) {
-			append(&list, entry)
-		}
-	}
-	append(&list, ..settings)
-	return list[:], true
-}
-
-@(private = "file")
-sets :: proc(settings: []string, name: string) -> bool {
-	for setting in settings {
-		set, _, _ := strings.partition(setting, "=")
-		same := strings.equal_fold(set, name) if ODIN_OS == .Windows else set == name
-		if same {
-			return true
-		}
-	}
-	return false
 }

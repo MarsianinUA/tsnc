@@ -15,7 +15,6 @@ same bytes, the header is compared with the first.
 */
 package main
 
-import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -62,22 +61,20 @@ Printed :: struct {
 
 // negative reports every mismatch instead of stopping at the first, so that one CI log shows all of
 // them.
-negative :: proc() -> (passed: bool) {
+negative :: proc(jobs: int) -> (passed: bool) {
 	compiler := compiler_path(.negative) or_return
-	names := corpus_names(.negative, NEGATIVE_CORPUS) or_return
+	paths := corpus_paths(.negative, NEGATIVE_CORPUS) or_return
 	dist := dist_directory(.negative) or_return
 
-	passed = true
-	diagnostics := 0
-	for name in names {
-		printed, ok := negative_program(compiler, dist, name)
-		diagnostics += printed
-		if !ok {
-			passed = false
-		}
+	template := Job {
+		mode     = .negative,
+		compiler = compiler,
+		dist     = dist,
 	}
+	diagnostics: int
+	diagnostics, passed = run_programs(template, paths, jobs, negative_program)
 	if passed {
-		fmt.printfln("negative: ok (%d programs, %d diagnostics)", len(names), diagnostics)
+		fmt.printfln("negative: ok (%d programs, %d diagnostics)", len(paths), diagnostics)
 	}
 	return passed
 }
@@ -86,50 +83,52 @@ negative :: proc() -> (passed: bool) {
 // program keeps its relative path: the compiler inherits this directory, and the path is what the
 // compiler prints and an expectation names.
 @(private = "file")
-negative_program :: proc(compiler, dist, name: string) -> (printed: int, ok: bool) {
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-
-	path := fmt.tprintf("%s/%s", NEGATIVE_CORPUS, name)
+negative_program :: proc(job: Job, path: string) -> (printed: int, ok: bool) {
 	text, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
-		fmt.eprintfln("negative: %s: read: %v", path, read_err)
+		fmt.sbprintfln(job.report, "negative: %s: read: %v", path, read_err)
 		return 0, false
 	}
-	want, want_ok := expectations(path, string(text))
+	want, want_ok := expectations(job, path, string(text))
 
 	// A build with a diagnostic writes nothing. The artifact is named for a program that stops
 	// failing: it links, and the exit code below reports it.
 	suffix := target.SPECS[target.HOST].executable_suffix
-	artifact := fmt.tprintf("negative-%s%s", strings.trim_suffix(name, ".ts"), suffix)
-	output, join_err := os.join_path({dist, artifact}, context.temp_allocator)
+	artifact := fmt.tprintf("negative-%s%s", strings.trim_suffix(os.base(path), ".ts"), suffix)
+	output, join_err := os.join_path({job.dist, artifact}, context.temp_allocator)
 	if join_err != nil {
-		fmt.eprintfln("negative: %s: path of %s: %v", path, artifact, join_err)
+		fmt.sbprintfln(job.report, "negative: %s: path of %s: %v", path, artifact, join_err)
 		return 0, false
 	}
 	out := fmt.tprintf("-out:%s", output)
-	one := []string{compiler, "build", path, out, "-j:1"}
-	eight := []string{compiler, "build", path, out, "-j:8"}
-	built := execute(.negative, path, "tsnc build", one) or_return
-	split := execute(.negative, path, "tsnc build", eight) or_return
-	got, got_ok := diagnostics_of(path, built.stderr)
+	one := []string{job.compiler, "build", path, out, "-j:1"}
+	eight := []string{job.compiler, "build", path, out, "-j:8"}
+	built := execute(job, path, "tsnc build", one) or_return
+	split := execute(job, path, "tsnc build", eight) or_return
+	got, got_ok := diagnostics_of(job, path, built.stderr)
 
 	ok = want_ok && got_ok
 	if split.stderr != built.stderr || split.stdout != built.stdout || split.code != built.code {
-		fmt.eprintfln("negative: %s: -j:8 prints otherwise than -j:1", path)
-		fmt.eprintfln("-j:1 answered %d:\n%s", built.code, built.stderr)
-		fmt.eprintfln("-j:8 answered %d:\n%s", split.code, split.stderr)
+		fmt.sbprintfln(job.report, "negative: %s: -j:8 prints otherwise than -j:1", path)
+		fmt.sbprintfln(job.report, "-j:1 answered %d:\n%s", built.code, built.stderr)
+		fmt.sbprintfln(job.report, "-j:8 answered %d:\n%s", split.code, split.stderr)
 		ok = false
 	}
 	if built.code != 1 {
 		// `tsnc build` answers 1 for a program with any diagnostic and 0 for one it built, so a
 		// negative test always expects 1. A crash lands here too, with whatever the OS reports.
-		fmt.eprintfln("negative: %s: exit code: got %d, want 1", path, built.code)
+		fmt.sbprintfln(job.report, "negative: %s: exit code: got %d, want 1", path, built.code)
 		ok = false
 	}
 	if built.stdout != "" {
 		// The compiler writes to stderr alone, so that the diagnostics of a build never mix with
 		// the output of a program under `tsnc run`.
-		fmt.eprintfln("negative: %s: stdout: got %q, want nothing", path, built.stdout)
+		fmt.sbprintfln(
+			job.report,
+			"negative: %s: stdout: got %q, want nothing",
+			path,
+			built.stdout,
+		)
 		ok = false
 	}
 
@@ -137,7 +136,7 @@ negative_program :: proc(compiler, dist, name: string) -> (printed: int, ok: boo
 	// header that did not parse has already been reported and is not worth comparing against.
 	if want_ok {
 		for index in 0 ..< max(len(want), len(got)) {
-			if !same_diagnostic(path, index, want, got) {
+			if !same_diagnostic(job, path, index, want, got) {
 				ok = false
 			}
 		}
@@ -148,21 +147,28 @@ negative_program :: proc(compiler, dist, name: string) -> (printed: int, ok: boo
 // same_diagnostic names what differs at one index, and a text that is not there gets the message
 // and the hint it was looked for in.
 @(private = "file")
-same_diagnostic :: proc(path: string, index: int, want: []Expectation, got: []Printed) -> bool {
+same_diagnostic :: proc(
+	job: Job,
+	path: string,
+	index: int,
+	want: []Expectation,
+	got: []Printed,
+) -> bool {
 	if index < len(want) && index < len(got) && want[index].site == got[index].site {
 		text := want[index].text
 		if strings.contains(got[index].message, text) || strings.contains(got[index].hint, text) {
 			return true
 		}
-		fmt.eprintfln(
+		fmt.sbprintfln(
+			job.report,
 			"negative: %s: diagnostic %d: %s: neither the message nor the hint holds \"%s\"",
 			path,
 			index + 1,
 			describe(path, got[index].site),
 			text,
 		)
-		fmt.eprintfln("  message: %s", got[index].message)
-		fmt.eprintfln("  hint: %s", got[index].hint)
+		fmt.sbprintfln(job.report, "  message: %s", got[index].message)
+		fmt.sbprintfln(job.report, "  hint: %s", got[index].hint)
 		return false
 	}
 
@@ -177,12 +183,19 @@ same_diagnostic :: proc(path: string, index: int, want: []Expectation, got: []Pr
 	if index < len(got) {
 		found = describe(path, got[index].site)
 	}
-	fmt.eprintfln("negative: %s: diagnostic %d: got %s, want %s", path, index + 1, found, wanted)
+	fmt.sbprintfln(
+		job.report,
+		"negative: %s: diagnostic %d: got %s, want %s",
+		path,
+		index + 1,
+		found,
+		wanted,
+	)
 	return false
 }
 
 @(private = "file")
-expectations :: proc(path, text: string) -> (want: []Expectation, ok: bool) {
+expectations :: proc(job: Job, path, text: string) -> (want: []Expectation, ok: bool) {
 	list := make([dynamic]Expectation, context.temp_allocator)
 	ok = true
 
@@ -194,9 +207,9 @@ expectations :: proc(path, text: string) -> (want: []Expectation, ok: bool) {
 		body := strings.trim_space(trimmed[len(EXPECT_PREFIX):])
 		expected, line_ok := parse_expectation(path, body)
 		if !line_ok {
-			fmt.eprintfln("negative: %s:%d: cannot read %q", path, index + 1, trimmed)
-			fmt.eprintfln("  an expectation reads: %s", EXPECT_EXAMPLE)
-			fmt.eprintfln("  or with a file and a text: %s", EXPECT_FULL_EXAMPLE)
+			fmt.sbprintfln(job.report, "negative: %s:%d: cannot read %q", path, index + 1, trimmed)
+			fmt.sbprintfln(job.report, "  an expectation reads: %s", EXPECT_EXAMPLE)
+			fmt.sbprintfln(job.report, "  or with a file and a text: %s", EXPECT_FULL_EXAMPLE)
 			ok = false
 			continue
 		}
@@ -204,8 +217,12 @@ expectations :: proc(path, text: string) -> (want: []Expectation, ok: bool) {
 	}
 
 	if ok && len(list) == 0 {
-		fmt.eprintfln("negative: %s: the header expects nothing", path)
-		fmt.eprintfln("  a negative test names every diagnostic it expects: %s", EXPECT_EXAMPLE)
+		fmt.sbprintfln(job.report, "negative: %s: the header expects nothing", path)
+		fmt.sbprintfln(
+			job.report,
+			"  a negative test names every diagnostic it expects: %s",
+			EXPECT_EXAMPLE,
+		)
 		ok = false
 	}
 	return list[:], ok
@@ -253,7 +270,7 @@ parse_expectation :: proc(program, body: string) -> (expected: Expectation, ok: 
 // hint. A line that is neither is the compiler saying something an expectation cannot express,
 // such as an entry file it could not read, and it fails the program rather than passing unseen.
 @(private = "file")
-diagnostics_of :: proc(path, text: string) -> (got: []Printed, ok: bool) {
+diagnostics_of :: proc(job: Job, path, text: string) -> (got: []Printed, ok: bool) {
 	list := make([dynamic]Printed, context.temp_allocator)
 	ok = true
 
@@ -271,7 +288,12 @@ diagnostics_of :: proc(path, text: string) -> (got: []Printed, ok: bool) {
 		printed, line_ok := parse_diagnostic(line)
 		awaits_hint = line_ok
 		if !line_ok {
-			fmt.eprintfln("negative: %s: cannot read the compiler output %q", path, line)
+			fmt.sbprintfln(
+				job.report,
+				"negative: %s: cannot read the compiler output %q",
+				path,
+				line,
+			)
 			ok = false
 			continue
 		}
