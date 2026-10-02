@@ -155,7 +155,8 @@ resolve_name :: proc(
 // type_of_symbol and the aliases of alias_type. A declaration that needs its own type, through any
 // number of others, closes a loop, and the loop is a strongly connected component of the walk: the
 // same declarations whichever of them a checker asks for first. That is what gives one report per
-// loop and the same types under every split of the program.
+// loop and the same types under every split of the program. A top-level statement that runs code
+// has a frame too (walk_statement), since a read narrowed through it needs its facts.
 @(private)
 Search :: struct {
 	frames:  [dynamic]Frame, // Tarjan's stack
@@ -165,7 +166,7 @@ Search :: struct {
 
 @(private)
 Frame :: struct {
-	ref:      Symbol_Ref,
+	ref:      Symbol_Ref, // NO_SYMBOL for a statement, which no cache holds and no report names
 	low:      int, // the lowest frame this one reaches
 	looped:   bool, // asked for again while on the stack
 	recorded: Type_ID, // the type a declarator records before its initializer is read, or ERROR
@@ -217,7 +218,9 @@ type_of_symbol :: proc(c: ^Checker, ref: Symbol_Ref) -> Type_ID {
 enter_frame :: proc(c: ^Checker, ref: Symbol_Ref, instance := false) -> (at, outer: int) {
 	at = len(c.search.frames)
 	append(&c.search.frames, Frame{ref = ref, low = at, recorded = ERROR, instance = instance})
-	c.search.index[ref] = at
+	if ref.symbol != bind.NO_SYMBOL {
+		c.search.index[ref] = at
+	}
 	outer = c.search.current
 	c.search.current = at
 	return at, outer
@@ -247,9 +250,9 @@ leave_frame :: proc(c: ^Checker, at, outer: int, type: Type_ID) -> Type_ID {
 }
 
 // close_component pops the component the frame at `at` is the root of, and caches the type of every
-// member but an instance: its own where nothing looped. In a loop each member keeps what it
-// recorded, and those that recorded nothing take ERROR, with one diagnostic at the one declared
-// first. The answer is the root's.
+// member but an instance and a statement: its own where nothing looped. In a loop each member keeps
+// what it recorded, and those that recorded nothing take ERROR, with one diagnostic at the one
+// declared first. The answer is the root's. A statement is let go from Module_Walk.held.
 @(private)
 close_component :: proc(c: ^Checker, at: int, type: Type_ID) -> Type_ID {
 	members := c.search.frames[at:]
@@ -258,6 +261,10 @@ close_component :: proc(c: ^Checker, at: int, type: Type_ID) -> Type_ID {
 	answer := members[0].recorded if looped else type
 	first := -1
 	for member, i in members {
+		if member.ref.symbol == bind.NO_SYMBOL {
+			c.walks[member.ref.file].held = false
+			continue
+		}
 		delete_key(&c.search.index, member.ref)
 		final := member.recorded if looped else type
 		if looped &&

@@ -70,6 +70,9 @@ narrow_reference :: proc(c: ^Checker, id: ast.Node_ID, declared: Type_ID) -> Typ
 	if flow == bind.UNREACHABLE {
 		return declared
 	}
+	if walk_above(c, id) {
+		return declared
+	}
 
 	clear(&c.narrowing.answers)
 	clear(&c.narrowing.loops)
@@ -237,7 +240,8 @@ settled_type :: proc(
 // its outer flow unreachable.
 //
 // The narrowing carries only for a name nothing writes to. A write anywhere in the file could
-// happen between the moment the arrow is made and the moment it runs.
+// happen between the moment the arrow is made and the moment it runs. And only for a name from
+// outside the arrow: its own parameter is not there before it runs.
 @(private)
 start_type :: proc(
 	c: ^Checker,
@@ -248,7 +252,9 @@ start_type :: proc(
 	type: Type_ID,
 	reached: bool,
 ) {
-	if node.outer == bind.UNREACHABLE || assigned_anywhere(c, reference) {
+	if node.outer == bind.UNREACHABLE ||
+	   assigned_anywhere(c, reference) ||
+	   declaring_function(c, reference) == node.function {
 		return declared, true
 	}
 	answer := flow_type(c, node.outer, reference, declared)
@@ -682,13 +688,16 @@ reaches_start :: proc(c: ^Checker, flow: bind.Flow_ID, reference := ast.NO_NODE)
 	work := make([dynamic]bind.Flow_ID, 0, 16, context.temp_allocator)
 	seen[flow] = true
 	append(&work, flow)
+	owner := declaring_function(c, reference)
 
 	for len(work) > 0 {
 		switch node in c.at.bound.flow[pop(&work)] {
 		case bind.Flow_Unreachable:
 			continue
 		case bind.Flow_Start:
-			if reference == ast.NO_NODE || node.outer == bind.UNREACHABLE {
+			if reference == ast.NO_NODE ||
+			   node.outer == bind.UNREACHABLE ||
+			   node.function == owner {
 				return true
 			}
 			// An arrow runs later than the point it was made at, so what matters for a variable it
@@ -972,6 +981,29 @@ assigned_anywhere :: proc(c: ^Checker, reference: ast.Node_ID) -> bool {
 		return true
 	}
 	return .Assigned in c.program.bound[ref.file].symbols[ref.symbol].flags
+}
+
+// declaring_function is the function whose scope holds the name a reference is built on, and NO_NODE
+// for a name of the module, of another module or of the lib.
+@(private)
+declaring_function :: proc(c: ^Checker, reference: ast.Node_ID) -> ast.Node_ID {
+	root := root_name(c, reference)
+	if root == ast.NO_NODE {
+		return ast.NO_NODE
+	}
+	symbol := c.at.bound.node_symbols[root]
+	if symbol == bind.NO_SYMBOL {
+		return ast.NO_NODE
+	}
+	scopes := c.at.bound.scopes
+	for scope := c.at.bound.symbols[symbol].scope;
+	    scopes[scope].kind != .Module;
+	    scope = scopes[scope].parent {
+		if scopes[scope].kind == .Function {
+			return scopes[scope].node
+		}
+	}
+	return ast.NO_NODE
 }
 
 // root_name is the ast.Ident a narrowable reference is built on: `o` of `o.a[0]`.

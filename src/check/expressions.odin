@@ -193,7 +193,12 @@ check_assigned :: proc(c: ^Checker, id: ast.Node_ID) {
 		file   = c.at.file,
 		symbol = symbol,
 	}
-	if !starts_empty(c, ref) || !reaches_start(c, c.at.bound.node_flow[id], id) {
+	if !starts_empty(c, ref) {
+		return
+	}
+	// In a loop through the module's top level the flow cannot tell, and the read counts as
+	// unassigned.
+	if !walk_above(c, id) && !reaches_start(c, c.at.bound.node_flow[id], id) {
 		return
 	}
 	report(c, .Used_Before_Assigned, span_of(c, id), c.at.bound.symbols[symbol].name.text)

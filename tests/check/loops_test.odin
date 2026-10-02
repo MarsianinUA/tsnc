@@ -3,9 +3,9 @@ package check_tests
 import "core:slice"
 import "core:testing"
 
-// Loops through declarations, and bodies that wait for check_deferred. Every case is checked as one
-// partition in both orders and split into two, which enter the loop at different members: all must
-// give the diagnostics the case wants.
+// Loops through declarations, bodies that wait for check_deferred, and reads narrowed through the
+// top level of a module. Every case is checked as one partition in both orders and split into two,
+// which enter the loop at different members: all must give the diagnostics the case wants.
 
 @(test)
 a_loop_is_reported_once_at_the_function_declared_first :: proc(t: ^testing.T) {
@@ -227,6 +227,216 @@ a_generic_declaration_reports_once_however_many_uses_it_has :: proc(t: ^testing.
 			{MAIN, .Cannot_Find_Name, 2, 51},
 		},
 	)
+}
+
+@(test)
+a_read_narrowed_through_another_modules_top_level_sees_its_writes :: proc(t: ^testing.T) {
+	// m1 asks for each name before m2 is walked. The writes above are a statement, the initializer
+	// of an earlier declaration, and an earlier declarator of the same statement.
+	sources := [2]string {
+		lines(
+			`import { label, name, pace } from "./m2.ts";`, //
+			`export const n: string = name;`,
+			`export const k: number = label + pace;`,
+		),
+		lines(
+			`export let mode: string | undefined;`, //
+			`mode = "fast";`,
+			`export const name: string = mode;`,
+			`export let speed: number | string = "slow";`,
+			`export const fixed: number = (speed = 1);`,
+			`export const pace = speed;`,
+			`export let size: number | string = "big";`,
+			`export const grow: number = (size = 2), label = size;`,
+		),
+	}
+	expect_any_split(t, sources[:], {})
+}
+
+@(test)
+a_let_read_through_another_modules_top_level_sees_a_call_that_never_returns :: proc(
+	t: ^testing.T,
+) {
+	sources := [2]string {
+		lines(
+			`import { shown } from "./m2.ts";`, //
+			`export const seen: string = shown;`,
+		),
+		lines(
+			`let ready: string;`, //
+			`if (process.argv.length > 99) {`,
+			`	ready = "yes";`,
+			`} else {`,
+			`	process.exit(1);`,
+			`}`,
+			`export const shown = ready;`,
+		),
+	}
+	expect_any_split(t, sources[:], {})
+}
+
+@(test)
+a_loop_through_a_top_level_statement_is_one_whichever_end_a_checker_starts_from :: proc(
+	t: ^testing.T,
+) {
+	// name is narrowed through `mode = a()`, whose value needs name. m2's own walk enters at the
+	// statement, m1 at a.
+	sources := [2]string {
+		lines(
+			`import { a } from "./m2.ts";`, //
+			`console.log(a());`,
+		),
+		lines(
+			`export let mode: string | number = 1;`, //
+			`mode = a();`,
+			`export const name = mode;`,
+			`export function a() { return name; }`,
+		),
+	}
+	expect_any_split(t, sources[:], {{MAIN + 1, .Circular_Initializer, 3, 14}})
+}
+
+@(test)
+a_statement_below_one_in_a_loop_is_checked_once_the_loop_is_closed :: proc(t: ^testing.T) {
+	// m2's walk asks for name inside the `if`; console.log must not read the `if` half done.
+	sources := [2]string {
+		lines(
+			`import { name } from "./m2.ts";`, //
+			`console.log(name);`,
+		),
+		lines(
+			`export const later: (() => string | number)[] = [];`, //
+			`export let mode: string | number = "x";`,
+			`if (later.push(() => name) > 0) {`,
+			`	mode = 1;`,
+			`} else {`,
+			`	process.exit(1);`,
+			`}`,
+			`console.log(mode.toFixed(1));`,
+			`export const name: string | number = mode;`,
+		),
+	}
+	expect_any_split(t, sources[:], {})
+}
+
+@(test)
+a_statement_stays_in_its_loop_until_the_loop_is_closed :: proc(t: ^testing.T) {
+	// console.log(R) has returned by the time D is read, but it is still in R's loop, and D's read
+	// narrows through it.
+	sources := [2]string {
+		lines(
+			`import { R } from "./m2.ts";`, //
+			`console.log(R);`,
+		),
+		lines(
+			`export let other: string | number = 2;`, //
+			`export let mode: string | number = 1;`,
+			`console.log(R);`,
+			`export const R = [mode, D];`,
+			`export const D = other;`,
+			`export const z: string = D;`,
+		),
+	}
+	expect_any_split(t, sources[:], {{MAIN + 1, .Circular_Initializer, 4, 14}})
+}
+
+@(test)
+a_walk_stops_at_a_statement_that_joins_the_loop :: proc(t: ^testing.T) {
+	// m1 asks for name, whose walk takes in console.log(name) and so the loop. Walking on into
+	// console.log(E) would draw E into it too, where m2's own walk meets E after the loop is closed.
+	sources := [2]string {
+		lines(
+			`import { name } from "./m2.ts";`, //
+			`console.log(name);`,
+		),
+		lines(
+			`export let mode: string | number = 1;`, //
+			`console.log(name);`,
+			`console.log(E);`,
+			`export const E = [name];`,
+			`export const name = mode;`,
+		),
+	}
+	expect_any_split(
+		t,
+		sources[:],
+		{{MAIN + 1, .Used_Before_Declaration, 3, 13}, {MAIN + 1, .Circular_Initializer, 5, 14}},
+	)
+}
+
+@(test)
+a_read_in_a_loop_through_the_top_level_narrows_nothing :: proc(t: ^testing.T) {
+	// The `if` is half done where m2's own walk asks for flag, and whole where m1 asks first. tsc
+	// accepts it, since it does not type the arrow to find the call's effect.
+	sources := [2]string {
+		lines(
+			`import { flag } from "./m2.ts";`, //
+			`console.log(flag);`,
+		),
+		lines(
+			`export const later: (() => number | boolean)[] = [];`, //
+			`export let mode: string | number = "x";`,
+			`if (later.push(() => flag) > 0) {`,
+			`	mode = 1;`,
+			`} else {`,
+			`	process.exit(1);`,
+			`}`,
+			`export const flag: number | boolean = mode;`,
+		),
+	}
+	expect_any_split(t, sources[:], {{MAIN + 1, .Type_Mismatch, 8, 39}})
+}
+
+@(test)
+a_let_read_in_a_loop_through_the_top_level_counts_as_unassigned :: proc(t: ^testing.T) {
+	sources := [2]string {
+		lines(
+			`import { shown } from "./m2.ts";`, //
+			`console.log(shown);`,
+		),
+		lines(
+			`export const later: (() => string)[] = [];`, //
+			`let ready: string;`,
+			`if (later.push(() => shown) > 0) {`,
+			`	ready = "yes";`,
+			`} else {`,
+			`	process.exit(1);`,
+			`}`,
+			`export const shown = ready;`,
+		),
+	}
+	expect_any_split(
+		t,
+		sources[:],
+		{{MAIN + 1, .Circular_Initializer, 8, 14}, {MAIN + 1, .Used_Before_Assigned, 8, 22}},
+	)
+}
+
+@(test)
+a_parameter_is_narrowed_inside_its_own_arrow_only :: proc(t: ^testing.T) {
+	// Neither the arrow above that names show nor the exits above f say anything about v, nor do
+	// they give x a value.
+	sources := [2]string {
+		lines(
+			`import { f, show } from "./m2.ts";`, //
+			`show(f(1));`,
+		),
+		lines(
+			`const later: (() => void)[] = [];`, //
+			`later.push(() => show(1));`,
+			`export const show = (v: string | number) => {`,
+			`	console.log(typeof v === "string" ? v.length : v + 1);`,
+			`};`,
+			`if (process.argv.length > 0) {`,
+			`	process.exit(0);`,
+			`} else {`,
+			`	process.exit(1);`,
+			`}`,
+			`export const f = (v: string | number) => (typeof v === "string" ? v.length : 0);`,
+			`export const h = (): string => { let x: string; return x; };`,
+		),
+	}
+	expect_any_split(t, sources[:], {{MAIN + 1, .Used_Before_Assigned, 12, 56}})
 }
 
 // expect_any_split checks the two sources as one partition in both orders, and as two partitions,
