@@ -59,3 +59,21 @@ newest_source :: proc() -> (newest: time.Time, ok: bool) {
 	}
 	return newest, true
 }
+
+// find_rival answers how to start scriptc or Bun, or "" when it is not installed. On Windows npm puts
+// a .cmd on PATH, which os.process_start cannot start, so there the exe comes from the package in
+// npm's global root.
+find_rival :: proc(name: string) -> string {
+	if _, ok := probe({name, "--version"}); ok {
+		return name
+	}
+	when ODIN_OS == .Windows {
+		if root, ok := probe({"cmd", "/c", "npm", "root", "-g"}); ok {
+			exe := path_in(root, fmt.tprintf("%s/bin/%s.exe", name, name))
+			if os.is_file(exe) {
+				return exe
+			}
+		}
+	}
+	return ""
+}
