@@ -452,7 +452,7 @@ Where: requirements §6, §4.3, §4.5, §13 (the derived-pointers row); [Package
 After: T6.6.
 Done: the measurement is recorded in the plan's risk item; for what the operator accepts, the corpora are green in all passes, under stress and ASan too, a gc test pins each new invariant the way stress mode pins the v1 ones, `trees` is measured before and after, and requirements §6 and the key blocks' text say what changed.
 
-### [ ] T6.9 Recursion depth: the stack size and a message on overflow
+### [x] T6.9 Recursion depth: the stack size and a message on overflow
 
 What: a program that recurses too deep ends with exit code 127 and nothing on stderr, where Node prints "RangeError: Maximum call stack size exceeded". On Windows a one-parameter function that calls itself once a frame overflowed the main thread's stack past 16 thousand frames at `-o:none` and 21 thousand at `-o:speed` (2026-10-02, i5-13600KF), Node past 15 thousand; a function with more locals overflows sooner. Two parts. The stack size at link time (`/STACK` for lld-link, the `cc` flags elsewhere), chosen for a deep but legitimate recursion. And a failure line through `fail` on overflow, with exit code 1 as for the other errors of requirements 3.8: a handler that runs on a stack of its own, a vectored exception handler for the guard page on Windows and `sigaltstack` with SIGSEGV on POSIX, as Go and Rust do.
 Where: requirements §3.8; `src/link`, `src/target`, `src/runtime/rt.odin`, `src/runtime/fail`.

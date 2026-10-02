@@ -73,6 +73,8 @@ main :: proc() {
 		fail.at({error = .Internal}, "malformed root table")
 	}
 	tsnc_heap(&heap.head)
+	// On POSIX the handler tells an overflow from another fault by heap.stack_base.
+	catch_stack_overflow()
 	tsnc_main()
 	report_stats()
 }

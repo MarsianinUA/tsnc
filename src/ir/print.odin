@@ -802,6 +802,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Value_Of_Other_Kind          = "value_of_other_kind",
 	.Tagged_Holds_Other_Kind      = "tagged_holds_other_kind",
 	.Read_Before_Initialization   = "read_before_initialization",
+	.Stack_Overflow               = "stack_overflow",
 }
 
 @(private, rodata)

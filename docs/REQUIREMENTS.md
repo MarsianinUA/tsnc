@@ -120,6 +120,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
 - a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, or that a pointer that may be 0 is not, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
+- recursion deeper than the stack, which is 8 MiB on every OS: a runtime error with Node's words, `Maximum call stack size exceeded`, and no source location;
 - division by zero and overflow follow f64 semantics (`Infinity`, `NaN`), without errors.
 
 A runtime error in v1 (before `try` / `catch` exist) writes a message to stderr with the error name and, where available, the source location, and exits with code `1`. Programs that behave differently in Node in these cases are invalid and stay out of the differential tests; the expected-output tests (section 10) pin them instead.
