@@ -467,6 +467,13 @@ Where: [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-quest
 After: none.
 Done: that program types alike under every split in `tests/check/loops_test.odin`, a diff program runs it, and the risk item loses the sentence.
 
+### [x] T6.11 Benchmarks against scriptc and Bun
+
+What: scriptc (Vercel Labs) compiles TypeScript to a native executable through LLVM, as tsnc does, so it is the closest rival, and `bench/` did not measure it. Bun runs the same `.ts` on JavaScriptCore, an engine other than Node's V8. Both run the programs of `bench/ts` as they are, with no twins. They are optional: a missing one, a program scriptc cannot build, or a different output gives a cell of `—` and does not stop the run, while tsnc, Node and Go still must agree. A run past 30 seconds is killed and its cell is `> 30`, since scriptc 0.2.1 never finishes `sieve`. scriptc builds at its default level, `release`, and on Windows links through Zig 0.16. npm puts `.cmd` shims on `PATH`, which `os.process_start` cannot start, so on Windows the runner takes the `.exe` from npm's global root. `-against` leaves both out.
+Where: requirements §10 "Benchmarks"; `bench/runner/programs.odin`, `bench/runner/runner.odin`, `bench/runner/tools.odin`; [Benchmarks](development.md#benchmarks).
+After: T6.3.
+Done: `bench/RESULTS.md` records a run with the five columns.
+
 ## Milestone 7: v2 waves (epics)
 
 An actionable v2 task cannot be written before the v1 code exists. Each epic starts with the task "split per the row of the [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2) table". The agent reads its row and the code of the affected packages and proposes tasks for the board. The wave order is a recommendation. E7.1 and E7.11 moved to T6.7 and T6.8 on 2026-09-28 and took two of the §13 risks with them, the f64 gap and the derived pointers; the exact-type rule stays with E7.4. The other epics keep their numbers.

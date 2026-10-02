@@ -7,7 +7,9 @@ what the flags do and how a version's results reach bench/RESULTS.md.
 bench/bench.sh and bench\bench.cmd run this package from the repository root; -help lists the
 flags. The names pick programs of bench/ts, hello and compile; with no names, everything runs. A
 program runs under tsnc, Node and its Go twin in bench/go, and the three must print the same
-output before any run is timed, so a program that fails early cannot pass for a fast one.
+output before any run is timed, so a program that fails early cannot pass for a fast one. scriptc
+and Bun run it too when they are installed, and a cell of theirs says "—" when they cannot build it
+or print something else.
 */
 package main
 
@@ -48,12 +50,16 @@ Setup :: struct {
 	suffix:   string, // of an executable
 	options:  Options,
 	before:   Baseline, // read from -against
+	// How to start each, or "" when it is not installed or -against leaves it out.
+	scriptc:  string,
+	bun:      string,
 }
 
 Output :: struct {
 	stdout, stderr: string,
 	code:           int,
 	gc:             string, // under -gc, the last line of a tsnc program's stderr, cut off it
+	killed:         bool, // ran past the limit of timed
 }
 
 // Sample is one run: from start to exit on the wall clock, and the process's CPU time on every core,
@@ -129,7 +135,10 @@ prepare :: proc(options: Options) -> (setup: Setup, ok: bool) {
 	setup.dist = dist
 	setup.compiler = path_in(dist, "tsnc.exe")
 	setup.suffix = target.SPECS[target.HOST].executable_suffix
-	if options.against != "" {
+	if options.against == "" {
+		setup.scriptc = find_rival("scriptc")
+		setup.bun = find_rival("bun")
+	} else {
 		setup.before = load_baseline(baseline_path(setup, options.against)) or_return
 		if now := flags_text(options); setup.before.flags != now {
 			fmt.eprintfln(
@@ -148,24 +157,33 @@ wanted :: proc(setup: Setup, name: string) -> bool {
 	return len(setup.options.overflow) == 0 || slice.contains(setup.options.overflow[:], name)
 }
 
-// header is the first lines of a RESULTS.md section: the date, the machine and the other two tools.
+// header is the first lines of a RESULTS.md section: the date, the machine and the other tools.
 header :: proc(setup: Setup) {
 	fmt.printfln("bench, %s UTC", today())
 	if version, ok := si.os_version(context.temp_allocator); ok {
-		fmt.printfln("  OS    %s", version.full)
+		fmt.printfln("  OS      %s", version.full)
 	}
 	physical, logical, _ := si.cpu_core_count()
-	fmt.printfln("  CPU   %s, %d cores, %d threads", si.cpu_name(), physical, logical)
+	fmt.printfln("  CPU     %s, %d cores, %d threads", si.cpu_name(), physical, logical)
 	for tool in ([][]string{{"node", "--version"}, {"go", "version"}}) {
 		output, ok := execute(tool)
 		version := strings.trim_space(output.stdout) if ok else "missing"
-		fmt.printfln("  %-5s %s", tool[0], version)
+		fmt.printfln("  %-7s %s", tool[0], version)
+	}
+	if setup.options.against == "" {
+		for rival in ([][2]string{{"scriptc", setup.scriptc}, {"bun", setup.bun}}) {
+			version := "missing"
+			if rival[1] != "" {
+				version, _ = probe({rival[1], "--version"})
+			}
+			fmt.printfln("  %-7s %s", rival[0], strings.trim_space(version))
+		}
 	}
 	if text := flags_text(setup.options); text != "" {
-		fmt.printfln("  flags %s", text)
+		fmt.printfln("  flags   %s", text)
 	}
 	if setup.options.against != "" {
-		fmt.printfln("  before %s, %s", setup.options.against, setup.before.date)
+		fmt.printfln("  before  %s, %s", setup.options.against, setup.before.date)
 	}
 	fmt.println()
 }
@@ -214,6 +232,12 @@ execute :: proc(command: []string, working_dir := "") -> (output: Output, ok: bo
 	return {stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, true
 }
 
+// probe is execute for a tool that may be missing: it prints nothing and fails on any exit but 0.
+probe :: proc(command: []string) -> (stdout: string, ok: bool) {
+	state, out, _, err := os.process_exec({command = command}, context.temp_allocator)
+	return string(out), err == nil && state.exit_code == 0
+}
+
 build :: proc(command: []string, working_dir := "") -> (ok: bool) {
 	output := execute(command, working_dir) or_return
 	if output.code != 0 {
@@ -229,8 +253,16 @@ build :: proc(command: []string, working_dir := "") -> (ok: bool) {
 }
 
 // timed sends the output to files, not pipes: os.process_exec polls its pipes without pausing and
-// keeps a core busy for the whole run.
-timed :: proc(setup: Setup, command: []string) -> (output: Output, sample: Sample, ok: bool) {
+// keeps a core busy for the whole run. A run past `limit` is killed.
+timed :: proc(
+	setup: Setup,
+	command: []string,
+	limit := os.TIMEOUT_INFINITE,
+) -> (
+	output: Output,
+	sample: Sample,
+	ok: bool,
+) {
 	out_path := path_in(setup.dist, "bench-stdout.txt")
 	err_path := path_in(setup.dist, "bench-stderr.txt")
 	flags := os.File_Flags{.Write, .Create, .Trunc, .Inheritable}
@@ -253,7 +285,15 @@ timed :: proc(setup: Setup, command: []string) -> (output: Output, sample: Sampl
 		fmt.eprintfln("bench: run %s: %v", command[0], start_err)
 		return {}, {}, false
 	}
-	state, wait_err := os.process_wait(process)
+	state, wait_err := os.process_wait(process, limit)
+	killed := wait_err == .Timeout
+	if killed {
+		if kill_err := os.process_kill(process); kill_err != nil {
+			fmt.eprintfln("bench: kill %s: %v", command[0], kill_err)
+			return {}, {}, false
+		}
+		state, wait_err = os.process_wait(process)
+	}
 	sample.wall = time.tick_since(start)
 	if wait_err != nil {
 		fmt.eprintfln("bench: wait for %s: %v", command[0], wait_err)
@@ -271,6 +311,7 @@ timed :: proc(setup: Setup, command: []string) -> (output: Output, sample: Sampl
 		stdout = string(stdout),
 		stderr = string(stderr),
 		code   = state.exit_code,
+		killed = killed,
 	}
 	if setup.options.gc {
 		output.stderr, output.gc = cut_gc_line(output.stderr)

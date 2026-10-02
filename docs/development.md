@@ -210,7 +210,7 @@ The define makes the first command fail if the build lost the sanitizer, where e
 
 `bench/ts/` holds the programs of requirements 10: `mandelbrot` and `collatz` (numeric loops), `sieve` (a `boolean[]`), `chars` and `strings` (a scan by `s[i]` and the string methods), `objects` (an array of records sorted and filtered), `closures`, `trees` (binary-trees, for the collector) and `hello`. Each has a Go twin in `bench/go/<name>/main.go`. The twins run the same algorithm on the same data, in the types a Go programmer would pick: `int` where a value is always an integer, byte indexing for ASCII text, a slice of structs for records.
 
-`bench/bench.sh`, or `bench\bench` in the Windows shells, runs `bench/runner` from the repository root, wherever it is called from. The runner needs Node and Go on `PATH`:
+`bench/bench.sh`, or `bench\bench` in the Windows shells, runs `bench/runner` from the repository root, wherever it is called from. The runner needs Node and Go on `PATH`. scriptc and Bun are optional, and `npm install -g scriptc bun` installs both. On Windows scriptc links through Zig 0.16, which `winget install zig.zig` puts on `PATH`. npm puts only `.cmd` shims there, which the runner cannot start, so it runs the `.exe` from the package in `npm root -g`.
 
 ```sh
 bench/bench.sh
@@ -235,11 +235,11 @@ Before any run the runner checks that every program has both `bench/ts/<name>.ts
 
 The header lists the flags that change the numbers, so a table from `-o:none` cannot pass for a default one.
 
-To measure a change, save a baseline on `dev` with `bench/bench.sh -save:base trees`, switch to the branch and run `bench/bench.sh -against:base trees`. That table gives the time before, the time now and the change in percent. Node and Go still run once, to check the output, but they are not timed: they are the same before and after. On a desktop, the same build of `objects` and `trees` differed by up to 9% from one run of the runner to the next, so a smaller change needs more runs (`-runs:N`) or a repeat before it counts.
+To measure a change, save a baseline on `dev` with `bench/bench.sh -save:base trees`, switch to the branch and run `bench/bench.sh -against:base trees`. That table gives the time before, the time now and the change in percent. Node and Go still run once, to check the output, but they are not timed: they are the same before and after. scriptc and Bun do not run at all. On a desktop, the same build of `objects` and `trees` differed by up to 9% from one run of the runner to the next, so a smaller change needs more runs (`-runs:N`) or a repeat before it counts.
 
 The runner prints Markdown:
 
-- The tables of `bench/RESULTS.md`, when no flag is given. Each program is built with `-o:speed` by tsnc and with `go build`, runs once under each implementation, and all three must exit 0 and print the same output. The table gives the median wall time of five more runs, or of 20 for hello, then the size of hello's executable.
+- The tables of `bench/RESULTS.md`, when no flag is given. Each program is built with `-o:speed` by tsnc, with `go build`, and by scriptc at its default level, `release`, whatever `-o` says. It runs once under each implementation, and tsnc, Node and Go must exit 0 and print the same output. When scriptc or Bun is missing, cannot build the program, fails or prints something else, its cell is `—` and the reason goes to stderr. One that runs past 30 seconds is killed and its cell is `> 30`: scriptc 0.2.1 never finishes `sieve`. The table gives the median wall time of five more runs, or of 20 for hello, then the size of hello's executable. Bun has no column there: its executable would be Bun itself.
 - compile: three generated projects of about a thousand modules under `dist/bench-compile-*` go through `tsnc check` at `-j:1` and at the default `-j`.
   - In `apart` no file uses another's declarations.
   - In `shared` every module calls functions of ten shared lib modules.
