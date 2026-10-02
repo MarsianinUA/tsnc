@@ -176,7 +176,7 @@ header :: proc(setup: Setup) {
 			if rival[1] != "" {
 				version, _ = probe({rival[1], "--version"})
 			}
-			fmt.printfln("  %-7s %s", rival[0], strings.trim_space(version))
+			fmt.printfln("  %-7s %s", rival[0], version)
 		}
 	}
 	if text := flags_text(setup.options); text != "" {
@@ -232,10 +232,11 @@ execute :: proc(command: []string, working_dir := "") -> (output: Output, ok: bo
 	return {stdout = string(stdout), stderr = string(stderr), code = state.exit_code}, true
 }
 
-// probe is execute for a tool that may be missing: it prints nothing and fails on any exit but 0.
+// probe is execute for a tool that may be missing: it prints nothing, fails on any exit but 0 and
+// answers stdout trimmed.
 probe :: proc(command: []string) -> (stdout: string, ok: bool) {
 	state, out, _, err := os.process_exec({command = command}, context.temp_allocator)
-	return string(out), err == nil && state.exit_code == 0
+	return strings.trim_space(string(out)), err == nil && state.exit_code == 0
 }
 
 build :: proc(command: []string, working_dir := "") -> (ok: bool) {

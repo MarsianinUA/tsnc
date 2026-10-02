@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "core:time"
 
 import "../../src/target"
@@ -70,7 +69,7 @@ find_rival :: proc(name: string) -> string {
 	}
 	when ODIN_OS == .Windows {
 		if root, ok := probe({"cmd", "/c", "npm", "root", "-g"}); ok {
-			exe := path_in(strings.trim_space(root), fmt.tprintf("%s/bin/%s.exe", name, name))
+			exe := path_in(root, fmt.tprintf("%s/bin/%s.exe", name, name))
 			if os.is_file(exe) {
 				return exe
 			}
