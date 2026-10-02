@@ -97,15 +97,15 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 	build_twins(setup) or_return
 
 	against := setup.options.against != ""
-	if against {
-		fmt.println("| program | before, s | now, s | change |")
-		fmt.println("| --- | ---: | ---: | ---: |")
-	} else {
-		fmt.println("| program | tsnc, s | scriptc, s | Node, s | Bun, s | Go, s |")
-		fmt.println("| --- | ---: | ---: | ---: | ---: | ---: |")
+	longest := 0
+	for name in names {
+		longest = max(longest, len(name))
 	}
+	times := []string{"program", "tsnc, s", "scriptc, s", "Node, s", "Bun, s", "Go, s"}
+	changes := []string{"program", "before, s", "now, s", "change"}
+	table := start_table(changes if against else times, {longest})
 	now := make(map[string]f64, context.temp_allocator)
-	gc_rows := make([dynamic]string, context.temp_allocator)
+	gc_rows := make([dynamic][]string, context.temp_allocator)
 	sizes := [Column]string {
 		.tsnc ..= .go = "—",
 	}
@@ -150,10 +150,10 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 			}
 		}
 		if against {
-			change_row(setup.before, name, now[name])
+			change_row(table, setup.before, name, now[name])
 		} else {
-			row := slice.enumerated_array(&cells)
-			fmt.printfln("| %s | %s |", name, strings.join(row, " | ", context.temp_allocator))
+			row := [][]string{{name}, slice.enumerated_array(&cells)}
+			print_row(table, slice.concatenate(row, context.temp_allocator))
 		}
 		if name == "hello" {
 			for column in ([]Column{.tsnc, .scriptc, .go}) {
@@ -166,19 +166,27 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 	}
 	fmt.println()
 	if wanted(setup, "hello") {
-		fmt.println("| hello executable | tsnc | scriptc | Go |")
-		fmt.println("| --- | ---: | ---: | ---: |")
-		fmt.printfln("| KB | %s | %s | %s |", sizes[.tsnc], sizes[.scriptc], sizes[.go])
+		print_table(
+			{"hello executable", "tsnc", "scriptc", "Go"},
+			{{"KB", sizes[.tsnc], sizes[.scriptc], sizes[.go]}},
+		)
 		fmt.println()
 	}
 	if setup.options.gc {
-		fmt.println(
-			"| program | collections | marking, ms | sweeping, ms | longest pause, ms | cells | allocated, MB | live, MB | heap, MB |",
+		print_table(
+			{
+				"program",
+				"collections",
+				"marking, ms",
+				"sweeping, ms",
+				"longest pause, ms",
+				"cells",
+				"allocated, MB",
+				"live, MB",
+				"heap, MB",
+			},
+			gc_rows[:],
 		)
-		fmt.println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-		for row in gc_rows {
-			fmt.println(row)
-		}
 		fmt.println()
 	}
 	if setup.options.save != "" {
@@ -194,11 +202,11 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 
 // gc_row takes the numbers of the TSNC_GC_STATS line by position, in the order gc.write_stats
 // writes them: "gc: 109 collections, 293.5 ms marking, ..., 23.3 MB heap".
-gc_row :: proc(name, line: string) -> (row: string, ok: bool) {
+gc_row :: proc(name, line: string) -> (row: []string, ok: bool) {
 	parts := strings.split(strings.trim_prefix(line, GC_PREFIX), ", ", context.temp_allocator)
 	if !strings.has_prefix(line, GC_PREFIX) || len(parts) != 8 {
 		fmt.eprintfln("bench: %s: no line of %s, but %q", name, GC_VARIABLE, line)
-		return "", false
+		return nil, false
 	}
 	cells := make([dynamic]string, context.temp_allocator)
 	append(&cells, name)
@@ -206,7 +214,7 @@ gc_row :: proc(name, line: string) -> (row: string, ok: bool) {
 		number, _, _ := strings.partition(part, " ")
 		append(&cells, number)
 	}
-	return fmt.tprintf("| %s |", strings.join(cells[:], " | ", context.temp_allocator)), true
+	return cells[:], true
 }
 
 size_of_file :: proc(path: string) -> (size: i64, ok: bool) {

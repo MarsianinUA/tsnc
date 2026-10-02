@@ -32,8 +32,17 @@ compile :: proc(setup: Setup) -> (ok: bool) {
 	jobs := os.get_processor_core_count()
 	fmt.printfln("Compile, `tsnc check`, median of %d runs, wall ms (CPU ms):", COMPILE_RUNS)
 	fmt.println()
-	fmt.printfln("| shape | files | lines | -j:1 | -j:%d | speed-up | work on one CPU |", jobs)
-	fmt.println("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	headers := []string {
+		"shape",
+		"files",
+		"lines",
+		"-j:1",
+		fmt.tprintf("-j:%d", jobs),
+		"speed-up",
+		"work on one CPU",
+	}
+	// Wide enough for "layered", "976000" and "1465 (1438)".
+	table := start_table(headers, {7, 0, 6, 11, 11})
 
 	layered: Project
 	layered_check: Sample
@@ -42,18 +51,16 @@ compile :: proc(setup: Setup) -> (ok: bool) {
 		one := time_check(setup, project, 1) or_return
 		all := time_check(setup, project, jobs) or_return
 		work := one_cpu_work(setup, project, jobs) or_return
-		fmt.printfln(
-			"| %v | %d | %d | %.0f (%.0f) | %.0f (%.0f) | %.2f | %s |",
-			shape,
-			project.files,
-			project.lines,
-			ms(one.wall),
-			ms(one.cpu),
-			ms(all.wall),
-			ms(all.cpu),
-			ms(one.wall) / ms(all.wall),
+		row := []string {
+			fmt.tprintf("%v", shape),
+			fmt.tprintf("%d", project.files),
+			fmt.tprintf("%d", project.lines),
+			fmt.tprintf("%.0f (%.0f)", ms(one.wall), ms(one.cpu)),
+			fmt.tprintf("%.0f (%.0f)", ms(all.wall), ms(all.cpu)),
+			fmt.tprintf("%.2f", ms(one.wall) / ms(all.wall)),
 			work,
-		)
+		}
+		print_row(table, row)
 		layered, layered_check = project, all
 	}
 	fmt.println()

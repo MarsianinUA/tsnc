@@ -237,7 +237,7 @@ The header lists the flags that change the numbers, so a table from `-o:none` ca
 
 To measure a change, save a baseline on `dev` with `bench/bench.sh -save:base trees`, switch to the branch and run `bench/bench.sh -against:base trees`. That table gives the time before, the time now and the change in percent. Node and Go still run once, to check the output, but they are not timed: they are the same before and after. scriptc and Bun do not run at all. On a desktop, the same build of `objects` and `trees` differed by up to 9% from one run of the runner to the next, so a smaller change needs more runs (`-runs:N`) or a repeat before it counts.
 
-The runner prints Markdown:
+The runner prints Markdown, padded so that the columns line up in a terminal too:
 
 - The tables of `bench/RESULTS.md`, when no flag is given. Each program is built with `-o:speed` by tsnc, with `go build`, and by scriptc at its default level, `release`, whatever `-o` says. It runs once under each implementation, and tsnc, Node and Go must exit 0 and print the same output. When scriptc or Bun is missing, cannot build the program, fails or prints something else, its cell is `—` and the reason goes to stderr. One that runs past 30 seconds is killed and its cell is `> 30`: scriptc 0.2.1 never finishes `sieve`. The table gives the median wall time of five more runs, or of 20 for hello, then the size of hello's executable. Bun has no column there: its executable would be Bun itself.
 - compile: three generated projects of about a thousand modules under `dist/bench-compile-*` go through `tsnc check` at `-j:1` and at the default `-j`.

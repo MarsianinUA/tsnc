@@ -49,11 +49,12 @@ save_baseline :: proc(path: string, baseline: Baseline) -> (ok: bool) {
 	return true
 }
 
-change_row :: proc(before: Baseline, name: string, now: f64) {
+change_row :: proc(table: Table, before: Baseline, name: string, now: f64) {
 	was, found := before.tsnc[name]
 	if !found {
-		fmt.printfln("| %s | n/a | %.3f | n/a |", name, now)
+		print_row(table, {name, "n/a", fmt.tprintf("%.3f", now), "n/a"})
 		return
 	}
-	fmt.printfln("| %s | %.3f | %.3f | %+.1f%% |", name, was, now, 100 * (now - was) / was)
+	change := fmt.tprintf("%+.1f%%", 100 * (now - was) / was)
+	print_row(table, {name, fmt.tprintf("%.3f", was), fmt.tprintf("%.3f", now), change})
 }
