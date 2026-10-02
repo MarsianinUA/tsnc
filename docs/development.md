@@ -7,6 +7,9 @@ How to build tsnc from source, run its tests and find your way around the reposi
 Run from the repository root. After cloning, create the output directory once with `mkdir dist`. Odin does not create the `-out:` directory itself, and without it the build fails with `LNK1104`. The directory is not in git.
 
 ```sh
+# everything CI runs, on this machine: one line per step, the output of each in dist/all.log
+tests/all.sh
+
 # compiler
 odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style
 
@@ -293,7 +296,8 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and `de
 ```
 .github/      CI workflow
 src/          compiler, package main
-src/runtime/  runtime, package rt, built as an object file
+src/runtime/  runtime, package rt, built as an object file, and its packages gc (the collector), str,
+              arr, value, num, console and fail (runtime errors)
 src/abi/      compiler and runtime contract: layouts, tags, type tables, runtime exports
 src/llvm/     LLVM-C 20 bindings
 src/codegen/  our IR to an LLVM module, then to an object file or textual LLVM IR
@@ -311,9 +315,12 @@ src/lower/    the typed syntax tree to our IR
 src/opt/      our IR to our IR: cells on the stack, number ranges, proved indices, integers
 src/driver/   the imperative layer: files, arenas, the import closure, the phases
 src/lib/      built-in lib.d.ts
-tests/        unit tests (one folder per src package), test runner, negative, diff and expect corpora
+tests/        unit tests (one folder per src package, tests/runtime/<package> for the runtime), the
+              harness the lower, opt and codegen tests share (source text to IR), the test runner
+              and its negative, diff and expect corpora, all.sh
 bench/        benchmark programs in bench/ts, their Go twins in bench/go, the runner, RESULTS.md
 docs/         requirements, architecture plan, task board, this development guide
 dist/         build output, not in git
+.claude/      agent notes (CLAUDE.md) and skills, not in git
 .zed/         Zed tasks and debug config
 ```

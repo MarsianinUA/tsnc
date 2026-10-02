@@ -1,6 +1,6 @@
 # Task board: tsnc
 
-Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: October 2, 2026.
+Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: October 3, 2026.
 
 Purpose. The operator gives the agent a task number. The agent reads the shared handoff kit and the task kit, makes a detailed plan and writes the code. Tasks do not change the architecture. If a task runs into a key block from the section [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the work stops and the question goes back to the operator.
 
@@ -8,7 +8,7 @@ Purpose. The operator gives the agent a task number. The agent reads the shared 
 
 Operator prompt template for the agent:
 
-> Do task T2.4 from `docs/tasks-tsnc.md`. First read the shared handoff kit and the task kit. Then run `$direct-plan` on the links in the "Where" line, then `$direct-writer`. The done criterion is the task's "Done" line. Do not change the key blocks of `architecture-plan-tsnc.md`. If in doubt, stop and ask.
+> Do task T2.4 from `docs/tasks-tsnc.md`. First read the shared handoff kit and the task kit. Then run `$casual-plan-2` on the links in the "Where" line; it hands the approved plan to `$direct-writer`. The done criterion is the task's "Done" line. Do not change the key blocks of `architecture-plan-tsnc.md`. If in doubt, stop and ask.
 
 Statuses in the task heading: `[ ]` not started, `[~]` in progress, `[x]` accepted, `[!]` blocked (append the reason to the line). The operator changes the status.
 
@@ -20,14 +20,9 @@ Every agent reads it before any task.
 
 1. `architecture-plan-tsnc.md`: sections [Philosophy](architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers), [Key decisions](architecture-plan-tsnc.md#key-decisions), [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may); the rows for your packages in [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler) or [runtime](architecture-plan-tsnc.md#package-boundaries-runtime); your [Contracts](architecture-plan-tsnc.md#contracts).
 2. `REQUIREMENTS.md`: §11 (build with `-vet -strict-style`, all repository text in English, repository structure) and the sections from the task's "Where" line.
-3. Skills: `$direct-plan`, then `$direct-writer`. Rules: `$direct-principles`, `$design-language`, `$code-conventions`. Before handing in: `$code-review-and-quality`.
-4. Commands from the root of `projects/tsnc`:
-   - compiler: `odin build src -out:dist/tsnc.exe -o:speed -vet -strict-style`;
-   - package check: `odin check src/<package> -no-entry-point -vet -strict-style` (drop `-no-entry-point` for a package with `main`);
-   - package tests: `odin test tests/<package> -out:dist/<package>-tests.exe -vet -strict-style`; unit tests of `src/<package>` live in `tests/<package>/`, never next to the code;
-   - runtime: `odin build src/runtime -build-mode:obj -use-single-module -o:speed -out:dist/tsnc_rt-<target>.obj -vet -strict-style` (without `-use-single-module` Odin writes one `.obj` per package);
-   - runs: `odin run tests/runner -out:dist/runner.exe -- smoke | negative | diff`.
-5. General done criterion for any task: `odin check` and `odin test` of the affected packages are green; no new package, mode flag, package-level state or import against the pipeline beyond the plan; every new diagnostic has a code in the `diag` registry and a hint; all text in English: comments, documentation, compiler messages; the agent makes no commits.
+3. Skills: `$casual-plan-2`, which hands the approved plan to `$direct-writer`. Rules: `$direct-principles`, `$design-language`, `$code-conventions`. Before handing in: `$code-review-and-quality`.
+4. Commands: [Commands](development.md#commands) in the development guide. Between edits, `odin check` and `odin test` of the packages you touch; once every edit is in, `tests/all.sh`, which runs what CI runs.
+5. General done criterion for any task: `tests/all.sh` is green; no new package, mode flag, package-level state or import against the pipeline beyond the plan; every new diagnostic has a code in the `diag` registry and a hint; all text in English: comments, documentation, compiler messages; the agent makes no commits.
 6. The agent's report to the operator at the end: what was done, how it was checked, what is left or what was blocked by the plan.
 
 ## Milestone 1: infrastructure and smoke test
