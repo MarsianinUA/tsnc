@@ -75,7 +75,7 @@ unbox_checked :: proc(
 	done := ir.NO_BLOCK
 	cell := result
 	if want.nullish != .None {
-		null := ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = result}, span)
+		null := null_test(s, result, span)
 		done = ir.add_block(&s.fb)
 		held := ir.add_block(&s.fb)
 		ir.emit(
@@ -107,8 +107,6 @@ unbox_checked :: proc(
 	return result
 }
 
-// present_checked reads a reference that may hold null as its present type, and fails with error
-// where it holds null.
 @(private)
 present_checked :: proc(
 	s: ^Func_State,
@@ -116,12 +114,12 @@ present_checked :: proc(
 	error: abi.Runtime_Error,
 	span: source.Span,
 ) -> ir.Value_ID {
-	fail_if(s, ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span), error, span)
+	fail_if(s, null_test(s, value, span), error, span)
 	return present(s, value, span)
 }
 
-// present is a reference a test before it proved not null, typed as present. The value may be
-// present already: a local that may hold null holds a present reference as it was given.
+// present types a reference a test proved not null as present. A present value passes as it is: a
+// local that may hold null holds a present reference as it was given.
 @(private)
 present :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	if value == ir.NO_VALUE || value_type(s, value).nullish == .None {
@@ -131,10 +129,33 @@ present :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Val
 	return ir.emit(&s.fb, type, ir.Non_Null{value = value}, span)
 }
 
-// nullish_tag is the tag of what 0 stands for in a reference that may hold null.
 @(private)
 nullish_tag :: proc(type: ir.Type) -> abi.Tag {
 	return .Null if type.nullish == .Null else .Undefined
+}
+
+@(private)
+may_be_nullish :: proc(type: ir.Type) -> bool {
+	return type == ir.TAGGED || type.nullish != .None
+}
+
+// nullish_test tests whether a value holds null or undefined, as tags name them. A reference
+// that may hold null holds only the one its 0 stands for, and a present one neither.
+@(private)
+nullish_test :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	tags: ir.Tag_Set,
+	span: source.Span,
+) -> ir.Value_ID {
+	type := value_type(s, value)
+	switch {
+	case type == ir.TAGGED:
+		return tag_test(s, value, tags, span)
+	case type.nullish != .None && nullish_tag(type) in tags:
+		return null_test(s, value, span)
+	}
+	return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
 }
 
 // tag_of is the tag a value of a static type has once it is boxed; an array is an object there.
@@ -158,10 +179,10 @@ tag_of :: proc(type: ir.Type) -> (abi.Tag, bool) {
 	return .Undefined, false
 }
 
-// narrowed keeps the promise of lower_expression: a tagged value for a node check typed narrower is
-// unboxed into the node's type, and a reference that may hold null is read as present where the
-// node is, and either fails the program where the value holds something else, which only a value
-// that came through `any`, or changed after the test that narrowed it, can do. representation
+// narrowed keeps the promise of lower_expression. A tagged value whose node check typed narrower is
+// unboxed into the node's type, and a reference that may hold null whose node is present is read
+// as present. Either fails the program where the value holds something else, which only a value
+// that came through `any`, or one changed after the test that narrowed it, can do. representation
 // comes first, so a node that stays tagged interns nothing.
 @(private)
 narrowed :: proc(
@@ -174,7 +195,7 @@ narrowed :: proc(
 		return value
 	}
 	have := value_type(s, value)
-	if have != ir.TAGGED && have.nullish == .None {
+	if !may_be_nullish(have) {
 		return value
 	}
 	kind, ok := representation(s.types, s.typed.node_types[id])
@@ -220,18 +241,13 @@ members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
 	return out
 }
 
-// lower_typeof answers the word statically where the operand's value has a static representation,
-// and asks the runtime for the word of a tagged value. `typeof x === "number"` never gets here: it
-// is a tag test (lower_typeof_test).
+// lower_typeof answers the word statically where the operand's value has a static representation.
+// `typeof x === "number"` never gets here: it is a tag test (lower_typeof_test).
 @(private)
 lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
-	tagged, word := typeof_operand(s, operand)
-	if tagged != ir.NO_VALUE {
-		call := ir.Call_Runtime {
-			export = .Value_Typeof,
-			args   = {tagged},
-		}
-		return ir.emit(&s.fb, ir.STR, call, span)
+	value, word := typeof_operand(s, operand)
+	if value != ir.NO_VALUE {
+		return typeof_value(s, value, span)
 	}
 	if word == "" {
 		return ir.NO_VALUE // reported where the operand stands
@@ -239,25 +255,63 @@ lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) ->
 	return string_constant(s, word, span)
 }
 
-// typeof_operand evaluates the operand of a `typeof` and answers either a tagged value, whose tag
-// tells the word at run time, or the word itself. The representation the value has decides, never
-// the type check narrowed it to: a call may have written the variable after the test that narrowed
-// it. A name whose storage is static is not read, since its word is known without it; closures.odin
-// counts `typeof f` as a call, so a nested function with no environment has no local to read. A
-// name read before its declaration ran still fails, as in Node.
+// typeof_value is the word of a value that may be null or undefined: the runtime's for a tagged
+// value, and for a reference one of two words, picked by a test for null.
+@(private)
+typeof_value :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+	type := value_type(s, value)
+	if type == ir.TAGGED {
+		call := ir.Call_Runtime {
+			export = .Value_Typeof,
+			args   = {value},
+		}
+		return ir.emit(&s.fb, ir.STR, call, span)
+	}
+	nullish_word, present_word := typeof_words(type)
+	if nullish_word == present_word {
+		return string_constant(s, present_word, span)
+	}
+	nullish := string_constant(s, nullish_word, span)
+	present := string_constant(s, present_word, span)
+	join := ir.add_block(&s.fb)
+	nothing := jump_if(s, null_test(s, value, span), join, span)
+	something := here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	return join_values(s, join, {nothing, something}, {nullish, present}, ir.STR, span)
+}
+
+@(private)
+typeof_words :: proc(type: ir.Type) -> (nullish: string, present: string) {
+	nullish = "object" if type.nullish == .Null else "undefined"
+	#partial switch type.kind {
+	case .Str:
+		return nullish, "string"
+	case .Closure:
+		return nullish, "function"
+	}
+	return nullish, "object"
+}
+
+// typeof_operand evaluates the operand of a `typeof` and answers either a value whose word only
+// run time tells, a tagged one or a reference that may hold null, or the word itself. The
+// representation the value has decides, never the type check narrowed it to: a call may have
+// written the variable after the test that narrowed it. A name whose storage is static is not read,
+// since its word is known without it; closures.odin counts `typeof f` as a call, so a nested
+// function with no environment has no local to read. A name read before its declaration ran still
+// fails, as in Node.
 @(private)
 typeof_operand :: proc(
 	s: ^Func_State,
 	operand: ast.Node_ID,
 ) -> (
-	tagged: ir.Value_ID,
+	value: ir.Value_ID,
 	word: string,
 ) {
 	_, is_ident := s.tree.nodes[operand].variant.(ast.Ident)
 	ref := s.typed.node_symbols[operand]
 	if ref.symbol != bind.NO_SYMBOL && ref.file != program.LIB {
 		stored, _ := symbol_type(s.low, ref.file, ref.symbol)
-		if stored != ir.TAGGED && stored.nullish == .None {
+		if !may_be_nullish(stored) {
 			if is_ident && early_use(s.tree, s.bound, operand) {
 				check_ready(s, s.bound.node_symbols[operand], s.tree.nodes[operand].span)
 			}
@@ -266,13 +320,12 @@ typeof_operand :: proc(
 	} else if is_ident || ref.symbol != bind.NO_SYMBOL {
 		return ir.NO_VALUE, typeof_word(s, operand) // `undefined`, or a name of the lib
 	}
-	value := lower_raw(s, operand)
+	value = lower_raw(s, operand)
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE, ""
 	}
-	if type := value_type(s, value); type == ir.TAGGED || type.nullish != .None {
-		// The word of a null depends on what it stands for: "object" for null.
-		return coerce(s, value, ir.TAGGED, s.tree.nodes[operand].span), ""
+	if may_be_nullish(value_type(s, value)) {
+		return value, ""
 	}
 	return ir.NO_VALUE, typeof_word(s, operand)
 }
@@ -310,8 +363,9 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 
 // lower_typeof_test is `typeof E` compared with a string literal by `===`, `!==`, `==` or `!=`,
 // which needs no word at run time: an E of a static representation answers a constant, a tagged
-// one a test of its tag. matched is false for any other comparison. Both sides run in source order,
-// the literal's own side only when it is more than a literal.
+// one a test of its tag, and a reference that may hold null a test for null (typeof_is). matched is
+// false for any other comparison. Both sides run in source order, the literal's own side only when
+// it is more than a literal.
 @(private)
 lower_typeof_test :: proc(
 	s: ^Func_State,
@@ -344,19 +398,19 @@ lower_typeof_test :: proc(
 	}
 
 	span := s.tree.nodes[id].span
-	tagged, static_word := ir.NO_VALUE, ""
+	value, static_word := ir.NO_VALUE, ""
 	for side, i in sides {
 		switch {
 		case i == at:
-			tagged, static_word = typeof_operand(s, operand)
+			value, static_word = typeof_operand(s, operand)
 		case !is_string_literal(s, side):
 			lower_effect(s, side)
 		}
 	}
 
 	switch {
-	case tagged != ir.NO_VALUE:
-		test = typeof_is(s, tagged, word, span)
+	case value != ir.NO_VALUE:
+		test = typeof_is(s, value, word, span)
 	case static_word == "":
 		return ir.NO_VALUE, true // reported where the operand stands
 	case:
@@ -376,6 +430,16 @@ typeof_is :: proc(
 	word: string,
 	span: source.Span,
 ) -> ir.Value_ID {
+	if type := value_type(s, value); type != ir.TAGGED {
+		nullish_word, present_word := typeof_words(type)
+		switch {
+		case (nullish_word == word) == (present_word == word):
+			return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = present_word == word}, span)
+		case nullish_word == word:
+			return null_test(s, value, span)
+		}
+		return negated(s, null_test(s, value, span), span)
+	}
 	tags, known := typeof_tags(word)
 	if !known {
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
@@ -399,28 +463,26 @@ is_string_literal :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 	return is_literal
 }
 
-// Switch_Subject is what the cases of a `switch` compare with. For `switch (typeof x)` of a tagged
-// x it holds x, and a case that names a word tests its tag; the word itself is asked of the runtime
-// once, at the first case that is no literal, whose test dominates every later one.
+// Switch_Subject is what the cases of a `switch` compare with. For `switch (typeof x)` where only
+// run time tells the word, it holds x, and a case that names a word tests x (typeof_is); the word
+// itself is made once, at the first case that is no literal, whose test dominates every later one.
 @(private)
 Switch_Subject :: struct {
-	value:     ir.Value_ID,
-	of_tagged: bool, // the subject is `typeof` of a tagged value
-	tagged:    ir.Value_ID, // that value, when of_tagged
+	value:   ir.Value_ID,
+	operand: ir.Value_ID, // x, or NO_VALUE
 }
 
 // switch_subject lowers the subject once, before the scope of the cases is entered.
 @(private)
 switch_subject :: proc(s: ^Func_State, id: ast.Node_ID) -> Switch_Subject {
 	subject := Switch_Subject {
-		value  = ir.NO_VALUE,
-		tagged = ir.NO_VALUE,
+		value   = ir.NO_VALUE,
+		operand = ir.NO_VALUE,
 	}
 	if unary, is_unary := s.tree.nodes[id].variant.(ast.Unary); is_unary && unary.op == .Typeof {
-		tagged, word := typeof_operand(s, unary.operand)
-		if tagged != ir.NO_VALUE {
-			subject.of_tagged = true
-			subject.tagged = tagged
+		value, word := typeof_operand(s, unary.operand)
+		if value != ir.NO_VALUE {
+			subject.operand = value
 		} else if word != "" {
 			subject.value = string_constant(s, word, s.tree.nodes[id].span)
 		}
@@ -430,7 +492,7 @@ switch_subject :: proc(s: ^Func_State, id: ast.Node_ID) -> Switch_Subject {
 	return subject
 }
 
-// typeof_case_test answers the test of a case of `switch (typeof x)` for a tagged x, and false for
+// typeof_case_test answers the test of a case of `switch (typeof x)` that holds x, and false for
 // matched when the case is no string literal and needs the word itself.
 @(private)
 typeof_case_test :: proc(
@@ -444,29 +506,20 @@ typeof_case_test :: proc(
 	span := s.tree.nodes[value].span
 	word, is_word := literal_word(s, value)
 	if !is_word {
-		if subject.value == ir.NO_VALUE && subject.tagged != ir.NO_VALUE {
-			call := ir.Call_Runtime {
-				export = .Value_Typeof,
-				args   = {subject.tagged},
-			}
-			subject.value = ir.emit(&s.fb, ir.STR, call, span)
+		if subject.value == ir.NO_VALUE {
+			subject.value = typeof_value(s, subject.operand, span)
 		}
 		return ir.NO_VALUE, false
 	}
 	if !is_string_literal(s, value) {
 		lower_effect(s, value)
 	}
-	if subject.tagged == ir.NO_VALUE {
-		// The subject was reported where it stands.
-		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span), true
-	}
-	return typeof_is(s, subject.tagged, word, span), true
+	return typeof_is(s, subject.operand, word, span), true
 }
 
-// compare_tagged is `===` or `!==` with a tagged side. Against a side whose value is null or
-// undefined itself (nullish_tags) it tests the tag of the other; anything else goes to the runtime,
-// both sides boxed. A type check narrowed a side to never decides: a call may have written the
-// variable since the test that narrowed it.
+// compare_tagged is `===` or `!==` with a tagged side where compare_references found no null or
+// undefined to test for: the runtime compares, both sides boxed. A type check narrowed a side to
+// never decides: a call may have written the variable since the test that narrowed it.
 @(private)
 compare_tagged :: proc(
 	s: ^Func_State,
@@ -474,39 +527,27 @@ compare_tagged :: proc(
 	values: [2]ir.Value_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
-	test := ir.NO_VALUE
-	for value, i in values {
-		other := values[1 - i]
-		tags, nullish := nullish_tags(s, value)
-		if !nullish || value_type(s, other) != ir.TAGGED {
-			continue
-		}
-		test = tag_test(s, other, tags, span)
-		break
+	a := coerce(s, values[0], ir.TAGGED, span)
+	b := coerce(s, values[1], ir.TAGGED, span)
+	if a == ir.NO_VALUE || b == ir.NO_VALUE {
+		return ir.NO_VALUE
 	}
-	if test == ir.NO_VALUE {
-		a := coerce(s, values[0], ir.TAGGED, span)
-		b := coerce(s, values[1], ir.TAGGED, span)
-		if a == ir.NO_VALUE || b == ir.NO_VALUE {
-			return ir.NO_VALUE
-		}
-		call := ir.Call_Runtime {
-			export = .Value_Equal,
-			args   = {a, b},
-		}
-		test = ir.emit(&s.fb, ir.BOOL, call, span)
+	call := ir.Call_Runtime {
+		export = .Value_Equal,
+		args   = {a, b},
 	}
+	test := ir.emit(&s.fb, ir.BOOL, call, span)
 	if op == .Not_Equal {
 		return negated(s, test, span)
 	}
 	return test
 }
 
-// compare_references answers `===` where a side is a reference that may hold null, or a reference
-// meets null or undefined itself: a test for null, an answer known before anything runs, or the
-// addresses of two objects or two functions. Where 0 is null on one side and undefined on the
-// other, and for strings, both sides go to the runtime boxed. handled = false leaves the comparison
-// to the caller.
+// compare_references answers `===` where a side is null or undefined itself (nullish_tags) and the
+// other tagged or a reference, or a side is a reference that may hold null: a test of the tag or for
+// null, an answer known before anything runs, the addresses of two objects or two functions, or the
+// tests of compare_nullable. Against a tagged side both go to the runtime boxed. handled = false
+// leaves the comparison to the caller.
 @(private)
 compare_references :: proc(
 	s: ^Func_State,
@@ -516,26 +557,25 @@ compare_references :: proc(
 	test: ir.Value_ID,
 	handled: bool,
 ) {
-	if values[0] == ir.NO_VALUE || values[1] == ir.NO_VALUE {
-		return ir.NO_VALUE, false
-	}
 	for value, i in values {
-		other := value_type(s, values[1 - i])
+		other := values[1 - i]
 		tags, nullish := nullish_tags(s, value)
-		if !nullish || !ir.is_reference(other) {
+		if !nullish {
 			continue
 		}
-		if other.nullish != .None && nullish_tag(other) in tags {
-			return ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = values[1 - i]}, span), true
+		if type := value_type(s, other); type == ir.TAGGED || ir.is_reference(type) {
+			return nullish_test(s, other, tags, span), true
 		}
-		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span), true
 	}
 	a, b := value_type(s, values[0]), value_type(s, values[1])
 	if a.nullish == .None && b.nullish == .None {
 		return ir.NO_VALUE, false
 	}
+	if !ir.is_reference(a) || ir.non_null(a) != ir.non_null(b) {
+		return compare_tagged(s, .Equal, values, span), true
+	}
 	same_null := a.nullish == b.nullish || a.nullish == .None || b.nullish == .None
-	if (a.kind == .Ref || a.kind == .Closure) && ir.non_null(a) == ir.non_null(b) && same_null {
+	if a.kind != .Str && same_null {
 		compare := ir.Compare {
 			op    = .Equal,
 			left  = values[0],
@@ -543,7 +583,49 @@ compare_references :: proc(
 		}
 		return ir.emit(&s.fb, ir.BOOL, compare, span), true
 	}
-	return compare_tagged(s, .Equal, values, span), true
+	return compare_nullable(s, values, span), true
+}
+
+// compare_nullable is `===` of two references of one type, either of which may hold null: a null
+// side equals only a null that stands for the same nullish, and two present sides compare as
+// strings or by address.
+@(private)
+compare_nullable :: proc(
+	s: ^Func_State,
+	values: [2]ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	types := [2]ir.Type{value_type(s, values[0]), value_type(s, values[1])}
+	nulls := [2]ir.Value_ID{ir.NO_VALUE, ir.NO_VALUE}
+	for type, i in types {
+		if type.nullish != .None {
+			nulls[i] = null_test(s, values[i], span)
+		}
+	}
+	join := ir.add_block(&s.fb)
+	edges := make([dynamic]Edge, 0, 3, context.temp_allocator)
+	answers := make([dynamic]ir.Value_ID, 0, 3, context.temp_allocator)
+	no := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
+	if nulls[0] != ir.NO_VALUE {
+		// A null first side equals a second that is null too and stands for the same nullish.
+		append(&answers, nulls[1] if types[1].nullish == types[0].nullish else no)
+		append(&edges, jump_if(s, nulls[0], join, span))
+	}
+	if nulls[1] != ir.NO_VALUE {
+		append(&answers, no)
+		append(&edges, jump_if(s, nulls[1], join, span))
+	}
+	left, right := present(s, values[0], span), present(s, values[1], span)
+	equal: ir.Value_ID
+	if types[0].kind == .Str {
+		equal = strings_equal(s, left, right, span)
+	} else {
+		equal = ir.emit(&s.fb, ir.BOOL, ir.Compare{op = .Equal, left = left, right = right}, span)
+	}
+	append(&edges, here(s))
+	append(&answers, equal)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	return join_values(s, join, edges[:], answers[:], ir.BOOL, span)
 }
 
 // nullish_tags answers the tag of a value that is null or undefined whatever runs: the constant, or
@@ -568,17 +650,18 @@ is_nullish_constant :: proc(s: ^Func_State, value: ir.Value_ID) -> bool {
 	return nullish
 }
 
-// truthy_tagged tests a tagged value. One whose members are all nullish or references is true
-// exactly when it is neither null nor undefined, which is one tag test: the `while (node)` over a
-// linked list calls nothing.
+// truthy_tagged tests a tagged value. A variable declared with members that are all nullish or
+// references is true exactly when it is neither null nor undefined, which is one tag test and no
+// call. Its declaration decides, since check narrows a read past calls that may write the variable
+// again.
 @(private)
 truthy_tagged :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
-	type: check.Type_ID,
+	operand: ast.Node_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
-	if type != check.ERROR && nullish_or_reference(s.types, type) {
+	if declared_nullish_or_reference(s, operand) {
 		return negated(s, tag_test(s, value, {.Undefined, .Null}, span), span)
 	}
 	call := ir.Call_Runtime {
@@ -586,6 +669,22 @@ truthy_tagged :: proc(
 		args   = {value},
 	}
 	return ir.emit(&s.fb, ir.BOOL, call, span)
+}
+
+@(private)
+declared_nullish_or_reference :: proc(s: ^Func_State, operand: ast.Node_ID) -> bool {
+	if operand == ast.NO_NODE {
+		return false
+	}
+	_, is_ident := s.tree.nodes[operand].variant.(ast.Ident)
+	ref := s.typed.node_symbols[operand]
+	if !is_ident || ref.symbol == bind.NO_SYMBOL || ref.file == program.LIB {
+		return false
+	}
+	facts := &s.low.facts[ref.file]
+	declaration := s.low.prog.bound[ref.file].symbols[ref.symbol].declaration
+	type := facts.typed.node_types[declaration]
+	return type != check.ERROR && nullish_or_reference(facts.result.types, type)
 }
 
 @(private)

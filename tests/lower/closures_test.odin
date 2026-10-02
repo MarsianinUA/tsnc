@@ -5,6 +5,7 @@ import "core:testing"
 
 import "../../src/abi"
 import "../../src/ir"
+import "../harness"
 
 // Closures: which functions take an environment, what it holds and how, and the calls through a
 // function value, which pass the arguments of the callee's signature class.
@@ -25,9 +26,9 @@ a_variable_that_never_changes_is_copied_and_one_that_does_is_boxed :: proc(t: ^t
 		console.log(make(2)());
 	`,
 	)
-	step, found := func_prefixed(result.output, "m1.step$")
-	make, _ := func_named(result.output, "m1.make")
-	if !testing.expectf(t, found && step.env != ir.NO_LAYOUT, "%s", result.text) {
+	step := harness.func_prefixed(t, result.output, "m1.step$")
+	make := harness.func_named(t, result.output, "m1.make")
+	if !testing.expectf(t, step.env != ir.NO_LAYOUT, "%s", result.text) {
 		return
 	}
 	// n is copied in as a number, count is a reference to its box.
@@ -53,9 +54,9 @@ a_self_recursive_function_that_captures_nothing_is_called_directly :: proc(t: ^t
 		console.log(fibs(10));
 	`,
 	)
-	fib, found := func_prefixed(result.output, "m1.fib$")
-	fibs, _ := func_named(result.output, "m1.fibs")
-	testing.expectf(t, found && fib.env == ir.NO_LAYOUT, "%s", result.text)
+	fib := harness.func_prefixed(t, result.output, "m1.fib$")
+	fibs := harness.func_named(t, result.output, "m1.fibs")
+	testing.expectf(t, fib.env == ir.NO_LAYOUT, "%s", result.text)
 	for body in ([2]ir.Func{fib, fibs}) {
 		testing.expectf(t, calls_function(result.output, body, "m1.fib$"), "%s", result.text)
 		testing.expectf(t, len(instructions_of(body, ir.Make_Closure)) == 0, "%s", result.text)
@@ -81,11 +82,11 @@ two_nested_functions_that_only_call_each_other_are_called_directly :: proc(t: ^t
 		console.log(parity(3));
 	`,
 	)
-	even, even_found := func_prefixed(result.output, "m1.even$")
-	odd, odd_found := func_prefixed(result.output, "m1.odd$")
-	parity, _ := func_named(result.output, "m1.parity")
-	testing.expectf(t, even_found && even.env == ir.NO_LAYOUT, "%s", result.text)
-	testing.expectf(t, odd_found && odd.env == ir.NO_LAYOUT, "%s", result.text)
+	even := harness.func_prefixed(t, result.output, "m1.even$")
+	odd := harness.func_prefixed(t, result.output, "m1.odd$")
+	parity := harness.func_named(t, result.output, "m1.parity")
+	testing.expectf(t, even.env == ir.NO_LAYOUT, "%s", result.text)
+	testing.expectf(t, odd.env == ir.NO_LAYOUT, "%s", result.text)
 	testing.expectf(t, calls_function(result.output, even, "m1.odd$"), "%s", result.text)
 	testing.expectf(t, calls_function(result.output, odd, "m1.even$"), "%s", result.text)
 	testing.expectf(t, calls_function(result.output, parity, "m1.even$"), "%s", result.text)
@@ -114,7 +115,7 @@ a_module_function_as_a_value_is_its_static_closure :: proc(t: ^testing.T) {
 		`,
 	}
 	result := lower_sources(t, sources[:])
-	init, _ := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	names := make([dynamic]string, context.temp_allocator)
 	for ref in instructions_of(init, ir.Func_Ref) {
 		body := result.output.funcs[ref.func]
@@ -140,7 +141,7 @@ a_let_of_a_for_header_gets_a_box_per_pass :: proc(t: ^testing.T) {
 	)
 	// The loop header joins the box of i: every edge into it, the back edge too, brings a box
 	// made for the pass it starts.
-	init, _ := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	renewed := false
 	for instruction in init.values {
 		phi := instruction.variant.(ir.Phi) or_continue
@@ -156,7 +157,7 @@ a_let_of_a_for_header_gets_a_box_per_pass :: proc(t: ^testing.T) {
 @(test)
 sorting_with_a_comparator_passes_the_closure_as_it_stands :: proc(t: ^testing.T) {
 	result := lower_text(t, "const xs = [2, 1];\nconsole.log(xs.sort((a, b) => a - b));\n")
-	init, _ := func_named(result.output, "init$m1")
+	init := harness.func_named(t, result.output, "init$m1")
 	sorts := 0
 	for call in instructions_of(init, ir.Call_Runtime) {
 		if call.export != .Array_Sort {

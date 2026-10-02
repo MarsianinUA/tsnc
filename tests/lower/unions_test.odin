@@ -5,6 +5,7 @@ import "core:testing"
 
 import "../../src/abi"
 import "../../src/ir"
+import "../harness"
 
 /*
 Unions and `any`: a tagged value becomes static only after a check. A read check narrowed is a tag
@@ -32,7 +33,7 @@ a_narrowed_read_tests_the_tag_and_unboxes :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.f")
+	body := harness.func_named(t, result.output, "m1.f")
 	unboxes := instructions_of(body, ir.Unbox)
 	testing.expectf(t, len(unboxes) > 0, "%s", result.text)
 	for unbox in unboxes {
@@ -64,7 +65,7 @@ a_narrowed_object_is_checked_by_its_layout_too :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.r")
+	body := harness.func_named(t, result.output, "m1.r")
 	loads := instructions_of(body, ir.Field_Load)
 	testing.expectf(t, len(loads) > 0, "%s", result.text)
 	for load in loads {
@@ -94,11 +95,32 @@ typeof_compared_with_a_word_is_a_tag_test :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.f")
+	body := harness.func_named(t, result.output, "m1.f")
 	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
 	testing.expectf(t, tests_tags(body, {.Number}), "%s", result.text)
 	// typeof null is "object".
 	testing.expectf(t, tests_tags(body, {.Object, .Null}), "%s", result.text)
+}
+
+@(test)
+a_nullable_string_takes_no_box_for_typeof_or_equality :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		function kind(s: string | undefined): string {
+			return typeof s;
+		}
+		function same(a: string | null, b: string | undefined): boolean {
+			return a === b;
+		}
+	`,
+	)
+	for name in ([2]string{"m1.kind", "m1.same"}) {
+		body := harness.func_named(t, result.output, name)
+		testing.expectf(t, len(instructions_of(body, ir.Box)) == 0, "%s", result.text)
+		testing.expectf(t, calls_to(body, .Value_Typeof) == 0, "%s", result.text)
+		testing.expectf(t, calls_to(body, .Value_Equal) == 0, "%s", result.text)
+	}
 }
 
 @(test)
@@ -111,7 +133,7 @@ typeof_of_a_static_value_is_a_constant :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.f")
+	body := harness.func_named(t, result.output, "m1.f")
 	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
 	for leave in instructions_of(body, ir.Return) {
@@ -137,7 +159,7 @@ a_switch_over_typeof_tests_the_tag_of_each_case :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.f")
+	body := harness.func_named(t, result.output, "m1.f")
 	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
 	testing.expectf(t, tests_tags(body, {.Number}), "%s", result.text)
 	testing.expectf(t, tests_tags(body, {.String}), "%s", result.text)
@@ -155,7 +177,7 @@ a_comparison_with_null_or_undefined_is_a_tag_test :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.f")
+	body := harness.func_named(t, result.output, "m1.f")
 	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
 	testing.expectf(t, tests_tags(body, {.Null}), "%s", result.text)
 	testing.expectf(t, tests_tags(body, {.Undefined}), "%s", result.text)
@@ -176,14 +198,47 @@ a_nullable_reference_is_truthy_unless_null :: proc(t: ^testing.T) {
 			if (n) { return true; }
 			return false;
 		}
+		function named(s: string | null): boolean {
+			return !s;
+		}
 	`,
 	)
-	present, _ := func_named(result.output, "m1.present")
-	testing.expectf(t, len(instructions_of(present, ir.Call_Runtime)) == 0, "%s", result.text)
-	testing.expectf(t, len(instructions_of(present, ir.Tag_Test)) == 0, "%s", result.text)
-	testing.expectf(t, len(instructions_of(present, ir.Null_Test)) > 0, "%s", result.text)
-	positive, _ := func_named(result.output, "m1.positive")
+	present := harness.func_named(t, result.output, "m1.present")
+	named := harness.func_named(t, result.output, "m1.named")
+	for body in ([2]ir.Func{present, named}) {
+		testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
+		testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
+		testing.expectf(t, len(instructions_of(body, ir.Box)) == 0, "%s", result.text)
+		testing.expectf(t, len(instructions_of(body, ir.Null_Test)) > 0, "%s", result.text)
+	}
+	// An empty string is falsy.
+	testing.expectf(t, len(instructions_of(named, ir.Length)) > 0, "%s", result.text)
+	positive := harness.func_named(t, result.output, "m1.positive")
 	testing.expectf(t, calls_to(positive, .Value_To_Boolean) > 0, "%s", result.text)
+}
+
+@(test)
+a_tagged_name_declared_as_references_is_truthy_unless_nullish :: proc(t: ^testing.T) {
+	// The declaration of v holds only references and nullish values, so one tag test answers. A
+	// field is no name, and its read goes to the runtime whatever check narrowed it to.
+	result := lower_text(
+		t,
+		SHAPES +
+		`
+		function either(v: Circle | Square | null): boolean {
+			return !v;
+		}
+		interface Holder { v: Circle | Square | null; }
+		function held(h: Holder): boolean {
+			return !h.v;
+		}
+	`,
+	)
+	either := harness.func_named(t, result.output, "m1.either")
+	testing.expectf(t, len(instructions_of(either, ir.Call_Runtime)) == 0, "%s", result.text)
+	testing.expectf(t, tests_tags(either, {.Undefined, .Null}), "%s", result.text)
+	held := harness.func_named(t, result.output, "m1.held")
+	testing.expectf(t, calls_to(held, .Value_To_Boolean) > 0, "%s", result.text)
 }
 
 @(test)
@@ -197,9 +252,12 @@ a_reference_or_null_is_one_pointer_slot :: proc(t: ^testing.T) {
 			if (tree === null) { return 0; }
 			return 1 + check(tree.left) + check(tree.right);
 		}
+		function same(a: Tree | null, b: Tree | null): boolean {
+			return a === b;
+		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.check")
+	body := harness.func_named(t, result.output, "m1.check")
 	param := body.params[0]
 	testing.expectf(t, param.kind == .Ref && param.nullish == .Null, "%s", result.text)
 	table := result.output.layouts[param.layout]
@@ -207,11 +265,34 @@ a_reference_or_null_is_one_pointer_slot :: proc(t: ^testing.T) {
 	for field in table.fields {
 		testing.expect_value(t, field.kind, abi.Slot_Kind.Ref_Or_Null)
 	}
-	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)
-	testing.expectf(t, len(instructions_of(body, ir.Box)) == 0, "%s", result.text)
-	testing.expectf(t, len(instructions_of(body, ir.Unbox)) == 0, "%s", result.text)
+	same := harness.func_named(t, result.output, "m1.same")
+	testing.expectf(t, len(instructions_of(same, ir.Compare)) > 0, "%s", result.text)
+	for function in ([2]ir.Func{body, same}) {
+		testing.expectf(t, len(instructions_of(function, ir.Tag_Test)) == 0, "%s", result.text)
+		testing.expectf(t, len(instructions_of(function, ir.Box)) == 0, "%s", result.text)
+		testing.expectf(t, len(instructions_of(function, ir.Unbox)) == 0, "%s", result.text)
+		testing.expectf(t, len(instructions_of(function, ir.Call_Runtime)) == 0, "%s", result.text)
+	}
+}
 
-	// A narrowed read tests the pointer, which a call may have set to null since the test.
+@(test)
+a_pointer_read_narrowed_before_a_call_is_tested_again :: proc(t: ^testing.T) {
+	// reset may have set root to null since the test that narrowed it.
+	result := lower_text(
+		t,
+		`
+		interface Tree { left: Tree | null; }
+		let root: Tree | null = { left: null };
+		function reset(): void { root = null; }
+		function depth(): number {
+			if (root === null) { return 0; }
+			reset();
+			return root.left === null ? 1 : 2;
+		}
+		depth();
+	`,
+	)
+	body := harness.func_named(t, result.output, "m1.depth")
 	reads := instructions_of(body, ir.Non_Null)
 	testing.expectf(t, len(reads) > 0, "%s", result.text)
 	for read in reads {
@@ -237,7 +318,7 @@ an_optional_reference_field_is_a_pointer_slot :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	body, _ := func_named(result.output, "m1.name")
+	body := harness.func_named(t, result.output, "m1.name")
 	table := result.output.layouts[body.params[0].layout]
 	testing.expect_value(t, len(table.fields), 1)
 	testing.expect_value(t, table.fields[0].kind, abi.Slot_Kind.Ref_Or_Undefined)
@@ -267,8 +348,8 @@ members_of_one_layout_share_one_arm :: proc(t: ^testing.T) {
 		}
 	`,
 	)
-	agreed, _ := func_named(result.output, "m1.agreed")
-	mixed, _ := func_named(result.output, "m1.mixed")
+	agreed := harness.func_named(t, result.output, "m1.agreed")
+	mixed := harness.func_named(t, result.output, "m1.mixed")
 	testing.expect(t, agreed.result == ir.F64)
 	for body in ([2]ir.Func{agreed, mixed}) {
 		layouts := make([dynamic]ir.Layout_ID, context.temp_allocator)

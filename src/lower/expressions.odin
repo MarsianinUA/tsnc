@@ -280,7 +280,6 @@ is_tagged_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
 	return ok && kind == .Tagged
 }
 
-// is_nullable_type says whether values of the type are a reference with 0 for null or undefined.
 @(private)
 is_nullable_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
 	v := s.types[type].(check.Union) or_return
@@ -299,15 +298,14 @@ boxable :: proc(type: ir.Type) -> bool {
 
 // truthy tests a number by its magnitude being above zero, which is one intrinsic and one
 // comparison and is false for NaN and for both zeros without a branch. A string is true when it
-// has a unit, and an object, an array and a function always are unless null. A tagged value, and a
-// string that may be null, is tested by read_as, the check type it was read with, where the caller
-// knows it (truthy_tagged).
+// has a unit, and an object, an array and a function always are unless null. operand is the node
+// the value was read from, where there is one (truthy_tagged).
 @(private)
 truthy :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
 	span: source.Span,
-	read_as := check.ERROR,
+	operand := ast.NO_NODE,
 ) -> ir.Value_ID {
 	if value == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -321,22 +319,37 @@ truthy :: proc(
 		return above_zero(s, size, span)
 	case .Str:
 		if type.nullish != .None {
-			boxed := ir.emit(&s.fb, ir.TAGGED, ir.Box{value = value}, span)
-			return truthy_tagged(s, boxed, read_as, span)
+			return truthy_nullable_string(s, value, span)
 		}
 		return above_zero(s, ir.emit(&s.fb, ir.F64, ir.Length{value = value}, span), span)
 	case .Ref, .Closure:
 		if type.nullish != .None {
-			return negated(s, ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span), span)
+			return negated(s, null_test(s, value, span), span)
 		}
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
 	case .Tagged:
-		return truthy_tagged(s, value, read_as, span)
+		return truthy_tagged(s, value, operand, span)
 	case .Void:
 	case .I32, .I64:
 		unreachable()
 	}
 	return ir.NO_VALUE
+}
+
+@(private)
+truthy_nullable_string :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	no := ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = false}, span)
+	join := ir.add_block(&s.fb)
+	nothing := jump_if(s, null_test(s, value, span), join, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = present(s, value, span)}, span)
+	long := above_zero(s, length, span)
+	text := here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	return join_values(s, join, {nothing, text}, {no, long}, ir.BOOL, span)
 }
 
 @(private)
@@ -352,7 +365,7 @@ above_zero :: proc(s: ^Func_State, number: ir.Value_ID, span: source.Span) -> ir
 
 @(private)
 lower_condition :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
-	return truthy(s, lower_expression(s, id), s.tree.nodes[id].span, s.typed.node_types[id])
+	return truthy(s, lower_expression(s, id), s.tree.nodes[id].span, id)
 }
 
 // lower_ident relies on check having resolved the name across files, so the answer names the
@@ -552,19 +565,12 @@ lib_root :: proc(s: ^Func_State, id: ast.Node_ID) -> (string, bool) {
 @(private)
 lower_non_null :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Non_Null) -> ir.Value_ID {
 	value := lower_expression(s, node.expr)
-	if value == ir.NO_VALUE {
+	if value == ir.NO_VALUE || !may_be_nullish(value_type(s, value)) {
 		return value
 	}
 	span := s.tree.nodes[id].span
-	type := value_type(s, value)
-	if type == ir.TAGGED {
-		fail_if(s, tag_test(s, value, {.Undefined, .Null}, span), .Non_Null_Assertion, span)
-	} else if type.nullish != .None {
-		null := ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
-		fail_if(s, null, .Non_Null_Assertion, span)
-		return present(s, value, span)
-	}
-	return value
+	fail_if(s, nullish_test(s, value, {.Undefined, .Null}, span), .Non_Null_Assertion, span)
+	return present(s, value, span)
 }
 
 @(private)
@@ -587,7 +593,7 @@ lower_unary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Unary) -> ir.Valu
 	case .Bit_Not:
 		return unary_number(s, .Bit_Not, operand, span)
 	case .Not:
-		test := truthy(s, operand, span, s.typed.node_types[node.operand])
+		test := truthy(s, operand, span, node.operand)
 		if test == ir.NO_VALUE {
 			return ir.NO_VALUE
 		}
@@ -651,10 +657,11 @@ arithmetic :: proc(
 	return ir.emit(&s.fb, ir.F64, ir.Binary{op = op, left = left, right = right}, span)
 }
 
-// lower_compare lets the IR compare two numbers, two booleans or two references itself; a string
-// holds its contents and goes through the runtime, and so does a tagged value, unless the other
-// side is null or undefined (compare_tagged). Two objects check lets `===` compare share one layout,
-// so their references compare as they are.
+// lower_compare lets the IR compare two numbers, two booleans or two references itself. Two strings
+// compare their contents (compare_strings). A side that is null or undefined itself, or a reference
+// that may hold null, is a test (compare_references), and any other tagged value goes to the runtime
+// (compare_tagged). Two objects check lets `===` compare share one layout, so their references
+// compare as they are.
 @(private)
 lower_compare :: proc(
 	s: ^Func_State,
@@ -734,9 +741,9 @@ operands_not_lowered :: proc(
 // not be evaluated, so each opens a block of its own. A result of VOID means nobody reads the
 // value, and the two sides meet without a phi.
 //
-// The left side is tested in its own type: truthy for `&&` and `||`, and for `??` neither null nor
-// undefined, where only a tagged value can be either. It turns into the type of the result on the
-// edge that keeps it: boxed before the branch, or unboxed after it in a block of its own, since
+// The left side is tested in its own representation: truthy for `&&` and `||`, and for `??`
+// neither null nor undefined (nullish_test). It turns into the type of the result on the edge that
+// keeps it: boxed before the branch, or unboxed after it in a block of its own, since
 // `name || "none"` is a string exactly where name is truthy.
 @(private)
 lower_logical :: proc(
@@ -757,7 +764,7 @@ lower_logical :: proc(
 			right := lower_expression(s, node.right)
 			return flow_into(s, right, s.typed.node_types[node.right], wanted, result, span)
 		case left == ir.NO_VALUE:
-		case value_type(s, left) != ir.TAGGED && value_type(s, left).nullish == .None:
+		case !may_be_nullish(value_type(s, left)):
 			// Never nullish, so the right side never runs.
 			return flow_into(s, left, s.typed.node_types[node.left], wanted, result, span)
 		}
@@ -769,13 +776,10 @@ lower_logical :: proc(
 	}
 	left_type := value_type(s, left)
 	test: ir.Value_ID
-	switch {
-	case node.op != .Coalesce:
-		test = truthy(s, left, span, s.typed.node_types[node.left])
-	case left_type == ir.TAGGED:
-		test = negated(s, tag_test(s, left, {.Undefined, .Null}, span), span)
-	case:
-		test = negated(s, ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = left}, span), span)
+	if node.op == .Coalesce {
+		test = negated(s, nullish_test(s, left, {.Undefined, .Null}, span), span)
+	} else {
+		test = truthy(s, left, span, node.left)
 	}
 	// A left side that may hold null and does not fit the result converts on its own edge too:
 	// before the branch, a check for what only the other edge holds could fail.
@@ -810,15 +814,8 @@ lower_logical :: proc(
 	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
 	if unboxing {
 		ir.use_block(&s.fb, keep)
-		switch {
-		case left_type == ir.TAGGED:
-			kept = unbox_checked(s, left, result, .Tagged_Holds_Other_Kind, span)
-		case node.op == .And:
-			kept = coerce(s, left, result, span)
-		case:
-			// The test proved it is not null.
-			kept = coerce(s, present(s, left, span), result, span)
-		}
+		// Past the test of `||` and `??` the value is not null.
+		kept = coerce(s, left if node.op == .And else present(s, left, span), result, span)
 		append(&edges, here(s))
 		ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
 	} else {

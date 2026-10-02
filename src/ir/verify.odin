@@ -368,8 +368,10 @@ verify_instruction :: proc(c: ^Checker) {
 			element_of(c, type)
 		}
 		expect_index(c, v.index)
-		expect_site(c, v.not_integer)
-		expect_site(c, v.out_of_range)
+		if !v.proved {
+			expect_site(c, v.not_integer)
+			expect_site(c, v.out_of_range)
+		}
 
 	case Element_Load:
 		element, known := array_element(c, v.array)

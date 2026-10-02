@@ -344,7 +344,7 @@ lower_for_each :: proc(
 	}
 	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
 	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
-	loop := open_inline_loop(s, node.args[0], start, ir.NO_VALUE, span)
+	loop := open_inline_loop(s, node.args[0], start, span)
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
 	given := passed_types(s, node)
@@ -373,7 +373,7 @@ lower_map :: proc(
 	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
 	out := ir.emit(&s.fb, type, ir.New_Array{layout = type.layout, length = length}, span)
 	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
-	loop := open_inline_loop(s, node.args[0], start, ir.NO_VALUE, span)
+	loop := open_inline_loop(s, node.args[0], start, span)
 	leave_unless_before(s, &loop, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
 	given := passed_types(s, node)
@@ -406,7 +406,7 @@ lower_filter :: proc(
 	empty := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	out := ir.emit(&s.fb, type, ir.New_Array{layout = type.layout, length = empty}, span)
 	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
-	loop := open_inline_loop(s, node.args[0], empty, ir.NO_VALUE, span)
+	loop := open_inline_loop(s, node.args[0], empty, span)
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
 	given := passed_types(s, node)
@@ -501,7 +501,10 @@ lower_reduce :: proc(
 		start = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
 	}
 
-	loop := open_inline_loop(s, node.args[0], start, first, span, result)
+	loop := open_inline_loop(s, node.args[0], start, span)
+	// Typed by the accumulator's type: the first value may be a present reference of it.
+	loop.accumulator = ir.phi(&s.fb, result, span)
+	ir.phi_incoming(&s.fb, loop.accumulator, loop.entry, first)
 	leave_past_either_end(s, &loop, receiver, length, span)
 	value := begin_pass(s, &loop, receiver, element, span)
 	args := [?]ir.Value_ID{loop.accumulator, value, loop.index, receiver}
@@ -518,6 +521,7 @@ lower_reduce :: proc(
 // callback can jump to the end of the pass but its own `return`, which joins inside the body.
 @(private)
 Inline_Loop :: struct {
+	entry:       ir.Block_ID, // the block that jumps into the header
 	header:      ir.Block_ID,
 	exit:        ir.Block_ID,
 	assigned:    []int,
@@ -528,14 +532,13 @@ Inline_Loop :: struct {
 	leaving:     [dynamic]Edge, // the edges into the exit
 }
 
-// accumulated types reduce's accumulator, whose first value may be a present reference of it.
+// open_inline_loop leaves the builder in the header, where reduce adds the accumulator's phi.
 @(private)
 open_inline_loop :: proc(
 	s: ^Func_State,
 	callback: ast.Node_ID,
-	start, accumulator: ir.Value_ID,
+	start: ir.Value_ID,
 	span: source.Span,
-	accumulated := ir.VOID,
 ) -> Inline_Loop {
 	loop := Inline_Loop {
 		header      = ir.add_block(&s.fb),
@@ -545,14 +548,11 @@ open_inline_loop :: proc(
 		leaving     = make([dynamic]Edge, 0, 2, context.temp_allocator),
 	}
 	from := here(s)
+	loop.entry = from.block
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = loop.header}, span)
 	loop.phis = open_header(s, loop.header, loop.assigned, from, span)
 	loop.index = ir.phi(&s.fb, ir.F64, span)
 	ir.phi_incoming(&s.fb, loop.index, from.block, start)
-	if accumulator != ir.NO_VALUE {
-		loop.accumulator = ir.phi(&s.fb, accumulated, span)
-		ir.phi_incoming(&s.fb, loop.accumulator, from.block, accumulator)
-	}
 	return loop
 }
 

@@ -22,7 +22,7 @@ prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges, shapes: []Shape) {
 			for value in func.blocks[block].instructions {
 				#partial switch &v in func.values[value].variant {
 				case ir.Bounds_Check:
-					v.proved = proved(func, fr, shapes[id], value, block, v)
+					v.proved = v.proved || proved(func, fr, shapes[id], value, block, v)
 				}
 			}
 		}

@@ -3,6 +3,7 @@ package opt_tests
 import "core:testing"
 
 import "../../src/ir"
+import "../harness"
 
 // The checks that stay fail where they should in tests/expect/array-shrink.ts.
 
@@ -24,7 +25,7 @@ a_check_below_the_length_the_loop_tested_is_proved :: proc(t: ^testing.T) {
 		console.log(sum([1, 2, 3]));
 	`,
 	)
-	sum := func_named(result.output, "m1.sum")
+	sum := harness.func_named(t, result.output, "m1.sum")
 	checks, proved := check_counts(sum)
 	testing.expectf(t, checks == 0 && proved == 2, "%s", result.after)
 }
@@ -45,7 +46,7 @@ a_string_is_never_shortened_by_a_call :: proc(t: ^testing.T) {
 		spell("abc");
 	`,
 	)
-	spell := func_named(result.output, "m1.spell")
+	spell := harness.func_named(t, result.output, "m1.spell")
 	checks, proved := check_counts(spell)
 	testing.expectf(t, checks == 0 && proved == 2, "%s", result.after)
 }
@@ -63,7 +64,7 @@ the_elements_of_an_array_literal_are_proved :: proc(t: ^testing.T) {
 		console.log(three(1));
 	`,
 	)
-	three := func_named(result.output, "m1.three")
+	three := harness.func_named(t, result.output, "m1.three")
 	checks, proved := check_counts(three)
 	testing.expectf(t, checks == 0 && proved == 3, "%s", result.after)
 }
@@ -81,7 +82,7 @@ the_store_of_a_compound_assignment_reuses_the_check_of_its_read :: proc(t: ^test
 		console.log(values);
 	`,
 	)
-	bump := func_named(result.output, "m1.bump")
+	bump := harness.func_named(t, result.output, "m1.bump")
 	checks, proved := check_counts(bump)
 	ids, all := instructions_of(bump, ir.Bounds_Check)
 	testing.expectf(t, checks == 1 && proved == 1, "%s", result.after)
@@ -140,7 +141,7 @@ a_check_stays_where_the_array_may_have_shrunk_or_the_index_may_be_out :: proc(t:
 		checks: int,
 	}{{"m1.popped", 1}, {"m1.called", 2}, {"m1.through", 1}, {"m1.before", 1}}
 	for c in cases {
-		checks, proved := check_counts(func_named(result.output, c.name))
+		checks, proved := check_counts(harness.func_named(t, result.output, c.name))
 		testing.expectf(t, checks == c.checks && proved == 0, "%s:\n%s", c.name, result.after)
 	}
 }

@@ -212,3 +212,67 @@ function peek(): Box | null {
 let watched: Box | null = { n: 1 };
 watched = null;
 console.log(peek());
+
+// An inlined arrow that runs off its end, or returns bare, answers the undefined of its result.
+const big = [1, 2, 3].map((x): string | undefined => {
+  if (x > 1) return "big";
+});
+const kept = [1, 2, 3].map((x): Box | undefined => {
+  if (x > 1) return { n: x };
+  return;
+});
+const seen: string[] = [];
+[1, 2].forEach((x): string | undefined => {
+  seen.push(String(x));
+  if (x > 1) return "two";
+});
+const none: Box | undefined = undefined;
+const lastKept = [1, 2, 3].reduce((acc: Box | undefined, x: number): Box | undefined => {
+  if (x < 3) return { n: x };
+}, none);
+console.log(big, kept, seen, lastKept);
+
+// A call writes what the narrowing does not know of; the value decides truthiness.
+let note: string | null = null;
+let mark: "" | "a" | undefined = undefined;
+let zero: number | null = null;
+let pet: Box | Item | null = null;
+function fill(): void {
+  note = "";
+  mark = "";
+  zero = 0;
+  pet = { n: 1 };
+}
+fill();
+console.log(note ? "note" : "no note", mark ? "mark" : "no mark", zero ? "zero" : "no zero");
+console.log(pet ? "pet" : "no pet", !note, !mark, !zero, !pet);
+
+function sameText(a: string | null, b: string | undefined): boolean {
+  return a === b;
+}
+
+function sameNull(a: string | null, b: string | null): boolean {
+  return a === b;
+}
+
+console.log(sameText(null, undefined), sameText("a", "a"), sameText(null, "a"), sameText("a", undefined));
+console.log(sameNull(null, null), sameNull("", null), sameNull("ab", "a" + "b"), sameNull("x", "y"));
+
+function words(s: string | undefined, b: Box | null, f: Count | null): string {
+  const tests = [typeof s === "string", typeof s === "undefined", typeof b === "object"];
+  return tests.join(",") + " " + typeof f + " " + (typeof f === "function");
+}
+
+function describe(s: string | undefined, w: string): string {
+  switch (typeof s) {
+    case "undefined":
+      return "none";
+    case w:
+      return "match";
+    default:
+      return "other";
+  }
+}
+
+console.log(words(undefined, null, null), words("s", one, () => 1));
+console.log(describe(undefined, "string"), describe("x", "string"), describe("x", "number"));

@@ -1,6 +1,5 @@
 package opt_tests
 
-import "core:fmt"
 import "core:testing"
 
 import "../../src/ir"
@@ -17,15 +16,6 @@ optimize_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> O
 	opt.optimize(&output, context.temp_allocator)
 	harness.expect_contract(t, files, output, "opt", loc)
 	return {output = output, after = harness.dump(files, output)}
-}
-
-func_named :: proc(output: ir.Program_IR, name: string) -> ir.Func {
-	for body in output.funcs {
-		if body.name == name {
-			return body
-		}
-	}
-	panic(fmt.tprintf("no function %s", name))
 }
 
 instructions_of :: proc(body: ir.Func, $T: typeid) -> (ids: []ir.Value_ID, variants: []T) {

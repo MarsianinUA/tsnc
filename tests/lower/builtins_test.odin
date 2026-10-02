@@ -3,9 +3,10 @@ package lower_tests
 import "core:testing"
 
 import "../../src/ir"
+import "../harness"
 
-// The standard library: what each strategy of the table actually emits, and what the build refuses
-// to emit at all. lib_test.odin proves the table covers the lib; this file proves the rows work.
+// The standard library. Its rows run in tests/diff, and lib_test.odin checks that the table covers
+// the lib; what is left here is what no program shows.
 
 @(test)
 math_names_with_an_intrinsic_use_it :: proc(t: ^testing.T) {
@@ -18,8 +19,7 @@ math_names_with_an_intrinsic_use_it :: proc(t: ^testing.T) {
 		work(4, 2);
 	`,
 	)
-	body, found := func_named(result.output, "m1.work")
-	testing.expect(t, found, "the function was not lowered")
+	body := harness.func_named(t, result.output, "m1.work")
 	used: bit_set[ir.Intrinsic_Op]
 	for call in instructions_of(body, ir.Intrinsic) {
 		used += {call.op}
@@ -32,12 +32,12 @@ math_names_with_an_intrinsic_use_it :: proc(t: ^testing.T) {
 a_program_that_never_reads_process_argv_has_no_global_for_it :: proc(t: ^testing.T) {
 	// The program that reads it keeps the other half from passing on a global renamed.
 	reads := lower_text(t, `console.log(process.argv.length);`)
-	_, made := global_named(reads.output, "process.argv")
-	testing.expectf(t, made, "%s", reads.text)
+	harness.global_named(t, reads.output, "process.argv")
 
 	result := lower_text(t, `console.log(1);`)
-	_, made = global_named(result.output, "process.argv")
-	testing.expectf(t, !made, "%s", result.text)
+	for global in result.output.globals {
+		testing.expectf(t, global.name != "process.argv", "%s", result.text)
+	}
 	for body in result.output.funcs {
 		testing.expectf(t, calls_to(body, .Process_Argv) == 0, "%s", result.text)
 	}

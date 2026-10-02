@@ -4,9 +4,9 @@ import "core:strings"
 import "core:testing"
 
 import "../../src/ir"
+import "../harness"
 
-// Bindings: where a name lives, and what it holds before anything is written to it. The zero before
-// use is the second leftover of the milestone 3 review that T4.3 owns.
+// Bindings: where a name lives, and what it holds before anything is written to it.
 
 @(test)
 module_bindings_are_globals :: proc(t: ^testing.T) {
@@ -19,8 +19,8 @@ module_bindings_are_globals :: proc(t: ^testing.T) {
 		console.log(name);
 	`,
 	)
-	count, _ := global_named(result.output, "m1.count")
-	name, _ := global_named(result.output, "m1.name")
+	count := harness.global_named(t, result.output, "m1.count")
+	name := harness.global_named(t, result.output, "m1.name")
 	testing.expectf(t, count.type == ir.F64 && name.type == ir.STR, "%s", result.text)
 }
 
@@ -35,8 +35,7 @@ every_global_is_zeroed_before_the_module_runs :: proc(t: ^testing.T) {
 		count = 1;
 	`,
 	)
-	init, found := func_named(result.output, "init$m1")
-	testing.expect(t, found, "the module has no init function")
+	init := harness.func_named(t, result.output, "init$m1")
 
 	count, is_number := first_store(result.output, init, "m1.count").(ir.Const_Number)
 	testing.expectf(t, is_number && count.value == 0, "%s", result.text)
@@ -62,12 +61,11 @@ a_union_of_one_representation_needs_no_tag :: proc(t: ^testing.T) {
 		pick(true);
 	`,
 	)
-	step, _ := global_named(result.output, "m1.step")
-	maybe, _ := global_named(result.output, "m1.maybe")
+	step := harness.global_named(t, result.output, "m1.step")
+	maybe := harness.global_named(t, result.output, "m1.maybe")
 	testing.expectf(t, step.type == ir.F64 && maybe.type == ir.TAGGED, "%s", result.text)
 
-	body, found := func_named(result.output, "m1.pick")
-	testing.expect(t, found, "the function was not lowered")
+	body := harness.func_named(t, result.output, "m1.pick")
 	testing.expect(t, body.result == ir.F64)
 	testing.expectf(t, len(instructions_of(body, ir.Box)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(body, ir.Tag_Test)) == 0, "%s", result.text)

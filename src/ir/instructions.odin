@@ -243,7 +243,7 @@ Bounds_Check :: struct {
 	index:        Value_ID,
 	not_integer:  Fail_Site_ID,
 	out_of_range: Fail_Site_ID,
-	proved:       bool, // codegen emits nothing for a check opt proved
+	proved:       bool, // codegen emits nothing for it, and the fail sites are unused
 }
 
 Element_Load :: struct {

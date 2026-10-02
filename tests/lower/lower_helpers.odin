@@ -25,35 +25,6 @@ lower_text :: proc(t: ^testing.T, text: string, loc := #caller_location) -> Lowe
 	return lower_sources(t, one[:], loc)
 }
 
-func_named :: proc(output: ir.Program_IR, name: string) -> (ir.Func, bool) {
-	for body in output.funcs {
-		if body.name == name {
-			return body, true
-		}
-	}
-	return {}, false
-}
-
-// func_prefixed finds a function whose name starts with the prefix, for a nested function or an
-// arrow, whose name ends in a node number.
-func_prefixed :: proc(output: ir.Program_IR, prefix: string) -> (ir.Func, bool) {
-	for body in output.funcs {
-		if strings.has_prefix(body.name, prefix) {
-			return body, true
-		}
-	}
-	return {}, false
-}
-
-global_named :: proc(output: ir.Program_IR, name: string) -> (ir.Global, bool) {
-	for global in output.globals {
-		if global.name == name {
-			return global, true
-		}
-	}
-	return {}, false
-}
-
 // instructions_of lists the instructions of one variant a function holds, in the order they were
 // emitted.
 instructions_of :: proc(body: ir.Func, $T: typeid) -> []T {
