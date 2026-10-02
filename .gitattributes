@@ -1,0 +1,4 @@
+# LF on every OS: the editing tools write LF, and a CRLF checkout left files with mixed endings.
+* text=auto eol=lf
+# cmd.exe misreads labels and long lines in a batch file with LF endings.
+*.cmd text eol=crlf
