@@ -28,7 +28,7 @@ narrow :: proc(p: ^ir.Program_IR, ranges: Ranges, shapes: []Shape, allocator: ru
 Narrowing :: struct {
 	func:      ^ir.Func,
 	fr:        Func_Ranges,
-	places:    []Place, // by Value_ID
+	places:    []ir.Place, // by Value_ID
 	types:     []ir.Type, // by Value_ID: the type it ends up with
 	compared:  []ir.Type, // by Value_ID of a Compare: what both operands are read as
 	editor:    Editor,
@@ -53,7 +53,7 @@ Use :: struct {
 narrow_func :: proc(
 	func: ^ir.Func,
 	fr: Func_Ranges,
-	places: []Place,
+	places: []ir.Place,
 	allocator: runtime.Allocator,
 ) {
 	count := len(func.values)

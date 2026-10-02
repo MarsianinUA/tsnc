@@ -14,7 +14,7 @@ write_stats :: proc(w: io.Writer, heap: ^Heap) -> io.Error {
 	write_milliseconds(w, stats.sweeping, " ms sweeping, ") or_return
 	write_milliseconds(w, stats.longest, " ms longest pause, ") or_return
 	write_count(w, heap.cells, " cells, ") or_return
-	write_megabytes(w, heap.allocated, " MB allocated, ") or_return
+	write_megabytes(w, stats.allocated + heap.used - stats.live, " MB allocated, ") or_return
 	write_megabytes(w, stats.live, " MB live, ") or_return
 	write_megabytes(w, heap.page_count * PAGE_SIZE, " MB heap\n") or_return
 	return nil

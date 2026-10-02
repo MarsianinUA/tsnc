@@ -136,7 +136,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		body.values[value] = llvm.LLVMBuildInBoundsGEP2(
 			m.builder,
 			string_cell_type(m, 1),
-			ascii_cells(m),
+			m.ascii_cells,
 			&row,
 			1,
 			"",
@@ -372,12 +372,22 @@ start_stack_cell :: proc(
 	table: abi.Type_Table_ID,
 ) -> llvm.LLVMValueRef {
 	cell := body.cells[value]
-	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
-	length := llvm.LLVMConstInt(m.types.int64, u64(cell.size), false)
-	llvm.LLVMBuildMemSet(m.builder, cell.slot, zero, length, STACK_CELL_ALIGNMENT)
-	#assert(offset_of(abi.Cell_Header, type_table) == 0)
-	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell.slot)
+	start_cell(m, cell.slot, cell.size, STACK_CELL_ALIGNMENT, table)
 	return cell.slot
+}
+
+@(private)
+start_cell :: proc(
+	m: ^Module,
+	cell: llvm.LLVMValueRef,
+	extent: int,
+	align: u32,
+	table: abi.Type_Table_ID,
+) {
+	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
+	length := llvm.LLVMConstInt(m.types.int64, u64(extent), false)
+	llvm.LLVMBuildMemSet(m.builder, cell, zero, length, align)
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell)
 }
 
 // build_alloc takes a small cell off its free list the way abi.Heap_Head describes, and calls
@@ -417,14 +427,11 @@ build_alloc :: proc(
 	next := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, next_address, "")
 	llvm.LLVMBuildStore(m.builder, next, free)
 	llvm.LLVMBuildStore(m.builder, grown, used_address)
+	cells_address := byte_offset(m, head, int(offset_of(abi.Heap_Head, cells)))
+	cells := llvm.LLVMBuildLoad2(m.builder, m.types.int64, cells_address, "")
 	one := llvm.LLVMConstInt(m.types.int64, 1, false)
-	count(m, head, int(offset_of(abi.Heap_Head, cells)), one)
-	count(m, head, int(offset_of(abi.Heap_Head, allocated)), slot_size)
-	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
-	extent := llvm.LLVMConstInt(m.types.int64, u64(max(size, size_of(abi.Free_Slot))), false)
-	llvm.LLVMBuildMemSet(m.builder, slot, zero, extent, align_of(abi.Free_Slot))
-	#assert(offset_of(abi.Cell_Header, type_table) == 0)
-	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), slot)
+	llvm.LLVMBuildStore(m.builder, llvm.LLVMBuildNSWAdd(m.builder, cells, one, ""), cells_address)
+	start_cell(m, slot, max(size, size_of(abi.Free_Slot)), align_of(abi.Free_Slot), table)
 	llvm.LLVMBuildBr(m.builder, join)
 
 	llvm.LLVMPositionBuilderAtEnd(m.builder, slow)
@@ -439,12 +446,6 @@ build_alloc :: proc(
 	return answer
 }
 
-@(private)
-count :: proc(m: ^Module, head: llvm.LLVMValueRef, offset: int, step: llvm.LLVMValueRef) {
-	address := byte_offset(m, head, offset)
-	total := llvm.LLVMBuildLoad2(m.builder, m.types.int64, address, "")
-	llvm.LLVMBuildStore(m.builder, llvm.LLVMBuildNSWAdd(m.builder, total, step, ""), address)
-}
 
 @(private)
 build_stack_array :: proc(
@@ -584,7 +585,6 @@ build_layout_test :: proc(
 	cell: llvm.LLVMValueRef,
 	layout: ir.Layout_ID,
 ) -> llvm.LLVMValueRef {
-	#assert(offset_of(abi.Cell_Header, type_table) == 0)
 	header := llvm.LLVMBuildLoad2(m.builder, m.types.int32, cell, "")
 	answer := llvm.LLVMConstInt(m.types.int1, 0, false)
 	for base, row in m.program.base {

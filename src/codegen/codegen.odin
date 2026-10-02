@@ -4,7 +4,8 @@ codegen unit and writes it as an object file or as textual LLVM IR.
 
 The translation is one to one: a number is a double, a boolean an i1, a tagged value the two words
 of abi.Tagged, and every reference an opaque pointer. Each IR block becomes an LLVM block and each
-instruction one or a few LLVM instructions.
+instruction one or a few LLVM instructions. codegen reads the program and never changes it, and it
+knows nothing of TypeScript: the closed instruction set of package ir is the whole contract.
 
 The program is expected to have passed ir.verify. codegen relies on what the verifier promises -
 one terminator per block, definitions before uses, exact operand types - and does not check again.

@@ -628,3 +628,27 @@ build_numbers :: proc(table: []source.File, values: []f64) -> (ir.Program_IR, ir
 
 	return ir.finish(&p, id, nil), id
 }
+
+@(test)
+a_proved_check_and_a_stack_cell_say_so :: proc(t: ^testing.T) {
+	table := file_table()
+	program, sink := build_sink(table)
+	for &value in program.funcs[sink].values {
+		if check, is_check := &value.variant.(ir.Bounds_Check); is_check {
+			check.proved = true
+		}
+	}
+	sunk := func_dump(table, program, sink)
+	testing.expectf(t, strings.contains(sunk, "= bounds_check %0[%5] proved : f64"), "%s", sunk)
+
+	program = build_program(table)
+	for &func in program.funcs {
+		for &value in func.values {
+			if alloc, is_alloc := &value.variant.(ir.Alloc); is_alloc {
+				alloc.place = .Stack
+			}
+		}
+	}
+	text := dump(table, program)
+	testing.expectf(t, strings.contains(text, "= alloc 1 stack : ref(1)"), "%s", text)
+}

@@ -72,8 +72,8 @@ upper_bound :: proc(
 		}
 	}
 
-	for fact := fr.fact[block]; fact != nil; fact = fact.up {
-		if !fact.holds {
+	for fact in fr.facts[check.index] {
+		if !fact.holds || !ir.dominates(fr.flow, fact.block, block) {
 			continue
 		}
 		compare := fact.compare

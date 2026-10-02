@@ -174,3 +174,29 @@ expect_ascii :: proc(
 	}
 	testing.expectf(t, same, "got %x, want %q", raw_data(got)[:len(got)], want, loc = loc)
 }
+
+// A one-unit string below abi.ASCII_LIMIT is a row of the table the heap borrows and takes no
+// cell; a heap with no table makes one.
+@(test)
+a_one_unit_string_is_a_row_of_the_borrowed_table :: proc(t: ^testing.T) {
+	table: abi.Ascii_Cells
+	for &row, unit in table {
+		row.cell.type_table = abi.Type_Table_ID(abi.Builtin_Table.String)
+		row.cell.length = 1
+		row.unit = u16(unit)
+	}
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	heap.ascii = &table
+	borrowed := str.from_units(&heap, "a")
+	testing.expect_value(t, borrowed, &table['a'].cell)
+	testing.expect(t, gc.owner(&heap, borrowed) == nil, "the row is a heap cell")
+	testing.expect_value(t, heap.used, 0)
+
+	heap.ascii = nil
+	made := str.from_units(&heap, "a")
+	testing.expect_value(t, gc.owner(&heap, made), &made.header)
+	testing.expect_value(t, str.units(made), "a")
+}

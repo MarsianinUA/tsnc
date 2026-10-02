@@ -15,6 +15,9 @@ symbols_start_with_tsnc_prefix :: proc(t: ^testing.T) {
 		"main symbol %q",
 		abi.MAIN_SYMBOL,
 	)
+	for symbol in ([?]string{abi.TYPE_TABLES_SYMBOL, abi.ROOTS_SYMBOL, abi.HEAP_SYMBOL, abi.ASCII_CELLS_SYMBOL}) {
+		testing.expectf(t, strings.has_prefix(symbol, "tsnc_"), "symbol %q", symbol)
+	}
 	exports := abi.RUNTIME_EXPORTS
 	for export, id in exports {
 		testing.expectf(

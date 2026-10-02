@@ -68,6 +68,7 @@ globals_that_hold_a_reference_become_roots :: proc(t: ^testing.T) {
 	// Slot kinds: Ref 2, Tagged 3.
 	wants := []string {
 		"define ptr @tsnc_roots()",
+		"define ptr @tsnc_ascii_cells()",
 		"ret ptr @roots.slice",
 		"@roots.slice = private constant { ptr, i64 } { ptr @roots, i64 4 }",
 		"{ ptr @g.text, i8 2 }",

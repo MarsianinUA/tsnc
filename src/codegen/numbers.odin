@@ -7,7 +7,7 @@ import "../ir"
 import "../llvm"
 
 /*
-Numbers follow ECMAScript, not the machine, and two places say so.
+Numbers follow ECMAScript, not the machine, as ir.Binary_Op says.
 
 The bitwise and shift operators work on 32 bit integers that ToInt32 takes from a double: it
 truncates toward zero, wraps modulo 2^32, and answers 0 for NaN and for the infinities, where a
@@ -18,9 +18,8 @@ The number functions of Math are emitted inline: an llvm intrinsic where this LL
 to libm otherwise.
 */
 
-// build_binary trusts what opt proved of an integer operation: the result never leaves its type,
-// which nsw tells LLVM, and a Remainder's dividend is non-negative and its divisor never 0, where
-// srem is what % computes.
+// build_binary trusts what opt proved of an integer operation (ir.Binary_Op): nsw tells LLVM the
+// result never leaves its type, and srem is what % computes.
 @(private)
 build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> llvm.LLVMValueRef {
 	left, right := body.values[v.left], body.values[v.right]

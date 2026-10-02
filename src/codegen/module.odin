@@ -97,6 +97,7 @@ build_module :: proc(
 	add_globals(&m)
 	add_roots(&m)
 	add_heap(&m)
+	add_ascii_cells(&m)
 	declare_funcs(&m, unit)
 
 	for id in unit.funcs {
@@ -416,20 +417,18 @@ string_cell :: proc(m: ^Module, units: []u16) -> llvm.LLVMValueRef {
 	return llvm.LLVMConstStructInContext(m.ctx, &fields[0], len(fields), false)
 }
 
-// ascii_cells is the table Ascii_Cell reads, made on first use: the one-unit cell of every unit
-// below ir.ASCII_LIMIT, 24 bytes apart. The program has its own, since Odin gives a variable of the
-// runtime an external symbol only as a dllexport.
+// add_ascii_cells defines tsnc_ascii_cells, the table Ascii_Cell reads and the runtime borrows
+// (abi.Ascii_Cells), whether or not the program reads it. The program and not the runtime defines
+// it, since Odin gives a variable of the runtime an external symbol only as a dllexport.
 @(private)
-ascii_cells :: proc(m: ^Module) -> llvm.LLVMValueRef {
-	if m.ascii_cells == nil {
-		rows := make([]llvm.LLVMValueRef, ir.ASCII_LIMIT, context.temp_allocator)
-		for &row, unit in rows {
-			units := [1]u16{u16(unit)}
-			row = string_cell(m, units[:])
-		}
-		m.ascii_cells = add_constant_array(m, string_cell_type(m, 1), rows, "ascii_cells")
+add_ascii_cells :: proc(m: ^Module) {
+	rows := make([]llvm.LLVMValueRef, abi.ASCII_LIMIT, context.temp_allocator)
+	for &row, unit in rows {
+		units := [1]u16{u16(unit)}
+		row = string_cell(m, units[:])
 	}
-	return m.ascii_cells
+	m.ascii_cells = add_constant_array(m, string_cell_type(m, 1), rows, "ascii_cells")
+	add_accessor(m, abi.ASCII_CELLS_SYMBOL, m.ascii_cells)
 }
 
 // static_closure is the one cell of a function with no environment, { i32, i32, ptr, ptr, ptr }:
@@ -614,8 +613,12 @@ add_slice_procedure :: proc(
 	llvm.LLVMSetGlobalConstant(global, true)
 	llvm.LLVMSetLinkage(global, .LLVMPrivateLinkage)
 	llvm.LLVMSetAlignment(global, align_of([]byte))
+	add_accessor(m, symbol, global)
+}
 
-	signature := llvm.LLVMFunctionType(types.ptr, nil, 0, false)
+@(private)
+add_accessor :: proc(m: ^Module, symbol: cstring, global: llvm.LLVMValueRef) {
+	signature := llvm.LLVMFunctionType(m.types.ptr, nil, 0, false)
 	answer := llvm.LLVMAddFunction(m.module, symbol, signature)
 	llvm.LLVMPositionBuilderAtEnd(m.builder, llvm.LLVMAppendBasicBlockInContext(m.ctx, answer, ""))
 	llvm.LLVMBuildRet(m.builder, global)

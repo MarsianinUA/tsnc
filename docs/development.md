@@ -186,7 +186,7 @@ gc: 109 collections, 293.5 ms marking, 78.9 ms sweeping, 5.4 ms longest pause, 2
 
 A megabyte is 2^20 bytes, and every tenth is cut, not rounded. The line comes when `main` returns and at `process.exit`. A program that fails prints its error and no line. Under stress mode the heap checks are not counted as marking or sweeping.
 
-The counts are always kept, since two adds per allocation and three clock reads per collection cost less than asking whether anyone wants them. The variable is read only at exit. `bench/bench.sh -gc` sets it and prints the counts of each program as a table.
+The counts are always kept, since an add per allocation and three clock reads per collection cost less than asking whether anyone wants them. The variable is read only at exit. `bench/bench.sh -gc` sets it and prints the counts of each program as a table.
 
 ## AddressSanitizer
 

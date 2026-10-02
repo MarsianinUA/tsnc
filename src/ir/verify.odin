@@ -16,9 +16,8 @@ it never panics on a malformed program: a broken layer must still be reportable 
 
 Definition before use is dominance, not the order the values were emitted in. So verify asks the
 Flow of the function whether the block that defines a value lies on every path to the block that
-uses it.
-A phi operand is checked at the end of the block its edge names instead, which is what makes a back
-edge legal.
+uses it. A phi operand is checked at the end of the block its edge names instead, which is what
+makes a back edge legal.
 
 A block nothing reaches is not a violation: the builder opens one after every terminator, so the
 statements that follow a return land somewhere. Its instructions are still checked for shape and
@@ -84,11 +83,10 @@ Checker :: struct {
 	found:    [dynamic]Violation,
 	body:     Func,
 	flow:     Flow,
-	home:     []Block_ID, // the block each value is defined in, NO_BLOCK when it is in none
-	index:    []i32, // the place of each value inside its block
+	places:   []Place, // by Value_ID
 	func:     Func_ID,
 	block:    Block_ID,
-	position: i32,
+	position: int,
 	value:    Value_ID,
 }
 
@@ -115,10 +113,8 @@ verify_func :: proc(c: ^Checker, id: Func_ID) {
 		report(c, .Missing_Body)
 		return
 	}
-	c.home = make([]Block_ID, values, context.temp_allocator)
-	c.index = make([]i32, values, context.temp_allocator)
-
-	locate_values(c)
+	c.places = locate_values(c.body, context.temp_allocator)
+	report_unknown_values(c)
 	verify_blocks(c)
 	c.flow = make_flow(c.body, context.temp_allocator)
 
@@ -126,32 +122,24 @@ verify_func :: proc(c: ^Checker, id: Func_ID) {
 		c.block = Block_ID(block)
 		for value, position in c.body.blocks[block].instructions {
 			if int(value) >= values {
-				continue // locate_values reported it; there is no instruction to check
+				continue // report_unknown_values reported it; there is no instruction to check
 			}
-			c.position = i32(position)
+			c.position = position
 			c.value = value
 			verify_instruction(c)
 		}
 	}
 }
 
-// locate_values records where each value is defined, which is what the dominance questions below
-// are asked about.
 @(private)
-locate_values :: proc(c: ^Checker) {
-	for &block in c.home {
-		block = NO_BLOCK
-	}
+report_unknown_values :: proc(c: ^Checker) {
 	for block, index in c.body.blocks {
 		c.block = Block_ID(index)
-		for value, position in block.instructions {
+		for value in block.instructions {
 			if int(value) >= len(c.body.values) {
 				c.value = value
 				report(c, .Unknown_Value)
-				continue
 			}
-			c.home[value] = Block_ID(index)
-			c.index[value] = i32(position)
 		}
 	}
 }
@@ -533,6 +521,12 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Call_Closure:
 		expect_operand(c, v.callee, CLOSURE)
+		// A callee whose function is known has to get its parameters: escape reads them by index.
+		if callee, known := closure_target(c, v.callee); known {
+			if len(v.args) != len(c.program.funcs[callee].params) {
+				report(c, .Argument_Count)
+			}
+		}
 		for arg in v.args {
 			// A function value carries no signature, so only the arguments themselves are checked:
 			// codegen builds the signature out of their types, and a parameter is never an integer.
@@ -827,25 +821,41 @@ expect_site :: proc(c: ^Checker, site: Fail_Site_ID) {
 	}
 }
 
+@(private)
+closure_target :: proc(c: ^Checker, callee: Value_ID) -> (func: Func_ID, known: bool) {
+	if int(callee) >= len(c.body.values) {
+		return 0, false
+	}
+	#partial switch v in c.body.values[callee].variant {
+	case Make_Closure:
+		func = v.func
+	case Func_Ref:
+		func = v.func
+	case:
+		return 0, false
+	}
+	return func, int(func) < len(c.program.funcs)
+}
+
 // reaches says whether the definition of a value is in hand where the instruction being checked
 // stands: earlier in the same block, or in a block that dominates this one.
 @(private)
 reaches :: proc(c: ^Checker, id: Value_ID) -> bool {
-	home := c.home[id]
-	if home == NO_BLOCK {
+	home := c.places[id]
+	if home.block == NO_BLOCK {
 		return false
 	}
-	if home == c.block {
-		return c.index[id] < c.position
+	if home.block == c.block {
+		return home.position < c.position
 	}
-	return dominates(c.flow, home, c.block)
+	return dominates(c.flow, home.block, c.block)
 }
 
 // reaches_end says whether the definition of a value is in hand at the end of a block, which is
 // what an edge of a phi asks.
 @(private)
 reaches_end :: proc(c: ^Checker, block: Block_ID, id: Value_ID) -> bool {
-	home := c.home[id]
+	home := c.places[id].block
 	if home == NO_BLOCK {
 		return false
 	}

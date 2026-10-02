@@ -1,8 +1,7 @@
 /*
 IR to IR between lower and codegen, the `opt` row of
 docs/architecture-plan-tsnc.md#package-boundaries-compiler. A pass changes how a program computes,
-never what it prints, and writes what it proved into the IR, where ir.verify checks it: codegen
-guesses nothing.
+never what it prints, and writes what it proved into the IR: codegen guesses nothing.
 
 Functions go in Func_ID order and nothing iterates a map, so `-emit-ir` is the same bytes at any
 `-j`.
@@ -31,31 +30,16 @@ optimize :: proc(p: ^ir.Program_IR, allocator := context.allocator) {
 @(private)
 Shape :: struct {
 	flow:   ir.Flow,
-	places: []Place, // by Value_ID
+	places: []ir.Place, // by Value_ID
 	header: []bool, // by Block_ID: a retreating edge enters the block
-}
-
-// Place has block NO_BLOCK for a value no block holds.
-@(private)
-Place :: struct {
-	block:    ir.Block_ID,
-	position: int, // inside the block
 }
 
 @(private)
 make_shape :: proc(func: ir.Func, flow: ir.Flow) -> Shape {
 	shape := Shape {
 		flow   = flow,
-		places = make([]Place, len(func.values), context.temp_allocator),
+		places = ir.locate_values(func, context.temp_allocator),
 		header = make([]bool, len(func.blocks), context.temp_allocator),
-	}
-	for &place in shape.places {
-		place.block = ir.NO_BLOCK
-	}
-	for block, id in func.blocks {
-		for value, position in block.instructions {
-			shape.places[value] = {ir.Block_ID(id), position}
-		}
 	}
 	for block in flow.order {
 		for pred in flow.preds[block] {

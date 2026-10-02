@@ -476,7 +476,7 @@ An actionable v2 task cannot be written before the v1 code exists. Each epic sta
 - [ ] E7.5 Index signatures, `Object.keys`, `for...in`, `obj[key]`, `Map`, `Set`; package `rt/table`. Row "Index signatures...".
 - [ ] E7.6 Sugar: destructuring, spread, `?.`, `enum`, `export default`, getters and setters. Row "Destructuring, spread...".
 - [ ] E7.7 `async` and `await`; package `rt/sched`. Row "`async` and `await`".
-- [ ] E7.8 N codegen units and ThinLTO. Row "N codegen units and ThinLTO". `codegen.add_type_tables` and `add_roots` emit `tsnc_type_tables` and `tsnc_roots` into every unit's module today, which N units would define N times.
+- [ ] E7.8 N codegen units and ThinLTO. Row "N codegen units and ThinLTO". `codegen.add_type_tables`, `add_roots` and `add_ascii_cells` emit `tsnc_type_tables`, `tsnc_roots` and `tsnc_ascii_cells` into every unit's module today, which N units would define N times.
 - [ ] E7.9 Cross-compiling for Linux from Windows; `wasm32-wasi`. Row "Cross-compilation and `wasm32-wasi`".
 - [ ] E7.10 PDB and DWARF debug info. Row "Debug info".
 - [ ] E7.12 `RegExp`, `bigint`, file I/O; hybrid Latin-1 and UTF-16. Rows "`RegExp`, `bigint`, file I/O", "Hybrid Latin-1 and UTF-16 storage".

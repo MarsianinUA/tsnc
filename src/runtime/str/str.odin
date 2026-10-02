@@ -59,13 +59,14 @@ units :: proc "contextless" (text: ^abi.String_Cell) -> string16 {
 	return string16(unit_slice(text))
 }
 
-// from_units copies `text`, which may be a view into another cell, or answers a static cell.
+// from_units copies `text`, which may be a view into another cell, or answers a static cell: the
+// empty one, or a row of the table the heap borrows.
 from_units :: proc(heap: ^gc.Heap, text: string16) -> ^abi.String_Cell {
 	if len(text) == 0 {
 		return &EMPTY
 	}
-	if len(text) == 1 && int(text[0]) < len(ASCII) {
-		return &ASCII[text[0]].cell
+	if len(text) == 1 && int(text[0]) < abi.ASCII_LIMIT && heap.ascii != nil {
+		return &heap.ascii[text[0]].cell
 	}
 	cell, dst := new_cell(heap, len(text))
 	copy(dst, raw_data(text)[:len(text)])

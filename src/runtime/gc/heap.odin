@@ -38,8 +38,7 @@ import "../fail"
 // PAGE_SIZE is a multiple of every OS page size, 16 KiB on arm64 macOS included, and the
 // reservation grain of Windows.
 PAGE_SIZE :: 64 * 1024
-// A cell past abi.MAX_SMALL takes whole pages. Half a page, as in Oilpan, caps what a large cell
-// wastes at the tail of its last page.
+// MAX_SMALL at half a page, as in Oilpan, caps what a large cell wastes at the tail of its last page.
 #assert(abi.MAX_SMALL == PAGE_SIZE / 2)
 // DEFAULT_RESERVE is address space, not memory: only the pages handed out are committed.
 DEFAULT_RESERVE :: 64 << 30
@@ -76,17 +75,22 @@ Heap :: struct {
 	marks:      Mark_Stack,
 	trigger:    int,
 	stats:      Stats,
+	// The program's one-unit strings, borrowed for str, which gc never reads: they lie outside the
+	// pages. nil in a heap of the tests.
+	ascii:      ^abi.Ascii_Cells,
 }
 
-// Stats, with cells and allocated of the head, is what TSNC_GC_STATS reports at exit. Counting
-// costs two adds per allocation and three clock reads per collection, less than a check whether
-// anyone asked, so it is always on.
+// Stats, with cells of the head, is what TSNC_GC_STATS reports at exit, always counted
+// (docs/development.md#gc-statistics).
 Stats :: struct {
 	collections: int,
 	marking:     time.Duration,
 	sweeping:    time.Duration,
 	longest:     time.Duration, // one collection, marking and sweeping
 	live:        int, // used after the last collection
+	// Bytes handed out up to the last collection: used grows by each allocation and only a
+	// collection gives bytes back, so used minus live is what came since.
+	allocated:   int,
 }
 
 Heap_Mode :: enum u8 {
@@ -125,6 +129,7 @@ heap_init :: proc(
 	stack_base: rawptr,
 	mode := Heap_Mode.Normal,
 	reserve := DEFAULT_RESERVE,
+	ascii: ^abi.Ascii_Cells = nil,
 ) -> Heap_Error {
 	assert(stack_base != nil, "a heap without the base of the stack it scans")
 	if len(abi.Builtin_Table) + len(tables) >= int(FREE) {
@@ -166,6 +171,7 @@ heap_init :: proc(
 		roots = roots,
 		stack_base = stack_base,
 		mode = mode,
+		ascii = ascii,
 		base = raw_data(cells),
 		pages = ([^]Page)(raw_data(rows)),
 		page_limit = page_limit,
@@ -302,7 +308,6 @@ hand_out :: proc "contextless" (
 ) -> ^abi.Cell_Header {
 	heap.used += slot_size
 	heap.cells += 1
-	heap.allocated += slot_size
 
 	// A cell of a header alone still clears the free list link after it, so no stale pointer stays
 	// in its slot. The whole slot is poisoned first: a run of fresh pages never was.
@@ -340,16 +345,20 @@ take_cell :: proc(heap: ^Heap, class, count: int) -> (cell: [^]byte, found: bool
 	return heap.base[first * PAGE_SIZE:], true
 }
 
+// in_pages is one comparison: below the base the difference wraps past every page.
+@(private)
+in_pages :: #force_inline proc(heap: ^Heap, p: rawptr) -> bool {
+	return uintptr(p) - uintptr(heap.base) < uintptr(heap.page_count * PAGE_SIZE)
+}
+
 // owner is the object start map: the live cell that holds the address `p`, or nil when `p` lies
 // outside the heap, past the frontier, in a free slot or in the unused tail of a page. The
 // conservative stack scan hands in any word that might be a pointer, hence the rawptr.
 owner :: proc(heap: ^Heap, p: rawptr) -> ^abi.Cell_Header {
-	address := uintptr(p)
-	base := uintptr(heap.base)
-	if address < base || address - base >= uintptr(heap.page_count * PAGE_SIZE) {
+	if !in_pages(heap, p) {
 		return nil
 	}
-	offset := int(address - base)
+	offset := int(uintptr(p) - uintptr(heap.base))
 	index := offset / PAGE_SIZE
 	page := heap.pages[index]
 	switch page.kind {

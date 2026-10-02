@@ -24,6 +24,7 @@ collect :: #force_no_inline proc(heap: ^Heap) {
 	}
 	drain(heap)
 	marked := time.tick_now()
+	heap.stats.allocated += heap.used - heap.stats.live
 	sweep(heap)
 	swept := time.tick_now()
 	set_trigger(heap, max(MIN_TRIGGER, heap.used * GROWTH))
@@ -92,10 +93,6 @@ mark_cell :: proc(heap: ^Heap, p: rawptr) {
 	}
 }
 
-@(private = "file")
-in_pages :: proc(heap: ^Heap, p: rawptr) -> bool {
-	return uintptr(p) - uintptr(heap.base) < uintptr(heap.page_count * PAGE_SIZE)
-}
 
 @(private = "file")
 push :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {

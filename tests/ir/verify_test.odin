@@ -1115,3 +1115,29 @@ build_integers :: proc(fault: Integer_Fault) -> ir.Program_IR {
 
 	return ir.finish(&p, main, nil)
 }
+
+@(test)
+a_closure_call_of_a_known_function_takes_its_parameters :: proc(t: ^testing.T) {
+	p := ir.make_builder(context.temp_allocator)
+	params := [?]ir.Type{ir.F64, ir.F64}
+	add := ir.declare_func(&p, "add", params[:], ir.F64, at(1))
+	ir.describe_func(&p, add, "add", 2, false)
+	main := declare_main(&p)
+
+	a := ir.begin_func(&p, add)
+	sum := ir.emit(&a, ir.F64, ir.Binary{op = .Add, left = 0, right = 1}, at(1))
+	ir.emit(&a, ir.VOID, ir.Return{value = sum}, at(1))
+	ir.end_func(&a)
+
+	f := ir.begin_func(&p, main)
+	one := ir.emit(&f, ir.F64, ir.Const_Number{value = 1}, at(1))
+	callee := ir.emit(&f, ir.CLOSURE, ir.Func_Ref{func = add}, at(1))
+	args := [?]ir.Value_ID{one}
+	ir.emit(&f, ir.F64, ir.Call_Closure{callee = callee, args = args[:]}, at(1))
+	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(1))
+	ir.end_func(&f)
+
+	found := ir.verify(ir.finish(&p, main, nil), context.temp_allocator)
+
+	expect_one(t, found, .Argument_Count)
+}

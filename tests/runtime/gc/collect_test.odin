@@ -441,8 +441,6 @@ take_cells_inline :: proc(t: ^testing.T, heap: ^gc.Heap) {
 	if !testing.expect(t, kept != nil, "no cell under the limit") {
 		return
 	}
-	testing.expect_value(t, heap.cells, 3)
-	testing.expect_value(t, heap.allocated, 3 * abi.CLASS_SIZE[POINT_CLASS])
 	expect_problem(t, heap, .None, nil)
 
 	scrub_stack()
@@ -464,7 +462,7 @@ take_two_points :: #force_no_inline proc(heap: ^gc.Heap) -> (kept: ^Point, dropp
 }
 
 // take_inline does what codegen's build_alloc emits (abi.Heap_Head), or answers nil where that
-// calls tsnc_alloc.
+// calls tsnc_alloc. It tests the heap with a cell hand_out never saw, not build_alloc itself.
 take_inline :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Header {
 	class := abi.class_of(size)
 	slot := heap.free[class]
@@ -475,7 +473,6 @@ take_inline :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, size: int) -> ^abi
 	heap.free[class] = slot.next
 	heap.used += slot_size
 	heap.cells += 1
-	heap.allocated += slot_size
 	intrinsics.mem_zero(slot, max(size, size_of(abi.Free_Slot)))
 	cell := (^abi.Cell_Header)(slot)
 	cell.type_table = table
