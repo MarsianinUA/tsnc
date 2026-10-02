@@ -180,6 +180,9 @@ aliases_open :: proc(c: ^Checker) -> bool {
 		return false
 	}
 	top := frames[len(frames) - 1].ref
+	if top.symbol == bind.NO_SYMBOL {
+		return false // a statement
+	}
 	return c.program.bound[top.file].symbols[top.symbol].kind == .Type_Alias
 }
 

@@ -10,6 +10,171 @@ check_statements :: proc(c: ^Checker, statements: []ast.Node_ID) {
 	}
 }
 
+// Module_Walk is how far the top level of one file has been walked: by check_file in order, and
+// ahead of it by walk_above.
+@(private)
+Module_Walk :: struct {
+	next:      int, // the first statement no walk has passed
+	// A statement of the file is on the stack of the search, being walked or in a loop whose root is
+	// still open, until close_component lets it go. walk_above walks nothing while one is above the
+	// read, so there is at most one.
+	held:      bool,
+	statement: int,
+	frame:     int,
+}
+
+// walk_module passes a declaration only once it has been read, so that walk_above from inside it
+// still finds its declarators.
+@(private)
+walk_module :: proc(c: ^Checker, statements: []ast.Node_ID) {
+	walk := &c.walks[c.at.file]
+	for id, i in statements {
+		if !runs_code(c, id) {
+			check_statement(c, id)
+			walk.next = max(walk.next, i + 1)
+		} else if i >= walk.next {
+			walk.next = i + 1
+			walk_statement(c, id, i)
+		}
+	}
+}
+
+// walk_statement reads a top-level statement that runs code in a frame of the search, so that a
+// read narrowed through it while it is held closes a loop with it from either end.
+@(private)
+walk_statement :: proc(c: ^Checker, id: ast.Node_ID, index: int) {
+	walk := &c.walks[c.at.file]
+	at, outer := enter_frame(c, {file = c.at.file})
+	walk.held, walk.statement, walk.frame = true, index, at
+	check_statement(c, id)
+	leave_frame(c, at, outer, ERROR)
+	if outer < 0 {
+		check_deferred(c)
+	}
+}
+
+// walk_above walks what a read at the top level of a module, or in an arrow made there, narrows
+// through before the read does: the statements above it that run code and the declarators whose
+// initializer adds to the flow. A name a function declares is never narrowed that far out.
+//
+// looped is a read in a loop with what stands above it, whose facts then depend on where the loop
+// was entered. The walk stops there and leaves what is below to the module's own walk, which comes
+// once the loop is closed, whichever end it was entered at.
+@(private)
+walk_above :: proc(c: ^Checker, read: ast.Node_ID) -> (looped: bool) {
+	walk := &c.walks[c.at.file]
+	module := c.at.tree.nodes[ast.ROOT].variant.(ast.Module)
+	if walk.next >= len(module.statements) && !walk.held {
+		return false
+	}
+	if declaring_function(c, read) != ast.NO_NODE {
+		return false
+	}
+	nodes := c.at.tree.nodes
+	start := nodes[read].span.start
+	index := holding(nodes, module.statements, start)
+	statement := module.statements[index]
+	if _, is_function := nodes[statement].variant.(ast.Function_Decl); is_function {
+		return false
+	}
+	if walk.held && walk.statement < index {
+		reached(c, walk.frame)
+		return true
+	}
+
+	previous := move_to(c, c.at.file)
+	defer c.at = previous
+	mark := mark_loops(c)
+	for walk.next < index {
+		i := walk.next
+		walk.next = i + 1
+		id := module.statements[i]
+		if runs_code(c, id) {
+			walk_statement(c, id, i)
+			if closed_loop(c, mark) {
+				return true
+			}
+		} else if node, is_var := nodes[id].variant.(ast.Var_Decl); is_var {
+			if check_flowing(c, node.declarators, mark) {
+				return true
+			}
+		}
+	}
+	if node, is_var := nodes[statement].variant.(ast.Var_Decl); is_var {
+		return check_flowing(c, node.declarators[:holding(nodes, node.declarators, start)], mark)
+	}
+	return false
+}
+
+// Loop_Mark is where the search stood before walk_above walked anything. A frame left above it, or
+// a lower frame the current one has come to reach, puts the read in a loop with what was walked.
+@(private)
+Loop_Mark :: struct {
+	depth: int,
+	low:   int,
+}
+
+@(private)
+mark_loops :: proc(c: ^Checker) -> Loop_Mark {
+	if c.search.current < 0 {
+		return {depth = len(c.search.frames), low = -1}
+	}
+	return {depth = len(c.search.frames), low = c.search.frames[c.search.current].low}
+}
+
+@(private)
+closed_loop :: proc(c: ^Checker, mark: Loop_Mark) -> bool {
+	if len(c.search.frames) > mark.depth {
+		return true
+	}
+	return c.search.current >= 0 && c.search.frames[c.search.current].low < mark.low
+}
+
+// holding is the index of the last of ids, which stand in source order, that starts at or before
+// offset.
+@(private)
+holding :: proc(nodes: []ast.Node, ids: []ast.Node_ID, offset: i32) -> int {
+	low, high := 0, len(ids)
+	for low < high {
+		middle := (low + high) / 2
+		if nodes[ids[middle]].span.start <= offset {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	return low - 1
+}
+
+@(private)
+check_flowing :: proc(c: ^Checker, declarators: []ast.Node_ID, mark: Loop_Mark) -> (looped: bool) {
+	for id in declarators {
+		init := c.at.tree.nodes[id].variant.(ast.Declarator).init
+		if init != ast.NO_NODE && adds_flow(c, init) {
+			check_declarator(c, id)
+			if closed_loop(c, mark) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+@(private)
+runs_code :: proc(c: ^Checker, id: ast.Node_ID) -> bool {
+	#partial switch _ in c.at.tree.nodes[id].variant {
+	case ast.Var_Decl,
+	     ast.Function_Decl,
+	     ast.Interface_Decl,
+	     ast.Type_Alias_Decl,
+	     ast.Import_Named,
+	     ast.Import_Namespace,
+	     ast.Export_Named:
+		return false
+	}
+	return true
+}
+
 // check_statement sends anything it does not name to check_expression, which is the exhaustive
 // switch over the shapes of ast: a statement slot may hold an expression instead, since the header
 // of a `for` is written either way.

@@ -19,7 +19,9 @@ Order: a declaration is typed once, the first time anything asks for it, and the
 symbol. The walk over the statements asks for the same thing, so a name used above its declaration
 and a name never used at all both get the same work done exactly once. The body of a function whose
 result is inferred is read where its type is worked out, and not where the walk reaches it; a body
-or an initializer whose type is written out waits until no search is open (resolve.odin).
+or an initializer whose type is written out waits until no search is open (resolve.odin). A read
+narrowed through the top level of a module first walks what stands above it there (walk_above),
+so whichever declaration was typed first it reads the same facts, or none in a loop through them.
 
 Types: every type is interned in the table of this call, so a Type_ID is meaningful only together
 with Check_Result.types. See types.odin.
@@ -110,6 +112,7 @@ check :: proc(
 		table        = make_table(allocator),
 		in_partition = make([]bool, len(prog.files), context.temp_allocator),
 		facts        = make([]Facts, len(prog.files), context.temp_allocator),
+		walks        = make([]Module_Walk, len(prog.files), context.temp_allocator),
 		symbol_types = make(map[Symbol_Ref]Type_ID, context.temp_allocator),
 		search       = make_search(context.temp_allocator),
 		alias_loops  = make([dynamic]Symbol_Ref, context.temp_allocator),
@@ -153,6 +156,7 @@ Checker :: struct {
 	// The fact tables of every file, by source.File_ID, built the first time the checker reads the
 	// file. See Facts.
 	facts:        []Facts,
+	walks:        []Module_Walk, // by source.File_ID
 	// The type of a symbol of any file, worked out the first time anything asks for it. The cache
 	// belongs to this call alone, as the type table does: a Type_ID of one checker means nothing
 	// in another.
@@ -206,7 +210,7 @@ check_file :: proc(c: ^Checker, file: source.File_ID) -> Typed_File {
 
 	module, is_module := c.at.tree.nodes[ast.ROOT].variant.(ast.Module)
 	ensure(is_module, "the root of a File_AST is its Module")
-	check_statements(c, module.statements)
+	walk_module(c, module.statements)
 
 	facts := c.facts[file]
 	return {
@@ -280,6 +284,7 @@ free_scratch :: proc(c: ^Checker) {
 		delete(facts.node_signatures, context.temp_allocator)
 	}
 	delete(c.facts, context.temp_allocator)
+	delete(c.walks, context.temp_allocator)
 	delete(c.in_partition, context.temp_allocator)
 	delete(c.symbol_types)
 	delete(c.search.frames)
