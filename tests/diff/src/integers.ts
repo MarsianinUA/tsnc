@@ -107,3 +107,85 @@ dividends.push(2 ** 53 + 2, 2.5, -2.5, 7, -7, -4, 1023.75, -4096.25, 45035996273
 for (const x of dividends) {
   console.log(x, x % 1, x % 2, x % -2, x % 1024, x % 4503599627370496, x % 0.5);
 }
+
+// A field, an element and a parameter of a function value are whole when every store or call
+// keeps them so. One fraction, -0 or NaN through any place of the same shape takes that away.
+interface Counter {
+  n: number;
+  step: number;
+}
+interface Cell {
+  v: number;
+}
+function counted(rounds: number): number[] {
+  const c: Counter = { n: 0, step: 3 };
+  const hist: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < rounds; i++) {
+    c.n = (c.n + c.step) % 8;
+    hist[c.n] += 1;
+  }
+  return hist;
+}
+console.log(counted(21));
+
+function zeroed(cell: Cell): void {
+  cell.v = -0;
+}
+const zero: Cell = { v: 4 };
+const doubled: Cell = { v: 1 };
+for (let k = 0; k < 40; k++) {
+  doubled.v = doubled.v * 2 + 1;
+}
+zeroed(zero);
+console.log(zero.v, 1 / (zero.v * 2), [7, 8][zero.v], doubled.v, doubled.v + 1);
+
+function halve(values: number[]): void {
+  values[0] = 0.5;
+}
+const evens: number[] = [];
+for (let i = 0; i < 4; i++) {
+  evens.push(i * 2);
+}
+halve([1, 2]);
+console.log(evens.map((x) => x * 3), evens[1] % 3);
+
+const byValue: number[] = [5, 1, 4, 2, 3];
+const byFraction: number[] = [1.75, 2.25, 3.5];
+byValue.sort((x, y) => x - y);
+// A direct call alone would make the parameters whole.
+function byFractionalPart(x: number, y: number): number {
+  let d = 0;
+  if (x % 1 !== y % 1) {
+    d = (x % 1) - (y % 1);
+  }
+  return d;
+}
+byFraction.sort(byFractionalPart);
+console.log(byValue, byFraction, byFractionalPart(1, 2));
+
+type Three = (a: number, b: number, c: number) => number;
+function apply3(f: Three, a: number, b: number, c: number): number {
+  return f(a, b, c);
+}
+function wrap(a: number, b: number, c: number): number {
+  return (a + b + c) % 7;
+}
+const pick: Three = (a, b, c) => {
+  let r = 0;
+  if (a > b) {
+    r = a + c;
+  }
+  return r;
+};
+console.log(wrap(1, 2, 3), apply3(wrap, 3, 9, 1), apply3(wrap, 2.5, 1, 0));
+console.log(apply3(wrap, 0 / 0, 1, 0));
+console.log(apply3(pick, 2.5, 1, 0), apply3((a, b, c) => a * b * c, -0, 3, 1));
+
+let tally = 0;
+let share = 1;
+const bump = (): number => {
+  tally = (tally + 3) % 10;
+  share = share / 2;
+  return tally + share;
+};
+console.log(bump(), bump(), bump());

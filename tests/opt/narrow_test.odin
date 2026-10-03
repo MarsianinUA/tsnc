@@ -261,8 +261,10 @@ a_global_the_program_keeps_below_2_to_the_31_is_an_integer :: proc(t: ^testing.T
 	testing.expectf(t, found, "%s", result.after)
 }
 
+// A closure call reaches every function value with its kinds of parameters, so a fraction one of
+// them takes reaches the others.
 @(test)
-only_a_parameter_of_a_function_called_directly_narrows :: proc(t: ^testing.T) {
+a_parameter_narrows_from_every_call_its_class_takes :: proc(t: ^testing.T) {
 	result := optimize_text(
 		t,
 		`
@@ -272,20 +274,163 @@ only_a_parameter_of_a_function_called_directly_narrows :: proc(t: ^testing.T) {
 		function held(n: number): number {
 			return n + n;
 		}
+		function scaled(n: number, k: number): number {
+			return n * k;
+		}
+		function other(n: number, k: number): number {
+			return n - k;
+		}
 		const f = held;
+		const s = scaled;
+		const o = other;
 		for (let i = 0; i < 10; i++) {
-			console.log(direct(i), held(i), f(i));
+			console.log(direct(i), held(i), f(i), scaled(i, 2), o(i, 0.5), s === o);
 		}
 	`,
 	)
-	for c in ([2]struct {
+	for c in ([3]struct {
 			name: string,
 			want: ir.Type,
-		}{{"m1.direct", ir.I32}, {"m1.held", ir.F64}}) {
+		}{{"m1.direct", ir.I32}, {"m1.held", ir.I32}, {"m1.scaled", ir.F64}}) {
 		body := harness.func_named(t, result.output, c.name)
 		ids, binaries := instructions_of(body, ir.Binary)
 		testing.expectf(t, body.values[ids[0]].type == c.want, "%s:\n%s", c.name, result.after)
 		// A parameter arrives as F64 and is read as an integer through a conversion.
 		testing.expectf(t, read_as(body, binaries[0].left) == 0, "%s:\n%s", c.name, result.after)
 	}
+}
+
+@(test)
+a_field_every_store_keeps_whole_is_an_integer :: proc(t: ^testing.T) {
+	result := optimize_text(
+		t,
+		`
+		interface Counter {
+			n: number;
+			step: number;
+		}
+		function main(): void {
+			const c: Counter = { n: 0, step: 3 };
+			const hist: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+			for (let i = 0; i < 100; i++) {
+				c.n = (c.n + c.step) % 8;
+				hist[c.n] += 1;
+			}
+			console.log(hist.join(","));
+		}
+		main();
+	`,
+	)
+	body := harness.func_named(t, result.output, "m1.main")
+	ids, binaries := instructions_of(body, ir.Binary)
+	remainders := 0
+	for binary, i in binaries {
+		if binary.op == .Remainder {
+			remainders += 1
+			testing.expectf(t, ir.is_integer(body.values[ids[i]].type), "%s", result.after)
+		}
+	}
+	testing.expectf(t, remainders == 1, "%s", result.after)
+	ids, _ = instructions_of(body, ir.Bounds_Check)
+	for id in ids {
+		testing.expectf(t, ir.is_integer(body.values[id].type), "%s", result.after)
+	}
+}
+
+@(test)
+an_element_every_store_keeps_whole_is_an_integer :: proc(t: ^testing.T) {
+	result := optimize_text(
+		t,
+		`
+		function main(): void {
+			const a: number[] = [];
+			for (let i = 0; i < 10; i++) {
+				a.push(i & 255);
+			}
+			let h = 0;
+			for (let i = 0; i < a.length; i++) {
+				h = h + a[i] * 3;
+			}
+			console.log(h);
+		}
+		main();
+	`,
+	)
+	body := harness.func_named(t, result.output, "m1.main")
+	ids, binaries := instructions_of(body, ir.Binary)
+	found := false
+	for binary, i in binaries {
+		if binary.op != .Multiply {
+			continue
+		}
+		_, is_load := body.values[read_as(body, binary.left)].variant.(ir.Element_Load)
+		found ||= is_load && body.values[ids[i]].type == ir.I32
+	}
+	testing.expectf(t, found, "no I32 product of an element:\n%s", result.after)
+}
+
+@(test)
+one_fraction_stored_through_any_place_of_a_layout_keeps_its_field_f64 :: proc(t: ^testing.T) {
+	result := optimize_text(
+		t,
+		`
+		interface Point {
+			x: number;
+			y: number;
+		}
+		function shift(p: Point): void {
+			p.x = p.x + 0.5;
+		}
+		function main(): void {
+			const p: Point = { x: 1, y: 2 };
+			const q: Point = { x: 3, y: 4 };
+			shift(q);
+			console.log(p.x * 2, p.y * 2);
+		}
+		main();
+	`,
+	)
+	body := harness.func_named(t, result.output, "m1.main")
+	ids, binaries := instructions_of(body, ir.Binary)
+	seen := 0
+	for binary, i in binaries {
+		load, is_load := body.values[read_as(body, binary.left)].variant.(ir.Field_Load)
+		if binary.op != .Multiply || !is_load {
+			continue
+		}
+		seen += 1
+		want := ir.F64 if load.field == 0 else ir.I32
+		testing.expectf(
+			t,
+			body.values[ids[i]].type == want,
+			"field %d:\n%s",
+			load.field,
+			result.after,
+		)
+	}
+	testing.expectf(t, seen == 2, "%s", result.after)
+}
+
+// The runtime calls a comparator with the elements of the array it sorts.
+@(test)
+a_comparator_reads_whole_elements_as_integers :: proc(t: ^testing.T) {
+	result := optimize_text(
+		t,
+		`
+		const a: number[] = [];
+		for (let i = 0; i < 10; i++) {
+			a.push((i * 7) % 10);
+		}
+		a.sort((x, y) => x - y);
+		console.log(a);
+	`,
+	)
+	found := false
+	for body in result.output.funcs {
+		ids, binaries := instructions_of(body, ir.Binary)
+		if len(body.params) == 2 && len(binaries) == 1 && binaries[0].op == .Subtract {
+			found ||= body.values[ids[0]].type == ir.I32
+		}
+	}
+	testing.expectf(t, found, "no I32 difference in the comparator:\n%s", result.after)
 }

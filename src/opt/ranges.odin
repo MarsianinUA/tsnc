@@ -17,8 +17,11 @@ the program does there.
 
 A loop is solved by iteration: ascending, the phis of a loop header widen to the next threshold
 after two rounds; descending, two more rounds take back what widening gave away. Across functions,
-one fixpoint joins what reaches a number global, a parameter of a function only ever called
-directly, and the result of a direct call.
+one fixpoint joins what reaches a number global, a number field of a layout, the element of an
+array layout, a parameter, and the result of a direct call. Memory keeps f64: a slot is in range
+when every store into it is, the runtime's included. The parameters of the functions a closure may
+stand for are one summary per class of parameter kinds, since a closure call reaches any function
+of its class; the runtime calls a closure only as sort's comparator.
 */
 
 @(private = "file")
@@ -70,15 +73,20 @@ Fact :: struct {
 
 find_ranges :: proc(p: ir.Program_IR, shapes: []Shape) -> Ranges {
 	a := Analysis {
-		program = p,
-		shapes  = shapes,
-		globals = make([]Summary, len(p.globals), context.temp_allocator),
-		params  = make([][]Summary, len(p.funcs), context.temp_allocator),
-		returns = make([]Summary, len(p.funcs), context.temp_allocator),
-		dirty   = make([]bool, len(p.funcs), context.temp_allocator),
-		readers = make([][dynamic]ir.Func_ID, len(p.globals), context.temp_allocator),
-		callers = make([][dynamic]ir.Func_ID, len(p.funcs), context.temp_allocator),
-		grown   = make([dynamic]int, context.temp_allocator),
+		program      = p,
+		shapes       = shapes,
+		globals      = make([]Summary, len(p.globals), context.temp_allocator),
+		params       = make([][]Summary, len(p.funcs), context.temp_allocator),
+		returns      = make([]Summary, len(p.funcs), context.temp_allocator),
+		dirty        = make([]bool, len(p.funcs), context.temp_allocator),
+		readers      = make([][dynamic]ir.Func_ID, len(p.globals), context.temp_allocator),
+		callers      = make([][dynamic]ir.Func_ID, len(p.funcs), context.temp_allocator),
+		slots        = make([][]Summary, len(p.layouts), context.temp_allocator),
+		slot_readers = make([][dynamic]ir.Func_ID, len(p.layouts), context.temp_allocator),
+		class_of     = make([]int, len(p.funcs), context.temp_allocator),
+		classes      = make([dynamic]Class, context.temp_allocator),
+		kinds        = make([dynamic]ir.Type_Kind, context.temp_allocator),
+		grown        = make([dynamic]int, context.temp_allocator),
 	}
 	a.ranges = {
 		funcs        = make([]Func_Ranges, len(p.funcs), context.temp_allocator),
@@ -87,11 +95,31 @@ find_ranges :: proc(p: ir.Program_IR, shapes: []Shape) -> Ranges {
 	for units in p.strings {
 		a.ranges.string_limit = max(a.ranges.string_limit, f64(len(units)))
 	}
-	// A module global is 0 before its first store.
+	// A module global is 0 before its first store, and so is a number slot of a new cell.
 	for global, id in p.globals {
 		if global.type == ir.F64 {
 			a.globals[id].range = {
 				kind = .Integral,
+			}
+		}
+	}
+	for table, id in p.layouts {
+		#partial switch table.kind {
+		case .Object, .Environment:
+			a.slots[id] = make([]Summary, len(table.fields), context.temp_allocator)
+			for field, i in table.fields {
+				if field.kind == .Number {
+					a.slots[id][i].range = {
+						kind = .Integral,
+					}
+				}
+			}
+		case .Array:
+			a.slots[id] = make([]Summary, 1, context.temp_allocator)
+			if table.element == .Number {
+				a.slots[id][0].range = {
+					kind = .Integral,
+				}
 			}
 		}
 	}
@@ -166,16 +194,30 @@ fact_of :: proc(
 
 @(private = "file")
 Analysis :: struct {
-	program: ir.Program_IR,
-	shapes:  []Shape, // by Func_ID
-	ranges:  Ranges,
-	globals: []Summary, // by Global_ID
-	params:  [][]Summary, // by Func_ID, then parameter; nil for a function called from elsewhere
-	returns: []Summary, // by Func_ID
-	dirty:   []bool, // by Func_ID: a summary it reads grew since it was last analyzed
-	readers: [][dynamic]ir.Func_ID, // by Global_ID: the functions that load it
-	callers: [][dynamic]ir.Func_ID, // by Func_ID: the functions that call it directly
-	grown:   [dynamic]int, // by Value_ID of the function being analyzed
+	program:      ir.Program_IR,
+	shapes:       []Shape, // by Func_ID
+	ranges:       Ranges,
+	globals:      []Summary, // by Global_ID
+	params:       [][]Summary, // by Func_ID, then parameter; shared by the functions of a class
+	returns:      []Summary, // by Func_ID
+	dirty:        []bool, // by Func_ID: a summary it reads grew since it was last analyzed
+	readers:      [][dynamic]ir.Func_ID, // by Global_ID: the functions that load it
+	callers:      [][dynamic]ir.Func_ID, // by Func_ID: the functions that call it directly
+	// By Layout_ID: the fields of an object or an environment, or the one element of an array.
+	slots:        [][]Summary,
+	slot_readers: [][dynamic]ir.Func_ID, // by Layout_ID: the functions that read one of its slots
+	class_of:     []int, // by Func_ID: its index in classes, or -1
+	classes:      [dynamic]Class,
+	kinds:        [dynamic]ir.Type_Kind, // scratch for the kinds of a call's arguments
+	grown:        [dynamic]int, // by Value_ID of the function being analyzed
+}
+
+// Class gathers the functions a closure may stand for whose parameters have the same kinds.
+@(private = "file")
+Class :: struct {
+	kinds:   []ir.Type_Kind,
+	params:  []Summary,
+	members: [dynamic]ir.Func_ID,
 }
 
 @(private = "file")
@@ -184,9 +226,8 @@ Summary :: struct {
 	grown: int,
 }
 
-// link_summaries knows a function's callers only when no closure of it exists: the runtime calls
-// comparators, and a closure may be called from anywhere. main and the module inits count as
-// entry points.
+// link_summaries leaves main and the module inits without parameter summaries: they are called
+// from outside the program.
 @(private = "file")
 link_summaries :: proc(a: ^Analysis) {
 	p := a.program
@@ -196,29 +237,96 @@ link_summaries :: proc(a: ^Analysis) {
 	for &list in a.readers {
 		list = make([dynamic]ir.Func_ID, context.temp_allocator)
 	}
-	escapes := make([]bool, len(p.funcs), context.temp_allocator)
-	escapes[p.main] = true
-	for id in p.init_order {
-		escapes[id] = true
+	for &list in a.slot_readers {
+		list = make([dynamic]ir.Func_ID, context.temp_allocator)
 	}
+	held := make([]bool, len(p.funcs), context.temp_allocator)
 	for func, id in p.funcs {
 		for instruction in func.values {
 			#partial switch v in instruction.variant {
 			case ir.Func_Ref:
-				escapes[v.func] = true
+				held[v.func] = true
 			case ir.Make_Closure:
-				escapes[v.func] = true
+				held[v.func] = true
 			case ir.Call:
 				append_once(&a.callers[v.func], ir.Func_ID(id))
 			case ir.Global_Load:
 				append_once(&a.readers[v.global], ir.Func_ID(id))
+			case ir.Field_Load:
+				append_once(&a.slot_readers[func.values[v.cell].type.layout], ir.Func_ID(id))
+			case ir.Element_Load:
+				append_once(&a.slot_readers[func.values[v.array].type.layout], ir.Func_ID(id))
+			case ir.Call_Runtime:
+				// Sort hands the elements to its comparator.
+				if v.export == .Array_Sort {
+					layout := func.values[v.args[0]].type.layout
+					append_once(&a.slot_readers[layout], ir.Func_ID(id))
+				}
 			}
 		}
 	}
+
+	entry := make([]bool, len(p.funcs), context.temp_allocator)
+	entry[p.main] = true
+	for id in p.init_order {
+		entry[id] = true
+	}
 	for func, id in p.funcs {
-		if !escapes[id] {
-			a.params[id] = make([]Summary, len(func.params), context.temp_allocator)
+		a.class_of[id] = -1
+		if entry[id] {
+			continue
 		}
+		if !held[id] {
+			a.params[id] = make([]Summary, len(func.params), context.temp_allocator)
+			continue
+		}
+		clear(&a.kinds)
+		for type in func.params {
+			append(&a.kinds, type.kind)
+		}
+		class := find_class(a, a.kinds[:])
+		if class < 0 {
+			class = len(a.classes)
+			append(
+				&a.classes,
+				Class {
+					kinds = slice.clone(a.kinds[:], context.temp_allocator),
+					params = make([]Summary, len(func.params), context.temp_allocator),
+					members = make([dynamic]ir.Func_ID, context.temp_allocator),
+				},
+			)
+		}
+		append(&a.classes[class].members, ir.Func_ID(id))
+		a.class_of[id] = class
+		a.params[id] = a.classes[class].params
+	}
+}
+
+@(private = "file")
+find_class :: proc(a: ^Analysis, kinds: []ir.Type_Kind) -> int {
+	for class, i in a.classes {
+		if slice.equal(class.kinds, kinds) {
+			return i
+		}
+	}
+	return -1
+}
+
+// mark_called makes every function that reads the parameters of `func` analyze again.
+@(private = "file")
+mark_called :: proc(a: ^Analysis, func: ir.Func_ID) {
+	class := a.class_of[func]
+	if class < 0 {
+		a.dirty[func] = true
+		return
+	}
+	mark_class(a, class)
+}
+
+@(private = "file")
+mark_class :: proc(a: ^Analysis, class: int) {
+	for member in a.classes[class].members {
+		a.dirty[member] = true
 	}
 }
 
@@ -341,19 +449,30 @@ contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 						a.dirty[reader] = true
 					}
 				}
+			case ir.Field_Store:
+				if func.values[v.value].type == ir.F64 {
+					layout := func.values[v.cell].type.layout
+					store(a, layout, int(v.field), refined(fr, v.value, block))
+				}
+			case ir.Element_Store:
+				if func.values[v.value].type == ir.F64 {
+					store(a, func.values[v.array].type.layout, 0, refined(fr, v.value, block))
+				}
 			case ir.Call:
-				params := a.params[v.func]
-				if params == nil {
-					continue
+				if pass(a, fr, func, block, v.args, a.params[v.func]) {
+					mark_called(a, v.func)
 				}
-				for arg, i in v.args {
-					if func.values[arg].type != ir.F64 {
-						continue
-					}
-					if grow(&params[i].range, &params[i].grown, refined(fr, arg, block)) {
-						a.dirty[v.func] = true
-					}
+			case ir.Call_Closure:
+				clear(&a.kinds)
+				for arg in v.args {
+					append(&a.kinds, func.values[arg].type.kind)
 				}
+				class := find_class(a, a.kinds[:])
+				if class >= 0 && pass(a, fr, func, block, v.args, a.classes[class].params) {
+					mark_class(a, class)
+				}
+			case ir.Call_Runtime:
+				runtime_stores(a, func, value, v)
 			case ir.Return:
 				if func.result != ir.F64 {
 					continue
@@ -366,6 +485,81 @@ contribute :: proc(a: ^Analysis, id: ir.Func_ID) {
 				}
 			}
 		}
+	}
+}
+
+// pass joins the number arguments of a call into the parameters it reaches and answers whether any
+// of them grew.
+@(private = "file")
+pass :: proc(
+	a: ^Analysis,
+	fr: Func_Ranges,
+	func: ir.Func,
+	block: ir.Block_ID,
+	args: []ir.Value_ID,
+	params: []Summary,
+) -> bool {
+	if params == nil {
+		return false
+	}
+	grew := false
+	for arg, i in args {
+		if func.values[arg].type == ir.F64 {
+			grew |= grow(&params[i].range, &params[i].grown, refined(fr, arg, block))
+		}
+	}
+	return grew
+}
+
+@(private = "file")
+store :: proc(a: ^Analysis, layout: ir.Layout_ID, slot: int, r: Range) {
+	summary := &a.slots[layout][slot]
+	if grow(&summary.range, &summary.grown, r) {
+		for reader in a.slot_readers[layout] {
+			a.dirty[reader] = true
+		}
+	}
+}
+
+// runtime_stores joins what a runtime procedure writes into a number slot or passes a closure.
+@(private = "file")
+runtime_stores :: proc(a: ^Analysis, func: ir.Func, value: ir.Value_ID, call: ir.Call_Runtime) {
+	switch call.export {
+	case .Array_Slice:
+		// A copy of the elements, so the same range in an array of the same layout.
+		from := func.values[call.args[0]].type.layout
+		into := func.values[value].type.layout
+		if into != from {
+			store(a, into, 0, TOP)
+		}
+	case .String_Split, .Process_Argv:
+		store(a, func.values[call.args[0]].type.layout, 0, TOP)
+	case .Array_Sort:
+		layout := func.values[call.args[0]].type.layout
+		if a.program.layouts[layout].element != .Number {
+			return
+		}
+		class := find_class(a, {.F64, .F64})
+		if class < 0 {
+			return
+		}
+		element := a.slots[layout][0].range
+		grew := false
+		for &param in a.classes[class].params {
+			grew |= grow(&param.range, &param.grown, element)
+		}
+		if grew {
+			mark_class(a, class)
+		}
+	case .Array_Sort_Default, .Array_Reserve: // they move the elements of one array
+	case .Alloc, .Array_New: // zero filled, as find_ranges assumes of every cell
+	case .Console_Log, .Log_String, .Process_Exit, .Math_Round, .Fail:
+	case .String_Concat, .String_Equal, .String_Less, .String_At, .String_Code_Point_At:
+	case .String_Char_Code_At, .String_Slice, .String_Index_Of, .String_Starts_With:
+	case .String_Ends_With, .String_Trim, .String_To_Upper, .String_To_Lower:
+	case .Number_To_String, .Number_To_Fixed, .Number_Parse_Float:
+	case .Value_Typeof, .Value_Equal, .Value_To_Boolean, .Value_To_String:
+	case .Value_To_Primitive_String, .Array_Index_Of, .Array_Includes, .Array_Join:
 	}
 }
 
@@ -421,6 +615,10 @@ compute :: proc(a: ^Analysis, id: ir.Func_ID, value: ir.Value_ID, block: ir.Bloc
 		return intrinsic(v.op, refined(fr, v.args[0], block))
 	case ir.Global_Load:
 		return a.globals[v.global].range
+	case ir.Field_Load:
+		return a.slots[func.values[v.cell].type.layout][v.field].range
+	case ir.Element_Load:
+		return a.slots[func.values[v.array].type.layout][0].range
 	case ir.Call:
 		return a.returns[v.func].range
 	}
