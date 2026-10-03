@@ -30,6 +30,21 @@ instructions_of :: proc(body: ir.Func, $T: typeid) -> (ids: []ir.Value_ID, varia
 	return found[:], out[:]
 }
 
+// placed_of is instructions_of for the values in blocks, the ones codegen emits.
+placed_of :: proc(body: ir.Func, $T: typeid) -> (ids: []ir.Value_ID, variants: []T) {
+	found := make([dynamic]ir.Value_ID, context.temp_allocator)
+	out := make([dynamic]T, context.temp_allocator)
+	for block in body.blocks {
+		for value in block.instructions {
+			if v, is_variant := body.values[value].variant.(T); is_variant {
+				append(&found, value)
+				append(&out, v)
+			}
+		}
+	}
+	return found[:], out[:]
+}
+
 // counter finds the phi of a loop counter, the one a `+ 1` of itself feeds back.
 counter :: proc(body: ir.Func) -> (phi: ir.Value_ID, step: ir.Value_ID, found: bool) {
 	ids, phis := instructions_of(body, ir.Phi)

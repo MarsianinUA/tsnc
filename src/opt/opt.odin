@@ -14,11 +14,15 @@ import "../ir"
 
 optimize :: proc(p: ^ir.Program_IR, allocator := context.allocator) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
-	shapes := make([]Shape, len(p.funcs), context.temp_allocator)
-	for &func, id in p.funcs {
+	for &func in p.funcs {
 		flow := ir.make_flow(func, context.temp_allocator)
 		drop_unreachable(&func, &flow)
-		shapes[id] = make_shape(func, flow)
+	}
+	inline_calls(p, allocator)
+	shapes := make([]Shape, len(p.funcs), context.temp_allocator)
+	for &func, id in p.funcs {
+		split_cells(p^, &func, allocator)
+		shapes[id] = make_shape(func, ir.make_flow(func, context.temp_allocator))
 	}
 	place_cells(p, shapes)
 	ranges := find_ranges(p^, shapes)
