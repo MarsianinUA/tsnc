@@ -221,7 +221,8 @@ a_bitwise_result_feeds_the_next_bitwise_operator_as_it_is :: proc(t: ^testing.T)
 		console.log(mix(7, 2));
 	`,
 	)
-	mix := harness.func_named(t, result.output, "m1.mix")
+	// mix is inlined into the module's init.
+	mix := harness.func_named(t, result.output, "init$m1")
 	ids, binaries := instructions_of(mix, ir.Binary)
 	anded := false
 	for binary, i in binaries {
@@ -268,8 +269,13 @@ a_parameter_narrows_from_every_call_its_class_takes :: proc(t: ^testing.T) {
 	result := optimize_text(
 		t,
 		`
+		// A loop keeps direct a call.
 		function direct(n: number): number {
-			return n + n;
+			let twice = n + n;
+			for (let j = 0; j < 2; j++) {
+				twice += j;
+			}
+			return twice;
 		}
 		function held(n: number): number {
 			return n + n;
@@ -383,6 +389,8 @@ one_fraction_stored_through_any_place_of_a_layout_keeps_its_field_f64 :: proc(t:
 		}
 		function main(): void {
 			const p: Point = { x: 1, y: 2 };
+			// A write after a read keeps p a cell.
+			p.y = p.y % 3;
 			const q: Point = { x: 3, y: 4 };
 			shift(q);
 			console.log(p.x * 2, p.y * 2);

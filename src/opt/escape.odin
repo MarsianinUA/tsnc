@@ -243,6 +243,10 @@ check_uses :: proc(
 	consumer: ir.Value_ID,
 	instruction: ^ir.Instruction,
 ) -> bool {
+	// What inlining and split took out of the blocks still names the cells it used.
+	if frame.places[consumer].block == ir.NO_BLOCK {
+		return false
+	}
 	ir.operands(&instruction.variant, &e.fields)
 	moved := false
 	for field in e.fields {

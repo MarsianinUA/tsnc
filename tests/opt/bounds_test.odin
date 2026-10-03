@@ -74,8 +74,12 @@ the_store_of_a_compound_assignment_reuses_the_check_of_its_read :: proc(t: ^test
 	result := optimize_text(
 		t,
 		`
+		// The call to itself keeps bump a call.
 		function bump(values: number[], i: number): void {
 			values[i] += 1;
+			if (i > 0) {
+				bump(values, i - 1);
+			}
 		}
 		const values = [1, 2];
 		bump(values, 1);

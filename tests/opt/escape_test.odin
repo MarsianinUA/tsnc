@@ -9,6 +9,7 @@ import "../harness"
 
 @(test)
 a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
+	// A loop keeps norm a call, and a write after a read keeps box a cell rather than its fields.
 	result := optimize_text(
 		t,
 		`
@@ -17,10 +18,15 @@ a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
 			y: number;
 		}
 		function norm(p: Point): number {
-			return p.x * p.x + p.y * p.y;
+			let sum = 0;
+			for (let i = 0; i < 2; i++) {
+				sum += p.x * p.y;
+			}
+			return sum;
 		}
 		function area(w: number, h: number): number {
 			const box = { w: w, h: h };
+			box.w = box.w + 1;
 			return box.w * box.h;
 		}
 		function passed(): number {
@@ -34,10 +40,18 @@ a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
 			}
 			return sum;
 		}
-		console.log(area(2, 3), passed(), walked());
+		function same(p: Point): Point {
+			return p;
+		}
+		function inlined(): number {
+			const p = { x: 3, y: 4 };
+			p.x = p.y + 1;
+			return same(p).x;
+		}
+		console.log(area(2, 3), passed(), walked(), inlined());
 	`,
 	)
-	for name in ([?]string{"m1.area", "m1.passed", "m1.walked"}) {
+	for name in ([?]string{"m1.area", "m1.passed", "m1.walked", "m1.inlined"}) {
 		body := harness.func_named(t, result.output, name)
 		places := cell_places(body)
 		testing.expectf(t, places == {.Stack}, "%s: %v\n%s", name, places, result.after)
@@ -186,9 +200,11 @@ a_cell_of_an_inner_loop_stored_into_one_of_an_outer_loop_stays_on_the_heap :: pr
 
 @(private = "file")
 cell_places :: proc(body: ir.Func) -> (places: bit_set[ir.Cell_Place]) {
-	for &instruction in body.values {
-		if place := ir.cell_place(&instruction.variant); place != nil {
-			places += {place^}
+	for block in body.blocks {
+		for value in block.instructions {
+			if place := ir.cell_place(&body.values[value].variant); place != nil {
+				places += {place^}
+			}
 		}
 	}
 	return
