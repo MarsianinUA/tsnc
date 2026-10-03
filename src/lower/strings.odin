@@ -1,7 +1,11 @@
 package lower
 
+import "core:slice"
+
 import "../abi"
 import "../ast"
+import "../bind"
+import "../check"
 import "../ir"
 import "../source"
 
@@ -62,50 +66,303 @@ to_string :: proc(
 	return ir.emit(&s.fb, ir.STR, call, span)
 }
 
+// lower_concat is a `+=` to a target not typed string, such as `any` or a union, that meets one.
 @(private)
 lower_concat :: proc(s: ^Func_State, left, right: ir.Value_ID, span: source.Span) -> ir.Value_ID {
-	first := to_string(s, left, span, primitive = true)
-	second := to_string(s, right, span, primitive = true)
-	if first == ir.NO_VALUE || second == ir.NO_VALUE {
-		return ir.NO_VALUE
-	}
-	return concat(s, first, second, span)
+	first := piece(s, left, span, primitive = true)
+	second := piece(s, right, span, primitive = true)
+	return emit_join(s, {first, second}, span)
 }
 
 @(private)
-concat :: proc(s: ^Func_State, left, right: ir.Value_ID, span: source.Span) -> ir.Value_ID {
+lower_string_join :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
+	pieces := make([dynamic]ir.Value_ID, 0, 4, context.temp_allocator)
+	join_pieces(s, id, &pieces)
+	return emit_join(s, pieces[:], s.tree.nodes[id].span)
+}
+
+// join_length is `.length` of a join, the sum of the lengths of its pieces, as V8 answers it: no cell
+// for the join, only the text of a number in it. It fails where the join would.
+@(private)
+join_length :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Value_ID {
+	pieces := make([dynamic]ir.Value_ID, 0, 4, context.temp_allocator)
+	join_pieces(s, id, &pieces)
+	total := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
+	for value in pieces {
+		text := to_string(s, value, span)
+		if text == ir.NO_VALUE {
+			return ir.NO_VALUE
+		}
+		length := ir.emit(&s.fb, ir.F64, ir.Length{value = text}, span)
+		total = ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = total, right = length}, span)
+	}
+	limit := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = abi.MAX_STRING_LENGTH}, span)
+	too_long := ir.emit(
+		&s.fb,
+		ir.BOOL,
+		ir.Compare{op = .Greater, left = total, right = limit},
+		span,
+	)
+	fail_if(s, too_long, .Invalid_String_Length, span)
+	return total
+}
+
+@(private)
+is_join :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
+	#partial switch v in s.tree.nodes[id].variant {
+	case ast.Binary:
+		return v.op == .Add && s.typed.node_types[id] == check.STRING
+	case ast.Template:
+		return true
+	}
+	return false
+}
+
+// join_pieces appends the pieces of a join, left to right, the pieces of a join inside it too. An
+// operand of `+` that is not a join is a piece once both sides were evaluated, which is when `+`
+// asks for ToPrimitive; an empty part of a template adds nothing.
+@(private)
+join_pieces :: proc(s: ^Func_State, id: ast.Node_ID, pieces: ^[dynamic]ir.Value_ID) {
+	span := s.tree.nodes[id].span
+	#partial switch v in s.tree.nodes[id].variant {
+	case ast.Binary:
+		left, left_lowered := join_operand(s, v.left, pieces)
+		left_at := len(pieces) - 1
+		right, right_lowered := join_operand(s, v.right, pieces)
+		if left_lowered {
+			pieces[left_at] = piece(s, left, span, primitive = true)
+		}
+		if right_lowered {
+			pieces[len(pieces) - 1] = piece(s, right, span, primitive = true)
+		}
+	case ast.Template:
+		for part, i in v.parts {
+			if len(part) > 0 {
+				append(pieces, string_constant(s, part, span))
+			}
+			if i == len(v.expressions) {
+				break
+			}
+			expression := v.expressions[i]
+			if is_join(s, expression) {
+				join_pieces(s, expression, pieces)
+			} else {
+				value := lower_expression(s, expression)
+				append(pieces, piece(s, value, s.tree.nodes[expression].span))
+			}
+		}
+	case:
+		unreachable()
+	}
+}
+
+// join_operand appends the pieces of a join, or the operand's value for the caller to make a piece
+// of.
+@(private)
+join_operand :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	pieces: ^[dynamic]ir.Value_ID,
+) -> (
+	value: ir.Value_ID,
+	lowered: bool,
+) {
+	if is_join(s, id) {
+		join_pieces(s, id, pieces)
+		return ir.NO_VALUE, false
+	}
+	value = lower_expression(s, id)
+	append(pieces, value)
+	return value, true
+}
+
+// piece is what String_Join takes of a value: a string or a number as it is, anything else as the
+// string to_string makes of it.
+@(private)
+piece :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	span: source.Span,
+	primitive := false,
+) -> ir.Value_ID {
+	if value != ir.NO_VALUE && value_type(s, value) == ir.F64 {
+		return value
+	}
+	return to_string(s, value, span, primitive)
+}
+
+// emit_join answers the string of the pieces, or NO_VALUE when one is missing. A `+=` to a variable
+// a loop owns passes the value it held when the loop was entered (owned_entry).
+@(private)
+emit_join :: proc(
+	s: ^Func_State,
+	pieces: []ir.Value_ID,
+	span: source.Span,
+	entry := ir.NO_VALUE,
+) -> ir.Value_ID {
+	owned := entry != ir.NO_VALUE
+	// args[0] is the flag, emitted only once the call is sure.
+	args := make([dynamic]ir.Value_ID, 1, len(pieces) + 2, context.temp_allocator)
+	if owned {
+		append(&args, entry)
+	}
+	first := len(args)
+	for value, i in pieces {
+		if value == ir.NO_VALUE {
+			return ir.NO_VALUE
+		}
+		if units, short := short_literal(s, value);
+		   short && len(units) == 0 && !(owned && i == 0) {
+			continue
+		}
+		append(&args, value)
+	}
+	switch len(args) - first {
+	case 0:
+		return string_constant(s, "", span)
+	case 1:
+		return to_string(s, args[first], span)
+	}
+	args[0] = ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = owned}, span)
+	for &arg in args[1:] {
+		arg = coerce(s, arg, ir.TAGGED, span)
+	}
 	call := ir.Call_Runtime {
-		export = .String_Concat,
-		args   = {left, right},
+		export = .String_Join,
+		args   = args[:],
 	}
 	return ir.emit(&s.fb, ir.STR, call, span)
 }
 
-// lower_template joins the cooked parts with the substitutions between them, left to right; an
-// empty part adds nothing, so it is left out.
 @(private)
-lower_template :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Template) -> ir.Value_ID {
-	span := s.tree.nodes[id].span
-	text := ir.NO_VALUE
-	if len(node.parts[0]) > 0 {
-		text = string_constant(s, node.parts[0], span)
+Owned_String :: struct {
+	symbol: bind.Symbol_ID,
+	loop:   source.Span,
+	entry:  ir.Value_ID, // its value when the loop was entered
+}
+
+// own_strings finds the string variables a loop may append to in place, since nothing else sees
+// their cell while it runs: a `let` of this function declared ahead of the loop, which no function
+// reads, and which each use inside the loop keeps no reference of: the target of a `+=` statement,
+// `.length`, an index, an operand of a comparison. The first append of each pass through the loop
+// still copies, as the value held on entry may be anywhere (str.join).
+@(private)
+own_strings :: proc(s: ^Func_State, loop: ast.Node_ID, span: source.Span) {
+	area := s.tree.nodes[loop].span
+	safe := make(map[ast.Node_ID]bool, context.temp_allocator)
+	unsafe := make(map[bind.Symbol_ID]bool, context.temp_allocator)
+	appended := make([dynamic]bind.Symbol_ID, 0, 4, context.temp_allocator)
+	stack := make([dynamic]ast.Node_ID, 0, 64, context.temp_allocator)
+	append(&stack, loop)
+	// The walk reaches a name after the node that uses it.
+	for id in ast.walk(s.tree.nodes, &stack) {
+		#partial switch v in s.tree.nodes[id].variant {
+		case ast.Ident:
+			if !safe[id] || s.bound.node_deferred[id] != bind.MODULE_SCOPE {
+				unsafe[s.bound.node_symbols[id]] = true
+			}
+		case ast.Expr_Stmt:
+			assign, is_assign := s.tree.nodes[v.expr].variant.(ast.Assign)
+			if is_assign && assign.op == .Add && is_name(s, assign.target) {
+				safe[assign.target] = true
+				if s.typed.node_types[v.expr] == check.STRING {
+					append(&appended, s.bound.node_symbols[assign.target])
+				}
+			}
+		case ast.Member:
+			if v.name.text == "length" && is_name(s, v.object) {
+				safe[v.object] = true
+			}
+		case ast.Index:
+			if is_name(s, v.object) {
+				safe[v.object] = true
+			}
+		case ast.Binary:
+			if _, is_compare := compare_op(v.op); is_compare {
+				for operand in ([]ast.Node_ID{v.left, v.right}) {
+					if is_name(s, operand) {
+						safe[operand] = true
+					}
+				}
+			}
+		}
 	}
-	complete := true
-	for expression, i in node.expressions {
-		piece := to_string(s, lower_expression(s, expression), s.tree.nodes[expression].span)
-		if piece == ir.NO_VALUE {
-			complete = false
+
+	for symbol, i in appended {
+		if slice.contains(appended[:i], symbol) || unsafe[symbol] || !may_own(s, symbol, area) {
 			continue
 		}
-		text = piece if text == ir.NO_VALUE else concat(s, text, piece, span)
-		if part := node.parts[i + 1]; len(part) > 0 {
-			text = concat(s, text, string_constant(s, part, span), span)
+		place, ok := symbol_place(s, {s.file, symbol})
+		entry := load_place(s, &place, span) if ok else ir.NO_VALUE
+		if entry != ir.NO_VALUE && value_type(s, entry) == ir.STR {
+			append(&s.owned, Owned_String{symbol = symbol, loop = area, entry = entry})
 		}
 	}
-	if !complete {
-		return ir.NO_VALUE
+}
+
+// may_own checks the variable own_strings found in the loop outside it.
+@(private)
+may_own :: proc(s: ^Func_State, symbol: bind.Symbol_ID, area: source.Span) -> bool {
+	if symbol == bind.NO_SYMBOL || owned_entry(s, symbol, area) != ir.NO_VALUE {
+		return false
 	}
-	return text if text != ir.NO_VALUE else string_constant(s, "", span)
+	entry := s.bound.symbols[symbol]
+	declarator, is_declarator := s.tree.nodes[entry.declaration].variant.(ast.Declarator)
+	if entry.kind != .Let || !is_declarator || declarator.init == ast.NO_NODE {
+		return false
+	}
+	declared := s.tree.nodes[entry.declaration].span
+	if declared.end > area.start ||
+	   .Captured in entry.flags ||
+	   s.low.closures[s.file].boxed[symbol] {
+		return false
+	}
+	for export in s.bound.exports {
+		if export.symbol == symbol {
+			return false
+		}
+	}
+	return entry.scope != bind.MODULE_SCOPE || !read_in_functions(s)[symbol]
+}
+
+// read_in_functions marks the symbols a function of the file reads, which bind leaves unmarked for
+// a module global. Only top-level code asks, so the file is walked once.
+@(private)
+read_in_functions :: proc(s: ^Func_State) -> []bool {
+	if s.read_in_functions != nil {
+		return s.read_in_functions
+	}
+	s.read_in_functions = make([]bool, len(s.bound.symbols), context.temp_allocator)
+	for node, i in s.tree.nodes {
+		if _, is_ident := node.variant.(ast.Ident); is_ident {
+			s.read_in_functions[s.bound.node_symbols[i]] ||=
+				s.bound.node_deferred[i] != bind.MODULE_SCOPE
+		}
+	}
+	return s.read_in_functions
+}
+
+// owned_entry is what the variable held when the loop around span that owns it was entered, or
+// NO_VALUE when no loop does.
+@(private)
+owned_entry :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -> ir.Value_ID {
+	for owned in s.owned {
+		if owned.symbol == symbol && within(span, owned.loop) {
+			return owned.entry
+		}
+	}
+	return ir.NO_VALUE
+}
+
+@(private)
+is_name :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
+	_, is_ident := s.tree.nodes[id].variant.(ast.Ident)
+	return is_ident
+}
+
+@(private)
+within :: proc(inner, outer: source.Span) -> bool {
+	return outer.start <= inner.start && inner.end <= outer.end
 }
 
 @(private)

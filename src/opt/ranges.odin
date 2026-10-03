@@ -554,7 +554,7 @@ runtime_stores :: proc(a: ^Analysis, func: ir.Func, value: ir.Value_ID, call: ir
 	case .Array_Sort_Default, .Array_Reserve: // they move the elements of one array
 	case .Alloc, .Array_New: // zero filled, as find_ranges assumes of every cell
 	case .Console_Log, .Log_String, .Process_Exit, .Math_Round, .Fail:
-	case .String_Concat, .String_Equal, .String_Less, .String_At, .String_Code_Point_At:
+	case .String_Join, .String_Equal, .String_Less, .String_At, .String_Code_Point_At:
 	case .String_Char_Code_At, .String_Slice, .String_Index_Of, .String_Starts_With:
 	case .String_Ends_With, .String_Trim, .String_To_Upper, .String_To_Lower:
 	case .Number_To_String, .Number_To_Fixed, .Number_Parse_Float:

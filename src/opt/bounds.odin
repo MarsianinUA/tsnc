@@ -12,7 +12,7 @@ non-negative and one of these bounds it from above:
 - a constant index below the constant length of an array literal;
 - an earlier check of the same array, whose answer the index is.
 An array's length changes only inside a call or a Set_Length, so neither may stand between the
-bound and the check. A string never changes.
+bound and the check. A string never shrinks: only an owned join grows one, in place (str.join).
 */
 
 prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges, shapes: []Shape) {
@@ -46,8 +46,8 @@ proved :: proc(
 	if since == ir.NO_VALUE {
 		return false
 	}
-	immutable := func.values[check.array].type == ir.STR
-	return immutable || no_call_between(func, shape, since, value)
+	never_shrinks := func.values[check.array].type == ir.STR
+	return never_shrinks || no_call_between(func, shape, since, value)
 }
 
 // upper_bound answers the first value after which the index lies below the length, NO_VALUE when

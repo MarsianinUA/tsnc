@@ -66,6 +66,24 @@ a_literal_of_at_most_one_unit_compares_without_a_call :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_chain_of_plus_and_a_template_are_one_call_and_their_length_none :: proc(t: ^testing.T) {
+	// Quoted: a backtick would end a raw string.
+	result := lower_text(
+		t,
+		"function chain(a: string, b: string, n: number): string { return a + \":\" + b + n; }\n" +
+		"function template(n: number): string { return `x${n}y${-n}z`; }\n" +
+		"function size(a: string, b: string): number { return (a + \":\" + b).length; }\n",
+	)
+	for name in ([]string{"m1.chain", "m1.template"}) {
+		body := harness.func_named(t, result.output, name)
+		testing.expectf(t, calls_to(body, .String_Join) == 1, "%s", result.text)
+		testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 1, "%s", result.text)
+	}
+	size := harness.func_named(t, result.output, "m1.size")
+	testing.expectf(t, len(instructions_of(size, ir.Call_Runtime)) == 0, "%s", result.text)
+}
+
+@(test)
 the_runtime_compares_two_strings_only_after_identity_and_length :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,

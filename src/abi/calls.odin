@@ -63,7 +63,9 @@ Runtime_Proc :: enum u8 {
 	// Strings, requirements 3.2, and the String methods of 2.2. `length` has no row: generated code
 	// loads String_Cell.length. A string result may be an argument or a static cell, never a
 	// promised fresh one.
-	String_Concat, // (a, b: ^String_Cell) -> ^String_Cell
+	// (owned, pieces: Rest) -> ^String_Cell: a chain of `+` or a template of strings and numbers;
+	// owned, a `+=` in a loop that may append in place (str.join)
+	String_Join,
 	String_Equal, // (a, b) -> b64: `===`
 	String_Less, // (a, b) -> b64: `a < b` by units; lower swaps and negates for `>`, `<=`, `>=`
 	String_At, // (text, index) -> ^String_Cell: text[index], with the index checked first
@@ -139,7 +141,7 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	// An argument TypeScript lets a call leave out arrives as MISSING_END for an end, MISSING_LIMIT
 	// for a limit, and 0 for a start, a position or a digit count. A separator join was not given
 	// is the string constant ",".
-	.String_Concat = {symbol = "tsnc_string_concat", params = {.Ptr, .Ptr}, result = .Ptr},
+	.String_Join = {symbol = "tsnc_string_join", params = {.Boolean, .Rest}, result = .Ptr},
 	.String_Equal = {symbol = "tsnc_string_equal", params = {.Ptr, .Ptr}, result = .Boolean},
 	.String_Less = {symbol = "tsnc_string_less", params = {.Ptr, .Ptr}, result = .Boolean},
 	.String_At = {symbol = "tsnc_string_at", params = {.Ptr, .Number}, result = .Ptr},

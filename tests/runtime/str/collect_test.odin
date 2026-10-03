@@ -43,7 +43,11 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 	expect_units(t, str.from_units(heap, str.units(mixed)[3:]), MIXED[3:])
 	expect_live(t, heap, mixed, padded)
 	// The first half is held only by this frame while the second half and the result allocate.
-	expect_units(t, str.concat(heap, cell(heap, MIXED[:3]), cell(heap, MIXED[3:])), MIXED[:])
+	halves := [?]abi.Tagged {
+		{tag = .String, payload = {ref = cell(heap, MIXED[:3])}},
+		{tag = .String, payload = {ref = cell(heap, MIXED[3:])}},
+	}
+	expect_units(t, str.join(heap, false, halves[:]), MIXED[:])
 	expect_live(t, heap, mixed, padded)
 	expect_units(t, str.unit_at(heap, mixed, 1), {0xd83d})
 	expect_live(t, heap, mixed, padded)
