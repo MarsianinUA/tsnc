@@ -437,10 +437,12 @@ open_loop :: proc(s: ^Func_State) -> Loop_Blocks {
 @(private)
 enter_loop :: proc(
 	s: ^Func_State,
+	loop: ast.Node_ID,
 	blocks: Loop_Blocks,
 	assigned: []int,
 	span: source.Span,
 ) -> []ir.Value_ID {
+	own_strings(s, loop, span)
 	from := here(s)
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = blocks.header}, span)
 	return open_header(s, blocks.header, assigned, from, span)
@@ -520,7 +522,7 @@ lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.S
 	// The box of a renewed binding changes from one pass to the next.
 	assigned := assigned_locals(s, id, renewed)
 	blocks := open_loop(s)
-	phis := enter_loop(s, blocks, assigned, span)
+	phis := enter_loop(s, id, blocks, assigned, span)
 
 	leaving := Edge{}
 	if node.condition != ast.NO_NODE {
@@ -578,7 +580,7 @@ renew_bindings :: proc(s: ^Func_State, symbols: []bind.Symbol_ID, span: source.S
 lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span: source.Span) {
 	assigned := assigned_locals(s, id)
 	blocks := open_loop(s)
-	phis := enter_loop(s, blocks, assigned, span)
+	phis := enter_loop(s, id, blocks, assigned, span)
 
 	// The body is the header itself: a do-while runs it before it ever tests anything.
 	push_frame(s, blocks.latch, blocks.exit)
@@ -743,7 +745,7 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 	blocks := open_loop(s)
 	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	entry := s.fb.current
-	phis := enter_loop(s, blocks, assigned, span)
+	phis := enter_loop(s, id, blocks, assigned, span)
 	index := ir.phi(&s.fb, ir.F64, span)
 	ir.phi_incoming(&s.fb, index, entry, start)
 	length := ir.emit(&s.fb, ir.F64, ir.Length{value = iterable}, span)

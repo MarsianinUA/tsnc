@@ -22,6 +22,52 @@ for (let i = 0; i < 3; i++) {
 console.log(joined, built, joined.length, "" + 1.5 + true + [1, 2], 1 + 2 + "3");
 console.log(`${greeting} ${name.length} ${[1, 2, 3]} ${{ a: 1 }} ${0.1 + 0.2} ${false}`);
 
+// An array in a chain of `+` turns into a string where `+` asks, before the call to its right runs,
+// and the length of a chain counts it the same way. A `+=` in a loop appends in place where nothing
+// else sees the variable: a copy taken before the loop, one a function keeps, a nested loop and
+// `s += s` keep their text.
+const items = [1, 2];
+const grow = (): number => items.push(items.length + 1);
+console.log(items + ":" + grow() + ":" + items, `${items}|${grow()}|${items}`);
+console.log((items + ":" + grow()).length, `${items}${0.5}`.length, (greeting + "").length, ``.length);
+
+function repeat(unit: string, count: number): string {
+  let text = unit + "-";
+  const before = text;
+  for (let i = 0; i < count; i++) {
+    text += unit + i;
+    if (text.length > 40 && text[0] === unit) {
+      text += "|";
+    }
+  }
+  return before + " " + text;
+}
+console.log(repeat("a", 30), repeat("b", 0));
+
+let doubled = greeting + "!";
+for (let round = 0; round < 3; round++) {
+  for (let i = 0; i < 2; i++) {
+    doubled += doubled.length;
+  }
+  doubled += doubled;
+}
+const trail: string[] = [];
+let step = name + "";
+for (let i = 0; i < 20; i++) {
+  step += i;
+  trail.push(step);
+}
+let mark = name + "#";
+const marks: string[] = [];
+function remember(): void {
+  marks.push(mark);
+}
+for (let i = 0; i < 3; i++) {
+  mark += i;
+  remember();
+}
+console.log(doubled.length, doubled.slice(0, 24), trail[3], trail[19].length, marks.join(" "));
+
 compare("apple", "banana");
 compare("same", "same");
 compare("Z", "a");

@@ -71,10 +71,15 @@ math_round :: proc "c" (x: f64) -> f64 {
 	return num.round(x)
 }
 
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Concat].symbol)
-string_concat :: proc "c" (a, b: ^abi.String_Cell) -> ^abi.String_Cell {
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Join].symbol)
+string_join :: proc "c" (owned: b64, pieces: [^]abi.Tagged, count: int) -> ^abi.String_Cell {
+	if !owned {
+		if cell := str.join_strings(&heap, pieces[:count]); cell != nil {
+			return cell
+		}
+	}
 	context = export_context()
-	return str.concat(&heap, a, b)
+	return str.join(&heap, bool(owned), pieces[:count])
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Equal].symbol)

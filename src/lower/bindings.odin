@@ -61,27 +61,29 @@ Inline_Frame :: struct {
 }
 
 Func_State :: struct {
-	low:      ^Lowering,
-	fb:       ir.Func_Builder,
-	file:     source.File_ID,
-	tree:     ^ast.File_AST,
-	bound:    ^bind.Bound_File,
-	typed:    ^check.Typed_File,
-	types:    []check.Type,
+	low:               ^Lowering,
+	fb:                ir.Func_Builder,
+	file:              source.File_ID,
+	tree:              ^ast.File_AST,
+	bound:             ^bind.Bound_File,
+	typed:             ^check.Typed_File,
+	types:             []check.Type,
 	// What a `return` produces: the result of the function's signature class, and its own
 	// declared result, which the class may hold boxed (types.odin). Inside an inlined arrow,
 	// declared and returns are the arrow's (inline_arrow).
-	result:   ir.Type,
-	declared: ir.Type,
-	returns:  check.Type_ID, // the declared result as check typed it; ERROR outside a function
+	result:            ir.Type,
+	declared:          ir.Type,
+	returns:           check.Type_ID, // the declared result as check typed it; ERROR outside a function
 	// The symbols of the function's locals (File_Locals.locals), and by the position of each there
 	// (local_at): its value, or its box, and whether zero_locals reported it. The value is NO_VALUE
 	// for a box whose scope has not been entered and for a variable refused.
-	symbols:  []bind.Symbol_ID,
-	locals:   []ir.Value_ID,
-	refused:  []bool,
-	loops:    [dynamic]Loop_Frame,
-	inlines:  [dynamic]Inline_Frame, // the innermost last
+	symbols:           []bind.Symbol_ID,
+	locals:            []ir.Value_ID,
+	refused:           []bool,
+	loops:             [dynamic]Loop_Frame,
+	inlines:           [dynamic]Inline_Frame, // the innermost last
+	owned:             [dynamic]Owned_String, // own_strings
+	read_in_functions: []bool, // nil until own_strings asks
 }
 
 // File_Locals groups the locals of a file by the function that holds them, once per file.
@@ -220,6 +222,7 @@ begin_function :: proc(
 		returns  = check.ERROR,
 		loops    = make([dynamic]Loop_Frame, context.temp_allocator),
 		inlines  = make([dynamic]Inline_Frame, context.temp_allocator),
+		owned    = make([dynamic]Owned_String, context.temp_allocator),
 	}
 	s.symbols = low.locals[file].locals[scope]
 	for symbol, i in s.symbols {

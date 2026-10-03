@@ -327,8 +327,8 @@ take_cell :: proc(heap: ^Heap, class, count: int) -> (cell: [^]byte, found: bool
 	return heap.base[first * PAGE_SIZE:], true
 }
 
-// in_pages is one comparison: below the base the difference wraps past every page.
-@(private)
+// in_pages tells a cell of the heap from a static one. One comparison: below the base the
+// difference wraps past every page.
 in_pages :: #force_inline proc(heap: ^Heap, p: rawptr) -> bool {
 	return uintptr(p) - uintptr(heap.base) < uintptr(heap.page_count * PAGE_SIZE)
 }

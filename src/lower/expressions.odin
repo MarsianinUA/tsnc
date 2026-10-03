@@ -111,7 +111,7 @@ lower_node :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	case ast.Non_Null:
 		return lower_non_null(s, id, v)
 	case ast.Template:
-		return lower_template(s, id, v)
+		return lower_string_join(s, id)
 	case ast.Array_Literal:
 		return lower_array_literal(s, id, v)
 	case ast.Object_Literal:
@@ -461,6 +461,9 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 		}
 		return load_place(s, &place, span)
 	}
+	if node.name.text == "length" && is_join(s, node.object) {
+		return join_length(s, node.object, span)
+	}
 	receiver := lower_expression(s, node.object)
 	if receiver == ir.NO_VALUE {
 		return ir.NO_VALUE
@@ -621,6 +624,9 @@ unary_number :: proc(
 lower_binary :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Binary) -> ir.Value_ID {
 	if test, matched := lower_typeof_test(s, id, node); matched {
 		return test
+	}
+	if is_join(s, id) {
+		return lower_string_join(s, id)
 	}
 	span := s.tree.nodes[id].span
 	left := lower_expression(s, node.left)
@@ -991,6 +997,16 @@ lower_assign :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Assign) -> ir.Va
 	}
 
 	before := narrowed(s, load_place(s, &place, span), node.target, span) if ok else ir.NO_VALUE
+	if node.op == .Add && before != ir.NO_VALUE && value_type(s, before) == ir.STR {
+		pieces := make([dynamic]ir.Value_ID, 0, 4, context.temp_allocator)
+		append(&pieces, before)
+		if right, lowered := join_operand(s, node.value, &pieces); lowered {
+			pieces[len(pieces) - 1] = piece(s, right, span, primitive = true)
+		}
+		entry := owned_entry(s, s.bound.node_symbols[node.target], span)
+		joined := emit_join(s, pieces[:], span, entry)
+		return store_place(s, &place, joined, span)
+	}
 	right := lower_expression(s, node.value)
 	if before == ir.NO_VALUE || right == ir.NO_VALUE {
 		return ir.NO_VALUE

@@ -33,3 +33,4 @@ const who = "world";
 echo(`${who}`);
 echo(`hello ${who}, ${count} + ${count} = ${count + count}`);
 echo(`${true}${1e21}${-0}${[1, [2]]}${`nested ${who}`}`);
+echo(`${1}${2.5}${-0}${NaN}${1e21}${-1e-7}${Infinity}${123456789}${0.1}${-Infinity}|${count / 7}`);

@@ -94,8 +94,8 @@ the_empty_string_is_one_static_cell :: proc(t: ^testing.T) {
 	testing.expect_value(t, heap.used, 2 * 24)
 }
 
-// A result that is one of the arguments whole comes back as that cell, not a copy: concat with an
-// empty side, a slice of the whole, a trim or a case mapping that changes nothing.
+// A result that is one of the arguments whole comes back as that cell, not a copy: a join of one
+// piece and an empty one, a slice of the whole, a trim or a case mapping that changes nothing.
 @(test)
 a_result_the_input_already_is_takes_no_cell :: proc(t: ^testing.T) {
 	heap: gc.Heap
@@ -104,8 +104,11 @@ a_result_the_input_already_is_takes_no_cell :: proc(t: ^testing.T) {
 
 	text := cell(&heap, MIXED[:])
 	empty := str.from_utf8(&heap, "")
-	testing.expect_value(t, str.concat(&heap, empty, text), text)
-	testing.expect_value(t, str.concat(&heap, text, empty), text)
+	pieces := [?]abi.Tagged {
+		{tag = .String, payload = {ref = empty}},
+		{tag = .String, payload = {ref = text}},
+	}
+	testing.expect_value(t, str.join(&heap, false, pieces[:]), text)
 	testing.expect_value(t, str.slice(&heap, text, -INF, INF), text)
 	testing.expect_value(t, str.slice(&heap, text, 0, 9), text)
 	kept := cell(&heap, {0x0085, 0x200b, 'x', 0x200b, 0x0085})

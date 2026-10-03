@@ -10,6 +10,9 @@ A string result may be one of the arguments or a static cell, never a promised f
 are immutable and `===` compares their content, so no caller may rely on a new cell or on the
 identity of one.
 
+One kind of cell does grow: one an owned join made, which later owned joins of the same loop fill
+in place while no other reference can see it (own_strings in lower).
+
 gc.alloc may collect. Every procedure here that allocates does so once, reads its sources after
 the allocation, and fills the cell before it returns it, so no half-built string is ever visible
 and nothing still needed lives only in core memory across the call.
@@ -27,6 +30,7 @@ import "core:unicode/utf8"
 import "../../abi"
 import "../fail"
 import "../gc"
+import "../num"
 
 @(private)
 STRING :: abi.Type_Table_ID(abi.Builtin_Table.String)
@@ -128,17 +132,140 @@ next_rune :: proc "contextless" (text: string) -> (r: rune, width: int) {
 	return r, size
 }
 
-concat :: proc(heap: ^gc.Heap, a, b: ^abi.String_Cell) -> ^abi.String_Cell {
-	if a.length == 0 {
-		return b
+// join is a chain of `+` or a template: one cell for the pieces, each a String or a Number, whose
+// digits go straight into it. Owned, the first piece is what the variable held when its loop was
+// entered and the second what it holds now: once the two differ, the second is a cell an earlier
+// owned join of the loop made, which the other pieces fill in place where its room allows.
+join :: proc(heap: ^gc.Heap, owned: bool, pieces: []abi.Tagged) -> ^abi.String_Cell {
+	text := pieces[1:] if owned else pieces
+	// Only the counts need their zero.
+	digits: Digits = ---
+	digits.counts = {}
+	length, numbers := 0, 0
+	only: ^abi.String_Cell
+	for piece in text {
+		if piece.tag == .String {
+			cell := (^abi.String_Cell)(piece.payload.ref)
+			if cell.length > 0 {
+				only = cell
+			}
+			length += cell.length
+			continue
+		}
+		length += len(number_text(&digits, numbers, piece.payload.number))
+		numbers += 1
 	}
-	if b.length == 0 {
-		return a
+
+	if length == 0 {
+		return &EMPTY
 	}
-	cell, dst := new_cell(heap, a.length + b.length)
-	copy(dst, unit_slice(a))
-	copy(dst[a.length:], unit_slice(b))
+	if owned {
+		entry := (^abi.String_Cell)(pieces[0].payload.ref)
+		target := (^abi.String_Cell)(text[0].payload.ref)
+		if target != entry && gc.in_pages(heap, target) && length <= room(target.length) {
+			write_pieces(target, target.length, &digits, text[1:])
+			target.length = length
+			return target
+		}
+	} else if only != nil && only.length == length {
+		return only
+	}
+	cell, _ := new_cell(heap, length, room(length) if owned else length)
+	write_pieces(cell, 0, &digits, text)
 	return cell
+}
+
+// join_strings is the join of pieces that are all strings, not owned, into a free slot the heap
+// has at hand, and nil where join must answer. It needs no context, which the export builds only
+// for join.
+join_strings :: proc "contextless" (heap: ^gc.Heap, pieces: []abi.Tagged) -> ^abi.String_Cell {
+	length := 0
+	only: ^abi.String_Cell
+	for piece in pieces {
+		if piece.tag != .String {
+			return nil
+		}
+		cell := (^abi.String_Cell)(piece.payload.ref)
+		if cell.length > 0 {
+			only = cell
+		}
+		length += cell.length
+	}
+	if length == 0 || !length_fits(length) {
+		return nil
+	}
+	if only.length == length {
+		return only
+	}
+	cell := (^abi.String_Cell)(
+		gc.alloc_fast(heap, STRING, size_of(abi.String_Cell) + length * size_of(u16)),
+	)
+	if cell == nil {
+		return nil
+	}
+	cell.length = length
+	dst := unit_slice(cell)
+	at := 0
+	for piece in pieces {
+		text := unit_slice((^abi.String_Cell)(piece.payload.ref))
+		copy(dst[at:], text)
+		at += len(text)
+	}
+	return cell
+}
+
+// room is the capacity, in units, of a cell an owned join made for `length` units. It is not
+// stored: a power of two stays the same while appends fill it.
+@(private)
+room :: proc "contextless" (length: int) -> int {
+	return min(max(MIN_ROOM, math.next_power_of_two(length)), MAX_LENGTH)
+}
+
+@(private)
+MIN_ROOM :: 16
+
+@(private)
+KEPT_NUMBERS :: 8
+
+// Digits holds the text of the first KEPT_NUMBERS numbers of a join from the pass that measures
+// them to the one that writes them; a later number is written twice, into the last row.
+@(private)
+Digits :: struct {
+	text:   [KEPT_NUMBERS + 1][num.STRING_MAX]byte,
+	counts: [KEPT_NUMBERS]int,
+}
+
+@(private)
+number_text :: proc(digits: ^Digits, index: int, value: f64) -> string {
+	if index >= KEPT_NUMBERS {
+		return num.to_string(digits.text[KEPT_NUMBERS][:], value)
+	}
+	if digits.counts[index] == 0 {
+		digits.counts[index] = len(num.to_string(digits.text[index][:], value))
+	}
+	return string(digits.text[index][:digits.counts[index]])
+}
+
+// write_pieces writes from unit `from` on, past the length the cell has now: an owned cell may be a
+// piece of its own, which then reads as it was.
+@(private)
+write_pieces :: proc(cell: ^abi.String_Cell, from: int, digits: ^Digits, pieces: []abi.Tagged) {
+	dst := ([^]u16)(&cell.units)
+	at, numbers := from, 0
+	for piece in pieces {
+		if piece.tag == .String {
+			text := unit_slice((^abi.String_Cell)(piece.payload.ref))
+			copy(dst[at:at + len(text)], text)
+			at += len(text)
+			continue
+		}
+		ascii := number_text(digits, numbers, piece.payload.number)
+		for i in 0 ..< len(ascii) {
+			dst[at + i] = u16(ascii[i])
+		}
+		at += len(ascii)
+		numbers += 1
+	}
 }
 
 equal :: proc(a, b: ^abi.String_Cell) -> bool {
@@ -188,9 +315,16 @@ unit_slice :: proc "contextless" (text: ^abi.String_Cell) -> []u16 {
 
 // new_cell's caller fills `dst` before anyone else sees the cell.
 @(private)
-new_cell :: proc(heap: ^gc.Heap, length: int) -> (cell: ^abi.String_Cell, dst: []u16) {
+new_cell :: proc(
+	heap: ^gc.Heap,
+	length: int,
+	capacity := 0,
+) -> (
+	cell: ^abi.String_Cell,
+	dst: []u16,
+) {
 	ensure_length(length)
-	size := size_of(abi.String_Cell) + length * size_of(u16)
+	size := size_of(abi.String_Cell) + max(length, capacity) * size_of(u16)
 	cell = (^abi.String_Cell)(gc.alloc(heap, STRING, size))
 	cell.length = length
 	return cell, unit_slice(cell)
