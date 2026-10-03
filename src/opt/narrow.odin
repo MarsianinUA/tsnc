@@ -148,7 +148,10 @@ choose_types :: proc(n: ^Narrowing) -> bool {
 					n.types[id] = widest_edge(n, before, v.incoming)
 				}
 			case ir.Bounds_Check:
-				n.types[id] = n.types[v.index]
+				// A whole index converts once, even one that stays F64, such as a load.
+				if type, whole := integer_of(n, v.index); whole {
+					n.types[id] = type
+				}
 			}
 			changed ||= n.types[id] != before
 		}
@@ -251,7 +254,9 @@ list_uses :: proc(n: ^Narrowing) -> []Use {
 				use.want = n.compared[consumer]
 			case ir.Phi:
 				use.want = n.types[consumer]
-			case ir.Bounds_Check, ir.Element_Load, ir.Unit_Load, ir.Ascii_Cell, ir.Set_Length:
+			case ir.Bounds_Check:
+				use.want = n.types[consumer]
+			case ir.Element_Load, ir.Unit_Load, ir.Ascii_Cell, ir.Set_Length:
 				use.want = n.types[value]
 			case ir.Element_Store:
 				if field == &v.index {
