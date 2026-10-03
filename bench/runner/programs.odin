@@ -17,6 +17,7 @@ PROGRAMS := [?]string {
 	"closures",
 	"trees",
 	"raytracer",
+	"integers",
 }
 RUNS :: 5
 HELLO_RUNS :: 20

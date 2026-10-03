@@ -77,10 +77,8 @@ build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> ll
 }
 
 // to_int32 is the ECMAScript ToInt32 of a value of any number type. An integer wraps modulo 2^32,
-// which is what dropping its high bits does. A double is reduced in double, because fptosi is
-// poison outside the range of an i32: after the two folds every finite input lands inside it, and
-// what the reduction leaves of NaN and of an infinity is NaN, which the saturating conversion turns
-// into the 0 the specification asks for.
+// which is what dropping its high bits does. A double below 2^63 in magnitude truncates to an i64
+// exactly, and the low 32 bits of that are the answer, as in V8.
 @(private)
 to_int32 :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef {
 	value := body.values[id]
@@ -90,6 +88,44 @@ to_int32 :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef 
 	case .I64:
 		return llvm.LLVMBuildTrunc(m.builder, value, m.types.int32, "")
 	}
+	TWO_63 :: f64(9223372036854775808)
+	argument := [?]llvm.LLVMValueRef{value}
+	// An ordered compare is false for NaN, so NaN goes the long way with the infinities.
+	small := llvm.LLVMBuildFCmp(
+		m.builder,
+		.LLVMRealOLT,
+		build_number_call(m, .Abs, argument[:]),
+		llvm.LLVMConstReal(m.types.double, TWO_63),
+		"",
+	)
+	fast := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	slow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, small, fast, slow)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, fast)
+	wide := llvm.LLVMBuildFPToSI(m.builder, value, m.types.int64, "")
+	low := llvm.LLVMBuildTrunc(m.builder, wide, m.types.int32, "")
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, slow)
+	reduced := reduce_to_int32(m, value)
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
+	answer := llvm.LLVMBuildPhi(m.builder, m.types.int32, "")
+	values := [?]llvm.LLVMValueRef{low, reduced}
+	blocks := [?]llvm.LLVMBasicBlockRef{fast, slow}
+	llvm.LLVMAddIncoming(answer, &values[0], &blocks[0], len(values))
+	return answer
+}
+
+// reduce_to_int32 reduces a double in double, because fptosi is poison outside the range of an
+// i32: after the two folds every finite input lands inside it, and what the reduction leaves of NaN
+// and of an infinity is NaN, which the saturating conversion turns into the 0 the specification
+// asks for.
+@(private)
+reduce_to_int32 :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
 	TWO_32 :: f64(4294967296)
 	TWO_31 :: f64(2147483648)
 	two_32 := llvm.LLVMConstReal(m.types.double, TWO_32)

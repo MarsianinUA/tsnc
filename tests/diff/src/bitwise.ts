@@ -48,3 +48,20 @@ console.log(left(1, 32), left(1, 33), right(-8, 1), right(-8, 33));
 console.log(unsignedRight(-1, 0), unsignedRight(-8, 1), unsignedRight(-1, 31));
 
 console.log(and(-1, 255), xor(-1, -1), not(not(42)));
+
+// ToInt32 edges of doubles from an array, which opt cannot prove whole; 2^63 + 2048 must still give 2048.
+const edges: number[] = [-0, 5e-324, 0.5, -0.5, 1e300, 1.7976931348623157e308, -1.7976931348623157e308];
+for (const power of [31, 32, 53]) {
+  for (const sign of [1, -1]) {
+    const x = sign * 2 ** power;
+    edges.push(x - 1, x - 0.5, x, x + 0.5, x + 1, x + 2);
+  }
+}
+for (const sign of [1, -1]) {
+  edges.push(sign * (2 ** 63 - 1024), sign * 2 ** 63, sign * (2 ** 63 + 2048));
+  edges.push(sign * (2 ** 64 + 4096), sign * (2 ** 84 + 2 ** 32), sign * (2 ** 83 + 2 ** 31));
+}
+edges.push(NaN, Infinity, -Infinity);
+for (const x of edges) {
+  console.log(x, x | 0, x >>> 0, ~x, x ^ 1, x << 3, x >> 3, 1 << x);
+}
