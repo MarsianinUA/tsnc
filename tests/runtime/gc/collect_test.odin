@@ -76,13 +76,13 @@ a_collection_frees_what_nothing_reaches_and_reuses_it_in_address_order :: proc(t
 
 @(test)
 empty_pages_go_back_and_serve_any_class :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
+	on_a_clean_stack(t, free_and_reuse_pages)
+}
 
-	drop_pages(&heap)
+free_and_reuse_pages :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	drop_pages(heap)
 	scrub_stack()
-	gc.collect(&heap)
+	gc.collect(heap)
 	pages := heap.page_count
 	free := 0
 	for i in 0 ..< pages {
@@ -92,10 +92,10 @@ empty_pages_go_back_and_serve_any_class :: proc(t: ^testing.T) {
 	testing.expectf(t, free >= 8 + 3 * 3 - 3, "%d of %d pages free", free, pages)
 
 	// A class the dropped points never took, then a large cell, both on freed pages.
-	gc.alloc(&heap, BLOB, 1000)
-	gc.alloc(&heap, BLOB, 2 * gc.PAGE_SIZE)
+	gc.alloc(heap, BLOB, 1000)
+	gc.alloc(heap, BLOB, 2 * gc.PAGE_SIZE)
 	testing.expect_value(t, heap.page_count, pages)
-	expect_problem(t, &heap, .None, nil)
+	expect_problem(t, heap, .None, nil)
 }
 
 @(test)
