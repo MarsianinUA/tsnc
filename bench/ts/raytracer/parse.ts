@@ -66,7 +66,8 @@ function fail(line: Line, message: string): never {
 
 function readLine(text: string, number: number): Line | null {
   const hash = text.indexOf("#");
-  const content = (hash >= 0 ? text.slice(0, hash) : text).trim();
+  const code = hash >= 0 ? text.slice(0, hash) : text;
+  const content = code.trim();
   if (content.length === 0) {
     return null;
   }
@@ -106,13 +107,43 @@ function word(line: Line, index: number, what: string): string {
   return line.words[index];
 }
 
+const DOT = 46;
+const DIGIT_0 = 48;
+const DIGIT_9 = 57;
+
+// scriptc builds parseFloat only into its embedded engine, so decimals such as -12.375 are read
+// here, as their digits over a power of ten. Below 16 digits both are exact, so the one division
+// rounds once and gives what parseFloat gives.
 function parseNumber(line: Line, text: string): number {
-  const value = Number.parseFloat(text);
-  // NaN is the one number not equal to itself.
-  if (value !== value) {
-    fail(line, `"${text}" is not a number`);
+  let i = 0;
+  let sign = 1;
+  if (text.startsWith("-")) {
+    sign = -1;
+    i = 1;
   }
-  return value;
+  let digits = 0;
+  let count = 0;
+  let scale = 1;
+  let point = false;
+  while (i < text.length) {
+    const c = text.charCodeAt(i);
+    if (c === DOT && !point) {
+      point = true;
+    } else if (c >= DIGIT_0 && c <= DIGIT_9) {
+      digits = digits * 10 + (c - DIGIT_0);
+      count++;
+      if (point) {
+        scale *= 10;
+      }
+    } else {
+      fail(line, `"${text}" is not a number`);
+    }
+    i++;
+  }
+  if (count === 0 || count > 15) {
+    fail(line, `"${text}" is not a number of at most 15 digits`);
+  }
+  return (sign * digits) / scale;
 }
 
 function parseVec(line: Line, text: string): Vec {

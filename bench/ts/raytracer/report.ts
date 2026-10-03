@@ -19,7 +19,7 @@ export function histogram(pixels: number[], buckets: number): number[] {
     counts.push(0);
   }
   for (let i = 0; i < pixels.length; i += 3) {
-    counts[Math.floor((luma(pixels, i) * buckets) / 256)]++;
+    counts[Math.floor((luma(pixels, i) * buckets) / 256)] += 1;
   }
   return counts;
 }

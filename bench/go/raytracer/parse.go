@@ -97,11 +97,32 @@ func (line *Line) word(index int, what string) string {
 }
 
 func (line *Line) parseNumber(text string) float64 {
-	value, err := strconv.ParseFloat(text, 64)
-	if err != nil {
-		fail(line, "%q is not a number", text)
+	i := 0
+	sign := 1.0
+	if strings.HasPrefix(text, "-") {
+		sign = -1
+		i = 1
 	}
-	return value
+	digits, count, scale, point := 0, 0, 1, false
+	for ; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '.' && !point:
+			point = true
+		case c >= '0' && c <= '9':
+			digits = digits*10 + int(c-'0')
+			count++
+			if point {
+				scale *= 10
+			}
+		default:
+			fail(line, "%q is not a number", text)
+		}
+	}
+	if count == 0 || count > 15 {
+		fail(line, "%q is not a number of at most 15 digits", text)
+	}
+	return sign * float64(digits) / float64(scale)
 }
 
 func (line *Line) parseVec(text string) Vec {

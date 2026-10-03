@@ -471,7 +471,7 @@ Done: `bench/RESULTS.md` records a run with the five columns.
 
 ### [x] T6.12 A large benchmark: a ray tracer over several modules
 
-What: every other program in `bench/ts` is 15 to 60 lines and measures one thing. `raytracer` is a whole program of about 1500 lines over 13 modules. It parses a scene from text with the string methods and a hand-made hash table, builds meshes (an icosphere through an edge table, boxes, a height field from Perlin noise) and a BVH over 3200 shapes, then renders three frames with shadows, reflection and refraction, shapes as a discriminated union and textures as closures. It uses only exactly rounded arithmetic, so tsnc, Node, Bun and the Go twin print the same checksum.
+What: every other program in `bench/ts` is 15 to 60 lines and measures one thing. `raytracer` is a whole program of about 1500 lines over 13 modules. It parses a scene from text with the string methods and a hand-made hash table, builds meshes (an icosphere through an edge table, boxes, a height field from Perlin noise) and a BVH over 3200 shapes, then renders three frames with shadows, reflection and refraction, shapes as a discriminated union and textures as closures. It uses only exactly rounded arithmetic, so tsnc, scriptc, Node, Bun and the Go twin print the same checksum, and it keeps to what scriptc 0.2.1 builds without its embedded engine.
 Where: requirements §10 "Benchmarks"; `bench/ts/raytracer/`, `bench/go/raytracer/`.
 After: T6.11.
 Done: tsnc, Node and Go agree under `bench/bench.sh raytracer`, under ASan too; `bench/RESULTS.md` has its row.
@@ -485,7 +485,7 @@ Done: a diff program passes a `T[]` where `(T | U)[]` is expected, writes throug
 
 ### [ ] T6.14 `raytracer` at 1.3 times Node
 
-What: on the first large program tsnc trails Node, 0.603 s against 0.460 and Go's 0.210, while it keeps up with Node on most small ones. The collector is not the cause: `TSNC_GC_STATS` reads 92 collections and 44 ms of marking and sweeping, for 515 MB in 14.6 million cells. The program allocates a `Vec` for every vector operation, a `Hit` for every hit and an array for every BVH walk, calls textures through closures and dispatches shapes by a `switch` over a union. First find where the time goes, with a profiler on the `-o:speed` build or `-emit-ir` of the hot functions (`enters`, `hitTriangle`, `closest`), then bring a proposal to the operator.
+What: on the first large program tsnc trails Node, 0.611 s against 0.492 and Go's 0.212, while it keeps up with Node on most small ones. The collector is not the cause: `TSNC_GC_STATS` reads 92 collections and 44 ms of marking and sweeping, for 515 MB in 14.6 million cells. The program allocates a `Vec` for every vector operation, a `Hit` for every hit and an array for every BVH walk, calls textures through closures and dispatches shapes by a `switch` over a union. First find where the time goes, with a profiler on the `-o:speed` build or `-emit-ir` of the hot functions (`enters`, `hitTriangle`, `closest`), then bring a proposal to the operator.
 Where: `bench/ts/raytracer/`; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `lower`, `opt`, `codegen`.
 After: T6.12.
 Done: the measurement is recorded; for what the operator accepts, the corpora are green and `raytracer` is measured before and after.
