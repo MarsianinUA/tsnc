@@ -101,6 +101,13 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Length:
 		body.values[value] = build_length(m, body.values[v.value], instruction.type)
 
+	case ir.Reserve:
+		build_reserve(m, body, body.values[v.array])
+
+	case ir.Set_Length:
+		pointer := byte_offset(m, body.values[v.array], int(offset_of(abi.Array_Cell, length)))
+		llvm.LLVMBuildStore(m.builder, index_word(m, body, v.length), pointer)
+
 	case ir.Bounds_Check:
 		if v.proved {
 			body.values[value] = body.values[v.index]
@@ -232,9 +239,6 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		export := exports[v.export]
 		callee := m.runtime[v.export]
 		args := make([dynamic]llvm.LLVMValueRef, context.temp_allocator)
-		if export.result == .Tagged {
-			append(&args, body.result_slot)
-		}
 		for param, i in export.params {
 			if param == .Rest {
 				address, count := pass_rest(m, body, v.args[i:])
@@ -253,11 +257,8 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 			"",
 		)
 		if instruction.type != ir.VOID {
-			#partial switch export.result {
-			case .Boolean:
+			if export.result == .Boolean {
 				result = llvm.LLVMBuildTrunc(m.builder, result, m.types.int1, "")
-			case .Tagged:
-				result = llvm.LLVMBuildLoad2(m.builder, m.types.tagged, body.result_slot, "")
 			}
 			body.values[value] = result
 		}
@@ -267,7 +268,11 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		for arg, i in v.args {
 			args[i] = body.values[arg]
 		}
-		body.values[value] = build_number_call(m, v.op, args)
+		if v.op == .Min || v.op == .Max {
+			body.values[value] = build_min_max(m, body, v.op, args)
+		} else {
+			body.values[value] = build_number_call(m, v.op, args)
+		}
 
 	case ir.Jump:
 		llvm.LLVMBuildBr(m.builder, body.blocks[v.target])
@@ -534,6 +539,27 @@ build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef, type: ir.Type) -> llvm
 		return length
 	}
 	return llvm.LLVMBuildSIToFP(m.builder, length, m.types.double, "")
+}
+
+// build_reserve calls the runtime only for a full array. Like a bounds check it splits the block
+// and leaves the builder in the last part.
+@(private)
+build_reserve :: proc(m: ^Module, body: ^Body, array: llvm.LLVMValueRef) {
+	length_address := byte_offset(m, array, int(offset_of(abi.Array_Cell, length)))
+	length := llvm.LLVMBuildLoad2(m.builder, m.types.int64, length_address, "")
+	capacity_address := byte_offset(m, array, int(offset_of(abi.Array_Cell, capacity)))
+	capacity := llvm.LLVMBuildLoad2(m.builder, m.types.int64, capacity_address, "")
+	full := llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, length, capacity, "")
+	grow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, full, grow, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, grow)
+	args := [?]llvm.LLVMValueRef{array}
+	call_runtime(m, .Array_Reserve, args[:])
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
 }
 
 // build_bounds_check splits the block: each failure gets a block of its own, and the code after

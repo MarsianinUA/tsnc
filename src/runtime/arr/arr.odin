@@ -48,26 +48,21 @@ new_zeroed :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, length: int) -> ^ab
 	return array
 }
 
+// reserve makes room for one more element past the length, as a push of generated code needs
+// before it stores the element and raises the length itself.
+reserve :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) {
+	if array.length == array.capacity {
+		grow(heap, array, element_kind(heap, array), max(MIN_CAPACITY, 2 * array.capacity))
+	}
+}
+
 // push answers the new length. `value` must be of the kind the array holds.
 push :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, value: abi.Tagged) -> int {
+	reserve(heap, array)
 	kind := element_kind(heap, array)
-	if array.length == array.capacity {
-		grow(heap, array, kind, max(MIN_CAPACITY, 2 * array.capacity))
-	}
 	store(slot(array, kind, array.length), kind, value)
 	array.length += 1
 	return array.length
-}
-
-// pop answers undefined for an empty array. The slot it gives up keeps its bits: the collector
-// reads only the first `length`.
-pop :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> abi.Tagged {
-	if array.length == 0 {
-		return {}
-	}
-	array.length -= 1
-	kind := element_kind(heap, array)
-	return value.load(heap, slot(array, kind, array.length), kind)
 }
 
 element_at :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, index: int) -> abi.Tagged {
@@ -169,8 +164,7 @@ slot :: proc(array: ^abi.Array_Cell, kind: abi.Slot_Kind, index: int) -> rawptr 
 	return &([^]byte)(array.elements)[index * abi.SLOT_SIZE[kind]]
 }
 
-// store is inlined into push, which builds an array element by element: as a call it cost
-// bench/ts/sieve/main.ts a fifth of its time once the slot kinds grew to six.
+// store is inlined into push, which fills an array element by element, and into the sort.
 @(private)
 store :: #force_inline proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 	switch kind {

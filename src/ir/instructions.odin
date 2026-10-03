@@ -47,6 +47,8 @@ Variant :: union #no_nil {
 	Field_Store,
 	Field_Store_Ref,
 	Length,
+	Reserve,
+	Set_Length,
 	Bounds_Check,
 	Element_Load,
 	Element_Store,
@@ -232,6 +234,19 @@ Field_Store_Ref :: struct {
 // load, since abi puts the two at the same offset.
 Length :: struct {
 	value: Value_ID,
+}
+
+// Reserve makes room past the length of an array for one more element, growing its buffer when it
+// is full, which may collect. Set_Length then takes the slot in; a push is the two of them.
+Reserve :: struct {
+	array: Value_ID,
+}
+
+// Set_Length writes the length of an array, a number no more than its capacity. The slots past a
+// shortened length keep their bits: the collector reads only the first `length`.
+Set_Length :: struct {
+	array:  Value_ID,
+	length: Value_ID,
 }
 
 // Bounds_Check answers the index again, in the index's number type, once it has proved that the
@@ -420,7 +435,7 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Binary, Unary, Compare, Phi, Convert:
 		return false
-	case Alloc, New_Array, Field_Load, Field_Store, Field_Store_Ref, Length:
+	case Alloc, New_Array, Field_Load, Field_Store, Field_Store_Ref, Length, Reserve, Set_Length:
 		return false
 	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
 		return false
@@ -489,8 +504,9 @@ Unary_Op :: enum u8 {
 }
 
 // Intrinsic_Op is a number function codegen emits inline, as an llvm.*.f64 intrinsic or a call to
-// libm. The Math names that need more stay out of it: round, max and min go to the runtime, hypot
-// takes any number of arguments, and fround, clz32, imul and sign expand into other instructions.
+// libm. Min and Max are Math.min and Math.max of two numbers, which lower folds a longer call into.
+// The Math names that need more stay out of it: round goes to the runtime, hypot takes any number
+// of arguments, and fround, clz32, imul and sign expand into other instructions.
 // Math.pow is Binary_Op.Power. lower owns the table from a lib name to one of these.
 Intrinsic_Op :: enum u8 {
 	Abs,
@@ -518,4 +534,6 @@ Intrinsic_Op :: enum u8 {
 	Log2,
 	Log10,
 	Cbrt,
+	Min,
+	Max,
 }

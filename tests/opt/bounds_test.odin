@@ -87,7 +87,7 @@ the_store_of_a_compound_assignment_reuses_the_check_of_its_read :: proc(t: ^test
 	ids, all := instructions_of(bump, ir.Bounds_Check)
 	testing.expectf(t, checks == 1 && proved == 1, "%s", result.after)
 	for check, i in all {
-		if !check.proved {
+		if !check.proved || lower_proved(check) {
 			continue
 		}
 		_, reads_the_check := bump.values[check.index].variant.(ir.Bounds_Check)
@@ -146,15 +146,25 @@ a_check_stays_where_the_array_may_have_shrunk_or_the_index_may_be_out :: proc(t:
 	}
 }
 
+// check_counts leaves out the checks lower proved itself, as of the slot a push or a pop takes.
 @(private = "file")
 check_counts :: proc(body: ir.Func) -> (checks: int, proved: int) {
 	_, all := instructions_of(body, ir.Bounds_Check)
 	for check in all {
-		if check.proved {
+		switch {
+		case lower_proved(check):
+		case check.proved:
 			proved += 1
-		} else {
+		case:
 			checks += 1
 		}
 	}
 	return
+}
+
+// lower_proved tells a check lower proved by its fail sites: it has none, so both are the zero id,
+// where any other check has two sites of its own.
+@(private = "file")
+lower_proved :: proc(check: ir.Bounds_Check) -> bool {
+	return check.not_integer == check.out_of_range
 }

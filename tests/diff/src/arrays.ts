@@ -108,3 +108,65 @@ const nothings: (undefined | null)[] = [undefined, null];
 console.log(nothings.indexOf(null), nothings.indexOf(undefined));
 const maybeNumbers: (number | undefined)[] = [id(NaN), undefined];
 console.log(maybeNumbers.includes(id(NaN)), maybeNumbers.indexOf(undefined));
+
+// push and pop run in generated code: an array grows past each capacity while the objects it gets
+// are made between pushes, which the run under GC stress collects, and pop gives back every kind of
+// slot, then undefined. Through a narrow type after a push through the wide one, pop answers what
+// the slot holds, as Node does.
+const grown: Point[] = [];
+const capacities: number[] = [];
+for (let i = 1; i <= 40; i++) {
+  const length = grown.push({ x: i, y: i * 1.5 });
+  if (length === 4 || length === 5 || length === 16 || length === 17 || length === 33) {
+    capacities.push(length);
+  }
+}
+let ys = 0;
+let top = grown.pop();
+while (top !== undefined) {
+  ys += top.y;
+  top = grown.pop();
+}
+console.log(capacities, ys, grown.length, grown.pop(), grown.push(), grown.push(point, twin));
+
+const flags: boolean[] = [true];
+const holes: (Point | null)[] = [point, null];
+console.log(flags.pop(), flags.pop(), holes.pop(), holes.pop(), holes.pop(), holes.length);
+
+const narrow: number[] = [1];
+const wide: (number | string)[] = narrow;
+wide.push("two", 3);
+console.log(narrow.pop(), narrow.pop(), wide.pop(), narrow.pop(), narrow === wide);
+
+interface Tree {
+  value: number;
+  left: Tree | null;
+  right: Tree | null;
+}
+
+function grow(depth: number, value: number): Tree {
+  if (depth === 0) {
+    return { value, left: null, right: null };
+  }
+  return { value, left: grow(depth - 1, value * 2), right: grow(depth - 1, value * 2 + 1) };
+}
+
+// A walk with a stack, the way a BVH is walked.
+function walk(root: Tree): number {
+  const stack: Tree[] = [root];
+  let visited = 0;
+  let node = stack.pop();
+  while (node !== undefined) {
+    visited += node.value;
+    if (node.left !== null) {
+      stack.push(node.left);
+    }
+    if (node.right !== null) {
+      stack.push(node.right);
+    }
+    node = stack.pop();
+  }
+  return visited;
+}
+
+console.log(walk(grow(8, 1)));

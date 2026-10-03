@@ -57,6 +57,25 @@ a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 	testing.expectf(t, len(instructions_of(init, ir.Call_Closure)) == 0, "%s", result.text)
 }
 
+// push and pop stay in generated code: the runtime only grows a full array, behind a Reserve.
+@(test)
+push_and_pop_call_no_runtime :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		function cycle(xs: number[]): number | undefined {
+			xs.push(1, 2);
+			return xs.pop();
+		}
+		console.log(cycle([]));
+	`,
+	)
+	body := harness.func_named(t, result.output, "m1.cycle")
+	testing.expectf(t, len(instructions_of(body, ir.Call_Runtime)) == 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Reserve)) > 0, "%s", result.text)
+	testing.expectf(t, len(instructions_of(body, ir.Set_Length)) > 0, "%s", result.text)
+}
+
 // A flow of one array type into a wider one tags the slot of those two only: the class is keyed
 // by the element below its slot, so the other arrays of references keep theirs.
 @(test)

@@ -351,6 +351,17 @@ verify_instruction :: proc(c: ^Checker) {
 		}
 		expect_result_of(c, {F64, I64})
 
+	case Reserve:
+		array_element(c, v.array)
+		expect_result(c, VOID)
+
+	case Set_Length:
+		array_element(c, v.array)
+		if type, known := operand(c, v.length); known && !is_number(type) {
+			report(c, .Operand_Type)
+		}
+		expect_result(c, VOID)
+
 	case Bounds_Check:
 		if type, known := operand(c, v.array); known && type != STR {
 			element_of(c, type)
@@ -567,7 +578,7 @@ verify_instruction :: proc(c: ^Checker) {
 		}
 
 	case Intrinsic:
-		arity := 2 if v.op == .Atan2 else 1
+		arity := 2 if v.op == .Atan2 || v.op == .Min || v.op == .Max else 1
 		if len(v.args) != arity {
 			report(c, .Argument_Count)
 		}

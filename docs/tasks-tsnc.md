@@ -484,9 +484,10 @@ Where: requirements §3.3, §3.4; `src/check`, `src/lower` (the widening classes
 After: none.
 Done: a diff program passes a `T[]` where `(T | U)[]` is expected, writes through both and prints what Node prints; `addAll` in `bench/ts/raytracer/parse.ts` takes `Solid[]`.
 
-### [ ] T6.14 `raytracer` at 1.3 times Node
+### [x] T6.14 `raytracer` at 1.3 times Node
 
 What: on the first large program tsnc trails Node, 0.611 s against 0.492 and Go's 0.212, while it keeps up with Node on most small ones. The collector is not the cause: `TSNC_GC_STATS` reads 92 collections and 44 ms of marking and sweeping, for 515 MB in 14.6 million cells. The program allocates a `Vec` for every vector operation, a `Hit` for every hit and an array for every BVH walk, calls textures through closures and dispatches shapes by a `switch` over a union. First find where the time goes, with a profiler on the `-o:speed` build or `-emit-ir` of the hot functions (`enters`, `hitTriangle`, `closest`), then bring a proposal to the operator.
+Chosen (operator, 2026-10-03): the BVH walk spent about half the time in `push` and `pop` through the runtime and a fifth in `Math.min` and `Math.max` through it, so lower spells push and pop as IR (`Reserve`, `Length`, `Set_Length` and an element access, the runtime growing only a full array), and codegen compares and selects where the operands of min and max differ, with `llvm.minimum` and `llvm.maximum` for equal ones and NaN. The `Vec` and `Hit` temporaries and the `switch` over `kind` stay out; the plan's risk item on entering the runtime gives the numbers.
 Where: `bench/ts/raytracer/`; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `lower`, `opt`, `codegen`.
 After: T6.12.
 Done: the measurement is recorded; for what the operator accepts, the corpora are green and `raytracer` is measured before and after.

@@ -29,6 +29,10 @@ operands :: proc(variant: ^Variant, found: ^[dynamic]^Value_ID) {
 		add_operands(found, &v.cell, &v.value)
 	case Length:
 		add_operands(found, &v.value)
+	case Reserve:
+		add_operands(found, &v.array)
+	case Set_Length:
+		add_operands(found, &v.array, &v.length)
 	case Bounds_Check:
 		add_operands(found, &v.array, &v.index)
 	case Element_Load:

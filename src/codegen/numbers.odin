@@ -227,6 +227,9 @@ NUMBER_FUNCTIONS := [ir.Intrinsic_Op]Number_Function {
 	.Log2  = {"llvm.log2", "log2"},
 	.Log10 = {"llvm.log10", "log10"},
 	.Cbrt  = {"", "cbrt"},
+	// No libm function treats NaN and the zeros as ECMAScript does; LLVM has had both since 8.
+	.Min   = {"llvm.minimum", ""},
+	.Max   = {"llvm.maximum", ""},
 }
 
 @(private)
@@ -237,6 +240,41 @@ build_number_call :: proc(
 ) -> llvm.LLVMValueRef {
 	row := NUMBER_FUNCTIONS[op]
 	return build_double_call(m, row.intrinsic, row.libm, args)
+}
+
+// build_min_max picks with one comparison where the operands differ, which is minsd or maxsd. Equal
+// operands, where -0 is below +0, and NaN take llvm.minimum or llvm.maximum, whose x86 lowering
+// branches on the sign of the first operand and costs a misprediction where that sign varies.
+@(private)
+build_min_max :: proc(
+	m: ^Module,
+	body: ^Body,
+	op: ir.Intrinsic_Op,
+	args: []llvm.LLVMValueRef,
+) -> llvm.LLVMValueRef {
+	a, b := args[0], args[1]
+	apart := llvm.LLVMBuildFCmp(m.builder, .LLVMRealONE, a, b, "")
+	fast := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	slow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, apart, fast, slow)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, fast)
+	order := llvm.LLVMRealPredicate.LLVMRealOLT if op == .Min else .LLVMRealOGT
+	first := llvm.LLVMBuildFCmp(m.builder, order, a, b, "")
+	picked := llvm.LLVMBuildSelect(m.builder, first, a, b, "")
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, slow)
+	exact := build_number_call(m, op, args)
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
+	answer := llvm.LLVMBuildPhi(m.builder, m.types.double, "")
+	values := [?]llvm.LLVMValueRef{picked, exact}
+	blocks := [?]llvm.LLVMBasicBlockRef{fast, slow}
+	llvm.LLVMAddIncoming(answer, &values[0], &blocks[0], len(values))
+	return answer
 }
 
 // build_double_call asks LLVM whether it knows the intrinsic rather than trusting the table, so a

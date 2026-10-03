@@ -436,6 +436,8 @@ lower_strategy :: proc(
 			return lower_split(s, id, node, receiver, span)
 		case .Array_Push:
 			return lower_push(s, node, receiver, span)
+		case .Array_Pop:
+			return lower_pop(s, id, node, receiver, span)
 		case .Array_Join:
 			return lower_join(s, node, receiver, span)
 		case .Array_Sort:
@@ -571,7 +573,7 @@ lower_runtime :: proc(
 	if !complete {
 		return ir.NO_VALUE
 	}
-	return runtime_call(s, id, {export = export, args = args}, span)
+	return ir.emit(&s.fb, node_type(s, id), ir.Call_Runtime{export = export, args = args}, span)
 }
 
 // lower_method passes the receiver first. An argument the call leaves out, always a number, takes
@@ -606,29 +608,11 @@ lower_method :: proc(
 	if !complete {
 		return ir.NO_VALUE
 	}
-	return runtime_call(s, id, {export = method.export, args = args}, span)
-}
-
-// runtime_call types the call as its node, except that a tagged answer is read into a node typed
-// as a reference that may hold null through a check, as the pop of a string array is. What pop
-// answers is an element, checked as a read of one is.
-@(private)
-runtime_call :: proc(
-	s: ^Func_State,
-	id: ast.Node_ID,
-	call: ir.Call_Runtime,
-	span: source.Span,
-) -> ir.Value_ID {
-	want := node_type(s, id)
-	exports := abi.RUNTIME_EXPORTS
-	if exports[call.export].result != .Tagged || want == ir.TAGGED {
-		return ir.emit(&s.fb, want, call, span)
+	call := ir.Call_Runtime {
+		export = method.export,
+		args   = args,
 	}
-	mismatch := abi.Runtime_Error.Tagged_Holds_Other_Kind
-	if call.export == .Array_Pop {
-		mismatch = .Element_Holds_Other_Kind
-	}
-	return coerce(s, ir.emit(&s.fb, ir.TAGGED, call, span), want, span, mismatch)
+	return ir.emit(&s.fb, node_type(s, id), call, span)
 }
 
 // number_args stays quiet about a call with the wrong count: check already reported it.
@@ -658,9 +642,9 @@ lower_fold :: proc(s: ^Func_State, node: ast.Call, fold: Fold, span: source.Span
 	}
 	total := args[0]
 	for value in args[1:] {
-		call := ir.Call_Runtime {
-			export = fold.export,
-			args   = {total, value},
+		call := ir.Intrinsic {
+			op   = fold.op,
+			args = {total, value},
 		}
 		total = ir.emit(&s.fb, ir.F64, call, span)
 	}

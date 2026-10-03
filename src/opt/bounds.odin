@@ -11,8 +11,8 @@ non-negative and one of these bounds it from above:
 - the true edge of `index < length` or `length > index`, on every path to the check;
 - a constant index below the constant length of an array literal;
 - an earlier check of the same array, whose answer the index is.
-An array's length changes only inside a call, so no call may stand between the bound and the
-check. A string never changes.
+An array's length changes only inside a call or a Set_Length, so neither may stand between the
+bound and the check. A string never changes.
 */
 
 prove_indices :: proc(p: ^ir.Program_IR, ranges: Ranges, shapes: []Shape) {
@@ -139,7 +139,7 @@ no_call_between :: proc(func: ir.Func, shape: Shape, from, to: ir.Value_ID) -> b
 calls_in :: proc(func: ir.Func, values: []ir.Value_ID) -> bool {
 	for value in values {
 		#partial switch _ in func.values[value].variant {
-		case ir.Call, ir.Call_Closure, ir.Call_Runtime:
+		case ir.Call, ir.Call_Closure, ir.Call_Runtime, ir.Set_Length:
 			return true
 		}
 	}

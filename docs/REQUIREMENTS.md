@@ -187,7 +187,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value always name
 | `bigint` (v2) | `math/big` as the arithmetic engine with an explicit allocator | immutable object in the GC heap, digits copied at creation |
 | `RegExp` (v2) | nothing | `core:text/regex` is not the ECMAScript dialect: no lookahead, lookbehind, or backreferences |
 
-**`Math` bypasses the runtime.** `core:math` itself declares LLVM intrinsics (`llvm.sqrt.f64`, `llvm.pow.f64`, and others). A runtime call for `Math.sqrt` would be a wrapper around a wrapper and would kill constant folding, inlining, and vectorization. The code generator emits the intrinsic directly; functions without an intrinsic (`tan`, `atan2`, `cbrt`, `hypot`) go to libm, which is linked anyway. Only the differences from C go into the runtime: `Math.round` rounds a half toward positive infinity, `Math.max` and `Math.min` have their own rules for `NaN` and `-0`.
+**`Math` bypasses the runtime.** `core:math` itself declares LLVM intrinsics (`llvm.sqrt.f64`, `llvm.pow.f64`, and others). A runtime call for `Math.sqrt` would be a wrapper around a wrapper and would kill constant folding, inlining, and vectorization. The code generator emits the intrinsic directly; functions without an intrinsic (`tan`, `atan2`, `cbrt`, `hypot`) go to libm, which is linked anyway. `Math.max` and `Math.min` have their own rules for `NaN` and `-0`: the code generator compares and selects where the two numbers differ and takes `llvm.maximum` or `llvm.minimum` for equal ones and `NaN`. One difference from C goes into the runtime: `Math.round` rounds a half toward positive infinity.
 
 ## 5. Type inference and checking
 

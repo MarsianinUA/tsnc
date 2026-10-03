@@ -244,15 +244,77 @@ store_element :: proc(
 	return true
 }
 
-// push answers the new length. An element goes to the runtime boxed, whatever the array holds.
+// push answers the new length. Nothing from Set_Length to the store allocates, so no collection
+// reads the new slot before it holds the element.
 @(private)
 push :: proc(s: ^Func_State, array, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
-	boxed := coerce(s, value, ir.TAGGED, span)
-	call := ir.Call_Runtime {
-		export = .Array_Push,
-		args   = {array, boxed},
+	ir.emit(&s.fb, ir.VOID, ir.Reserve{array = array}, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = array}, span)
+	one := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
+	grown := ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = length, right = one}, span)
+	ir.emit(&s.fb, ir.VOID, ir.Set_Length{array = array, length = grown}, span)
+	bounds := ir.Bounds_Check {
+		array  = array,
+		index  = length,
+		proved = true,
 	}
-	return ir.emit(&s.fb, ir.F64, call, span)
+	store_checked(s, array, ir.emit(&s.fb, ir.F64, bounds, span), value, span)
+	return grown
+}
+
+// lower_pop reads the last element, then shortens the array over it.
+@(private)
+lower_pop :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Call,
+	receiver: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	element, ok := receiver_element(s, node)
+	if !ok {
+		return ir.NO_VALUE
+	}
+	want := node_type(s, id)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
+	zero := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
+	filled := ir.emit(&s.fb, ir.BOOL, ir.Compare{op = .Greater, left = length, right = zero}, span)
+	take_block := ir.add_block(&s.fb)
+	empty_block := ir.add_block(&s.fb)
+	join := ir.add_block(&s.fb)
+	branch := ir.Branch {
+		condition  = filled,
+		then_block = take_block,
+		else_block = empty_block,
+	}
+	ir.emit(&s.fb, ir.VOID, branch, span)
+
+	ir.use_block(&s.fb, take_block)
+	one := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
+	last := ir.emit(&s.fb, ir.F64, ir.Binary{op = .Subtract, left = length, right = one}, span)
+	bounds := ir.Bounds_Check {
+		array  = receiver,
+		index  = last,
+		proved = true,
+	}
+	load := ir.Element_Load {
+		array = receiver,
+		index = ir.emit(&s.fb, ir.F64, bounds, span),
+	}
+	loaded := ir.emit(&s.fb, slot_type(element_kind(s, receiver), element), load, span)
+	// Straight to the answer's type: a widened slot read into `number | undefined` passes whatever
+	// it holds, as in Node, and only a narrower answer type tests it.
+	taken := coerce(s, loaded, want, span, .Element_Holds_Other_Kind)
+	ir.emit(&s.fb, ir.VOID, ir.Set_Length{array = receiver, length = last}, span)
+	taken_edge := here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+
+	ir.use_block(&s.fb, empty_block)
+	nothing := coerce(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), want, span)
+	empty_edge := here(s)
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+
+	return join_values(s, join, {taken_edge, empty_edge}, {taken, nothing}, want, span)
 }
 
 // lower_push evaluates every argument before the first push, as Node evaluates the whole list, and
