@@ -374,10 +374,12 @@ Make_Closure :: struct {
 	place: Cell_Place,
 }
 
-// Call names a function of this program, one with no environment. Every direct call resolves
-// statically.
+// Call names a function of this program, so it resolves statically. env is as in Make_Closure:
+// lower calls only functions with no environment directly, and opt calls one that has an
+// environment where it sees the closure being made.
 Call :: struct {
 	func: Func_ID,
+	env:  Value_ID,
 	args: []Value_ID,
 }
 

@@ -17,11 +17,16 @@ optimize :: proc(p: ^ir.Program_IR, allocator := context.allocator) {
 	for &func in p.funcs {
 		flow := ir.make_flow(func, context.temp_allocator)
 		drop_unreachable(&func, &flow)
+		call_known_closures(&func)
 	}
 	inline_calls(p, allocator)
 	shapes := make([]Shape, len(p.funcs), context.temp_allocator)
 	for &func, id in p.funcs {
 		split_cells(p^, &func, allocator)
+		// A closure that an inlined callee took as a parameter, or that split took out of a field,
+		// meets its call only here. Inlining is over by now, which is what keeps a function that
+		// passes itself to a small one from being copied into itself again and again.
+		call_known_closures(&func)
 		shapes[id] = make_shape(func, ir.make_flow(func, context.temp_allocator))
 	}
 	place_cells(p, shapes)

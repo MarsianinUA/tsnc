@@ -41,10 +41,10 @@ Violation_Kind :: enum u8 {
 	Unknown_Id, // a layout, global, string, fail site or function that is not in the program
 	Entry_Signature, // an entry point that does not take nothing and return void
 	// An environment that does not match the function: an Env in a function without one, an env
-	// that is no Environment layout, a direct call or a Func_Ref of a function with one, a
-	// Make_Closure env operand that does not match it, a closure of the entry point or of an
-	// undescribed function, an entry point with one. A box and a one-slot environment intern to one
-	// layout, so which of the two a value is escapes this check; lower owns that.
+	// that is no Environment layout, a Func_Ref of a function with one, a Call or Make_Closure env
+	// operand that does not match the function, a closure of the entry point or of an undescribed
+	// function, an entry point with one. A box and a one-slot environment intern to one layout, so
+	// which of the two a value is escapes this check; lower owns that.
 	Environment,
 }
 
@@ -495,19 +495,8 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_result(c, CLOSURE)
 
 	case Make_Closure:
-		callee, known := closure_of(c, v.func)
-		switch {
-		case !known:
-		case callee.env == NO_LAYOUT:
-			if v.env != NO_VALUE {
-				report(c, .Environment)
-			}
-		case v.env == NO_VALUE:
-			report(c, .Environment)
-		case:
-			if type, env_known := operand(c, v.env); env_known && type != ref(callee.env) {
-				report(c, .Environment)
-			}
+		if callee, known := closure_of(c, v.func); known {
+			expect_environment(c, callee, v.env)
 		}
 		expect_result(c, CLOSURE)
 
@@ -517,9 +506,7 @@ verify_instruction :: proc(c: ^Checker) {
 			return
 		}
 		callee := c.program.funcs[v.func]
-		if callee.env != NO_LAYOUT {
-			report(c, .Environment)
-		}
+		expect_environment(c, callee, v.env)
 		if len(v.args) != len(callee.params) {
 			report(c, .Argument_Count)
 		}
@@ -532,7 +519,7 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Call_Closure:
 		expect_operand(c, v.callee, CLOSURE)
-		// A callee whose function is known has to get its parameters: escape reads them by index.
+		// A callee whose function is known has to get its parameters: opt makes such a call a Call.
 		if callee, known := closure_target(c, v.callee); known {
 			if len(v.args) != len(c.program.funcs[callee].params) {
 				report(c, .Argument_Count)
@@ -715,6 +702,23 @@ closure_of :: proc(c: ^Checker, id: Func_ID) -> (callee: Func, known: bool) {
 		report(c, .Environment)
 	}
 	return callee, true
+}
+
+// expect_environment wants env exactly when the function has an environment, and of its layout.
+@(private)
+expect_environment :: proc(c: ^Checker, callee: Func, env: Value_ID) {
+	switch {
+	case callee.env == NO_LAYOUT:
+		if env != NO_VALUE {
+			report(c, .Environment)
+		}
+	case env == NO_VALUE:
+		report(c, .Environment)
+	case:
+		if type, known := operand(c, env); known && type != ref(callee.env) {
+			report(c, .Environment)
+		}
+	}
 }
 
 // operand answers the type of a value the instruction being checked reads, and reports a value that
