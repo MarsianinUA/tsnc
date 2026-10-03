@@ -442,7 +442,7 @@ build_main :: proc(low: ^Lowering, main: ir.Func_ID, inits: []ir.Func_ID) {
 		ir.emit(&f, ir.VOID, ir.Global_Store{global = argv, value = array}, span)
 	}
 	for id in inits {
-		ir.emit(&f, ir.VOID, ir.Call{func = id}, span)
+		ir.emit(&f, ir.VOID, ir.Call{func = id, env = ir.NO_VALUE}, span)
 	}
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
 	ir.end_func(&f)

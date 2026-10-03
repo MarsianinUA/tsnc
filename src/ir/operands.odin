@@ -64,6 +64,7 @@ operands :: proc(variant: ^Variant, found: ^[dynamic]^Value_ID) {
 	case Make_Closure:
 		add_operands(found, &v.env)
 	case Call:
+		add_operands(found, &v.env)
 		for &arg in v.args {
 			add_operands(found, &arg)
 		}

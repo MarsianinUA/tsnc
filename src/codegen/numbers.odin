@@ -46,8 +46,7 @@ build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> ll
 		if integer {
 			return llvm.LLVMBuildSRem(m.builder, left, right, "")
 		}
-		// The remainder of a truncating division, which is what % means in ECMAScript.
-		return llvm.LLVMBuildFRem(m.builder, left, right, "")
+		return build_remainder(m, body, left, right)
 	case .Power:
 		return build_power(m, left, right)
 	case .Shift_Left:
@@ -76,6 +75,62 @@ build_binary :: proc(m: ^Module, body: ^Body, v: ir.Binary, type: ir.Type) -> ll
 	unreachable()
 }
 
+// build_remainder is % of ECMAScript, the remainder of a truncating division. frem is a call to
+// fmod, so whole operands below 2^63 in magnitude take srem: the bound keeps out INT64_MIN % -1, the
+// remainder of two doubles is a double and converts back exactly, and copysign gives a zero the sign
+// of the dividend (-6 % 3 is -0).
+@(private)
+build_remainder :: proc(
+	m: ^Module,
+	body: ^Body,
+	dividend, divisor: llvm.LLVMValueRef,
+) -> llvm.LLVMValueRef {
+	nonzero := llvm.LLVMBuildFCmp(
+		m.builder,
+		.LLVMRealONE,
+		divisor,
+		llvm.LLVMConstReal(m.types.double, 0),
+		"",
+	)
+	both := llvm.LLVMBuildAnd(m.builder, is_whole(m, dividend), is_whole(m, divisor), "")
+	fast := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	slow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, llvm.LLVMBuildAnd(m.builder, both, nonzero, ""), fast, slow)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, fast)
+	a := llvm.LLVMBuildFPToSI(m.builder, dividend, m.types.int64, "")
+	b := llvm.LLVMBuildFPToSI(m.builder, divisor, m.types.int64, "")
+	remainder := llvm.LLVMBuildSRem(m.builder, a, b, "")
+	signed := [?]llvm.LLVMValueRef {
+		llvm.LLVMBuildSIToFP(m.builder, remainder, m.types.double, ""),
+		dividend,
+	}
+	picked := build_double_call(m, "llvm.copysign", "copysign", signed[:])
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, slow)
+	exact := llvm.LLVMBuildFRem(m.builder, dividend, divisor, "")
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
+	answer := llvm.LLVMBuildPhi(m.builder, m.types.double, "")
+	values := [?]llvm.LLVMValueRef{picked, exact}
+	blocks := [?]llvm.LLVMBasicBlockRef{fast, slow}
+	llvm.LLVMAddIncoming(answer, &values[0], &blocks[0], len(values))
+	return answer
+}
+
+// is_whole answers whether a double is an integer that fptosi takes to an i64 exactly.
+@(private = "file")
+is_whole :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+	small := below_two_63(m, value)
+	argument := [?]llvm.LLVMValueRef{value}
+	truncated := build_number_call(m, .Trunc, argument[:])
+	integral := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOEQ, truncated, value, "")
+	return llvm.LLVMBuildAnd(m.builder, small, integral, "")
+}
+
 // to_int32 is the ECMAScript ToInt32 of a value of any number type. An integer wraps modulo 2^32,
 // which is what dropping its high bits does. A double below 2^63 in magnitude truncates to an i64
 // exactly, and the low 32 bits of that are the answer, as in V8.
@@ -88,16 +143,8 @@ to_int32 :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef 
 	case .I64:
 		return llvm.LLVMBuildTrunc(m.builder, value, m.types.int32, "")
 	}
-	TWO_63 :: f64(9223372036854775808)
-	argument := [?]llvm.LLVMValueRef{value}
-	// An ordered compare is false for NaN, so NaN goes the long way with the infinities.
-	small := llvm.LLVMBuildFCmp(
-		m.builder,
-		.LLVMRealOLT,
-		build_number_call(m, .Abs, argument[:]),
-		llvm.LLVMConstReal(m.types.double, TWO_63),
-		"",
-	)
+	// NaN goes the long way with the infinities.
+	small := below_two_63(m, value)
 	fast := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
 	slow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
 	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
@@ -118,6 +165,21 @@ to_int32 :: proc(m: ^Module, body: ^Body, id: ir.Value_ID) -> llvm.LLVMValueRef 
 	blocks := [?]llvm.LLVMBasicBlockRef{fast, slow}
 	llvm.LLVMAddIncoming(answer, &values[0], &blocks[0], len(values))
 	return answer
+}
+
+// below_two_63 compares the magnitude of a double with 2^63, the first that fptosi to an i64 cannot
+// take. The compare is ordered, so it is false for NaN as well as for the infinities.
+@(private = "file")
+below_two_63 :: proc(m: ^Module, value: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+	TWO_63 :: f64(9223372036854775808)
+	argument := [?]llvm.LLVMValueRef{value}
+	return llvm.LLVMBuildFCmp(
+		m.builder,
+		.LLVMRealOLT,
+		build_number_call(m, .Abs, argument[:]),
+		llvm.LLVMConstReal(m.types.double, TWO_63),
+		"",
+	)
 }
 
 // reduce_to_int32 reduces a double in double, because fptosi is poison outside the range of an

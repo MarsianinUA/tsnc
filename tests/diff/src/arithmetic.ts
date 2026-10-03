@@ -45,3 +45,14 @@ console.log(-0, product(-1, 0), sum(0, -0));
 
 console.log(sum(NaN, 1), product(Infinity, 0), difference(Infinity, Infinity));
 console.log(-sum(1, 2), +difference(4, 1));
+
+// `%` of two whole doubles below 2^63 in magnitude takes integers, the rest fmod. The operands come
+// from arrays, which opt cannot prove whole.
+const dividends: number[] = [7, -7, -6, -0, 2 ** 53 + 2, -(2 ** 62), 2 ** 63 - 1024, 2 ** 63];
+dividends.push(-(2 ** 63), 1e300, 5.5, NaN, -Infinity);
+const divisors: number[] = [3, -3, -1, 0, -0, 1000003, 2 ** 63 - 1024, 2 ** 63, 0.5, Infinity];
+for (const n of dividends) {
+  for (const d of divisors) {
+    console.log(n, d, n % d);
+  }
+}

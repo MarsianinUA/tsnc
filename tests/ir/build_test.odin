@@ -159,7 +159,7 @@ a_call_names_a_function_that_is_not_built_yet :: proc(t: ^testing.T) {
 	caller := ir.declare_func(&p, "caller", nil, ir.VOID, at(2))
 
 	f := ir.begin_func(&p, caller)
-	answer := ir.emit(&f, ir.F64, ir.Call{func = helper}, at(3))
+	answer := ir.emit(&f, ir.F64, ir.Call{func = helper, env = ir.NO_VALUE}, at(3))
 	ir.emit(&f, ir.VOID, ir.Global_Store{global = total, value = answer}, at(4))
 	read := ir.emit(&f, ir.F64, ir.Global_Load{global = total}, at(5))
 	args := [?]ir.Value_ID{read}

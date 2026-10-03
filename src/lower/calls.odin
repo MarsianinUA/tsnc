@@ -170,6 +170,7 @@ emit_class_call :: proc(
 	}
 	call: ir.Variant = ir.Call {
 		func = callee.func,
+		env  = ir.NO_VALUE,
 		args = args,
 	}
 	if callee.closure != ir.NO_VALUE {

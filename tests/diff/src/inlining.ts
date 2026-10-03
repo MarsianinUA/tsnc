@@ -1,7 +1,8 @@
-// At -o:speed opt copies the body of a small function into its caller and takes a cell that is only
-// read after it is made apart into its fields. The shapes here cross both: several returns, a
-// parameter that may be null, calls inside an inlined body, recursion, cells joined at a branch or
-// carried around a loop, and cells that must stay cells.
+// At -o:speed opt calls a closure it sees made directly, copies the body of a small function into its
+// caller, and takes a cell that is only read after it is made apart into its fields. The shapes here
+// cross all three: several returns, a parameter that may be null, calls inside an inlined body,
+// recursion, cells joined at a branch or carried around a loop, cells that must stay cells, and
+// closures called where they are made or handed to a small function.
 
 interface Vec {
   x: number;
@@ -130,6 +131,38 @@ function late(): string {
   return `${before} ${p.extra} ${p.size}`;
 }
 
+function twiceOver(f: (x: number) => number, x: number): number {
+  return f(f(x));
+}
+
+let later: () => number = () => 0;
+
+// watch has a loop, so it stays a call, and the closure it returns keeps the box of seen alive past
+// the frame of inSight: its environment must go to the heap.
+function inSight(n: number): string {
+  let count = 0;
+  const bump = (by: number): number => {
+    count += by;
+    return count;
+  };
+  bump(2);
+  bump(3);
+
+  let seen = 0;
+  const watch = (times: number): (() => number) => {
+    for (let i = 0; i < times; i++) {
+      seen += i;
+    }
+    return () => seen;
+  };
+  later = watch(n);
+  seen += 100;
+
+  const pickOne = n > 2 ? (x: number) => x + 1 : (x: number) => x - 1;
+  const alias = sign;
+  return `${count} ${later()} ${pickOne(n)} ${alias(n)} ${twiceOver((x) => x * n, 2)}`;
+}
+
 function kept(): number[] {
   const list: Vec[] = [];
   for (let i = 0; i < 4; i++) {
@@ -154,3 +187,5 @@ const b = body(3, false);
 const c = body(4, true);
 console.log(b.pos.x + c.pos.x, b.mass, b.open, c.open, b.label, c.label);
 console.log(vec(1, 2, 3), body(5, true));
+console.log(inSight(4), inSight(1));
+console.log(later());

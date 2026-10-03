@@ -288,12 +288,11 @@ kept :: proc(
 		// buffer only through its array.
 		return false
 	case ir.Call_Closure:
-		if field == &v.callee {
-			return true
-		}
-		callee, known := closure_function(frame.func^, v.callee)
-		return known && !e.params[callee][argument_of(v.args, field)]
+		return field == &v.callee
 	case ir.Call:
+		if field == &v.env {
+			return !e.env[v.func]
+		}
 		return !e.params[v.func][argument_of(v.args, field)]
 	case ir.Make_Closure:
 		// The closure cell holds its environment, as a Field_Store_Ref into it would.
@@ -338,17 +337,6 @@ nested :: proc(frame: ^Frame, inner, outer: ir.Block_ID) -> bool {
 		}
 	}
 	return false
-}
-
-@(private = "file")
-closure_function :: proc(func: ir.Func, closure: ir.Value_ID) -> (ir.Func_ID, bool) {
-	#partial switch v in func.values[closure].variant {
-	case ir.Make_Closure:
-		return v.func, true
-	case ir.Func_Ref:
-		return v.func, true
-	}
-	return 0, false
 }
 
 @(private = "file")

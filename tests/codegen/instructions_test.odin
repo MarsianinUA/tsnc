@@ -184,7 +184,7 @@ a_function_takes_the_closure_convention :: proc(t: ^testing.T) {
 	id := ir.declare_func(&p, "m1.pick", params[:], ir.BOOL, at(1))
 	f := ir.begin_func(&p, id)
 	args := [?]ir.Value_ID{0, 1, 2}
-	picked := ir.emit(&f, ir.BOOL, ir.Call{func = id, args = args[:]}, at(2))
+	picked := ir.emit(&f, ir.BOOL, ir.Call{func = id, env = ir.NO_VALUE, args = args[:]}, at(2))
 	ir.emit(&f, ir.VOID, ir.Return{value = picked}, at(3))
 	ir.end_func(&f)
 
@@ -226,6 +226,7 @@ the_integer_types_map_to_llvm_integers :: proc(t: ^testing.T) {
 	ir.emit(&f, ir.I32, ir.Binary{op = .Subtract, left = sum, right = whole}, at(2))
 	product := ir.emit(&f, ir.I64, ir.Binary{op = .Multiply, left = wide, right = grown}, at(2))
 	ir.emit(&f, ir.I32, ir.Binary{op = .Remainder, left = sum, right = seven}, at(2))
+	ir.emit(&f, ir.F64, ir.Binary{op = .Remainder, left = number, right = number}, at(2))
 	ir.emit(&f, ir.I64, ir.Unary{op = .Negate, operand = product}, at(2))
 	ir.emit(&f, ir.BOOL, ir.Compare{op = .Less, left = whole, right = seven}, at(2))
 	ir.emit(&f, ir.I32, ir.Binary{op = .Bit_And, left = whole, right = number}, at(2))
@@ -264,6 +265,8 @@ the_integer_types_map_to_llvm_integers :: proc(t: ^testing.T) {
 		"sub nsw i32 ",
 		"mul nsw i64 ",
 		"srem i32 ",
+		"srem i64 ",
+		"llvm.copysign.f64",
 		"sub nsw i64 0, ",
 		"icmp slt i32 ",
 		"0x43E0000000000000",

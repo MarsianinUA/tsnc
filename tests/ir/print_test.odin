@@ -525,11 +525,16 @@ build_program :: proc(table: []source.File) -> ir.Program_IR {
 	ir.end_func(&g)
 
 	m := ir.begin_func(&p, main)
-	ir.emit(&m, ir.VOID, ir.Call{func = init}, at(table, 5))
+	ir.emit(&m, ir.VOID, ir.Call{func = init, env = ir.NO_VALUE}, at(table, 5))
 	first := ir.emit(&m, ir.F64, ir.Const_Number{value = 1}, at(table, 5))
 	second := ir.emit(&m, ir.F64, ir.Const_Number{value = 2}, at(table, 5))
 	args := [?]ir.Value_ID{first, second}
-	chosen := ir.emit(&m, ir.F64, ir.Call{func = pick, args = args[:]}, at(table, 5))
+	chosen := ir.emit(
+		&m,
+		ir.F64,
+		ir.Call{func = pick, env = ir.NO_VALUE, args = args[:]},
+		at(table, 5),
+	)
 	ir.emit(&m, ir.VOID, ir.Global_Store{global = total, value = chosen}, at(table, 5))
 	point := ir.emit(&m, ir.ref(cell), ir.Alloc{layout = cell}, at(table, 6))
 	ir.emit(&m, ir.VOID, ir.Field_Store{cell = point, field = 0, value = chosen}, at(table, 6))

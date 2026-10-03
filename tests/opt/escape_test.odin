@@ -61,15 +61,22 @@ a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
 @(test)
 the_closure_of_a_loop_and_its_environment_go_on_the_stack :: proc(t: ^testing.T) {
 	// The box of i is made again for every pass and reaches the next one through a phi, so it
-	// stays on the heap.
+	// stays on the heap. apply only calls its argument, and its loop keeps it a call.
 	result := optimize_text(
 		t,
 		`
+		function apply(f: (y: number) => number, y: number): number {
+			let out = y;
+			for (let k = 0; k < 2; k++) {
+				out = f(out);
+			}
+			return out;
+		}
 		function made(n: number): number {
 			let sum = 0;
 			for (let i = 0; i < n; i++) {
 				const add = (y: number) => y + i;
-				sum += add(i % 10);
+				sum += apply(add, i % 10);
 			}
 			return sum;
 		}

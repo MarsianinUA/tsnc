@@ -389,7 +389,7 @@ a_call_takes_one_argument_per_parameter :: proc(t: ^testing.T) {
 	f := ir.begin_func(&p, main)
 	one := ir.emit(&f, ir.F64, ir.Const_Number{value = 1}, at(1))
 	args := [?]ir.Value_ID{one}
-	ir.emit(&f, ir.F64, ir.Call{func = add, args = args[:]}, at(1))
+	ir.emit(&f, ir.F64, ir.Call{func = add, env = ir.NO_VALUE, args = args[:]}, at(1))
 	ir.emit(&f, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(1))
 	ir.end_func(&f)
 
@@ -583,7 +583,8 @@ Closure_Fault :: enum {
 	None,
 	Env_Without_Environment, // an Env in a function that takes none
 	Environment_Not_An_Environment, // a Func.env that names an object layout
-	Direct_Call_With_Environment,
+	Direct_Call_Without_Environment, // a Call of a function with an environment, given none
+	Direct_Call_With_Environment, // a Call of a function without one, given one
 	Func_Ref_With_Environment,
 	Env_Operand_Missing, // Make_Closure of a function with an environment, given none
 	Env_Operand_Given, // Make_Closure of a function without one, given one
@@ -656,10 +657,11 @@ build_closures :: proc(fault: Closure_Fault) -> ir.Program_IR {
 		referred = undescribed
 	}
 	ir.emit(&h, ir.CLOSURE, ir.Func_Ref{func = referred}, at(4))
-	if fault == .Direct_Call_With_Environment {
-		args := [?]ir.Value_ID{0}
-		ir.emit(&h, ir.F64, ir.Call{func = inner, args = args[:]}, at(4))
-	}
+	args := [?]ir.Value_ID{0}
+	inner_env := ir.NO_VALUE if fault == .Direct_Call_Without_Environment else made
+	ir.emit(&h, ir.F64, ir.Call{func = inner, env = inner_env, args = args[:]}, at(4))
+	plain_env := made if fault == .Direct_Call_With_Environment else ir.NO_VALUE
+	ir.emit(&h, ir.VOID, ir.Call{func = plain, env = plain_env}, at(4))
 	ir.emit(&h, ir.VOID, ir.Return{value = ir.NO_VALUE}, at(4))
 	ir.end_func(&h)
 
@@ -926,10 +928,10 @@ build_clean :: proc() -> ir.Program_IR {
 	ir.end_func(&s)
 
 	m := ir.begin_func(&p, main)
-	ir.emit(&m, ir.VOID, ir.Call{func = init}, at(4))
+	ir.emit(&m, ir.VOID, ir.Call{func = init, env = ir.NO_VALUE}, at(4))
 	argument := ir.emit(&m, ir.F64, ir.Const_Number{value = 3}, at(4))
 	args := [?]ir.Value_ID{argument}
-	counted := ir.emit(&m, ir.F64, ir.Call{func = count, args = args[:]}, at(4))
+	counted := ir.emit(&m, ir.F64, ir.Call{func = count, env = ir.NO_VALUE, args = args[:]}, at(4))
 	ir.emit(&m, ir.VOID, ir.Global_Store{global = total, value = counted}, at(4))
 	greeting := ir.emit(&m, ir.STR, ir.Const_String{text = text}, at(4))
 	logged := [?]ir.Value_ID{greeting}

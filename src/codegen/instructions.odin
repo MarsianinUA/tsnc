@@ -210,9 +210,11 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 		body.values[value] = cell
 
 	case ir.Call:
-		// A direct call names a function with no environment, which takes a null one.
 		callee := m.funcs[v.func]
 		env := llvm.LLVMConstNull(m.types.ptr)
+		if v.env != ir.NO_VALUE {
+			env = body.values[v.env]
+		}
 		result := call_function(m, body, callee.signature, callee.function, env, v.args)
 		if instruction.type != ir.VOID {
 			body.values[value] = from_storage(m, result, instruction.type)

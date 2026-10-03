@@ -378,7 +378,7 @@ only_phis :: proc(f: ^Func_Builder, block: Block_ID) -> bool {
 own :: proc(p: ^Program_Builder, variant: Variant) -> Variant {
 	#partial switch v in variant {
 	case Call:
-		return Call{func = v.func, args = slice.clone(v.args, p.allocator)}
+		return Call{func = v.func, env = v.env, args = slice.clone(v.args, p.allocator)}
 	case Call_Closure:
 		return Call_Closure{callee = v.callee, args = slice.clone(v.args, p.allocator)}
 	case Call_Runtime:

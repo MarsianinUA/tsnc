@@ -221,13 +221,18 @@ inline_call :: proc(
 	append(&list, add_value(e, {span = span, variant = ir.Jump{target = first}}))
 	e.blocks[block].instructions = list[:]
 
-	// A parameter is its argument. An argument whose type only fits the parameter's, a present
-	// reference for one that may be null, comes through a phi of the parameter's type.
+	// A parameter is its argument, and the environment the call's. An argument whose type only fits
+	// the parameter's, a present reference for one that may be null, comes through a phi of the
+	// parameter's type.
 	copies := make([]ir.Value_ID, len(callee.values), context.temp_allocator)
 	slice.fill(copies, ir.NO_VALUE)
 	widened := make([dynamic]ir.Value_ID, context.temp_allocator)
 	for callee_block in callee.blocks {
 		for v in callee_block.instructions {
+			if _, is_env := callee.values[v].variant.(ir.Env); is_env {
+				copies[v] = call.env
+				continue
+			}
 			param, is_param := callee.values[v].variant.(ir.Param)
 			if !is_param {
 				copies[v] = add_value(e, callee.values[v])
@@ -255,7 +260,8 @@ inline_call :: proc(
 			append(&copied, ..widened[:])
 		}
 		for v in callee_block.instructions {
-			if _, is_param := callee.values[v].variant.(ir.Param); is_param {
+			#partial switch _ in callee.values[v].variant {
+			case ir.Param, ir.Env:
 				continue
 			}
 			instruction := &e.values[copies[v]]

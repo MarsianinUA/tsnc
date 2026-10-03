@@ -460,6 +460,10 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, "call ") or_return
 		io.write_int(w, int(v.func)) or_return
 		write_arguments(w, v.args) or_return
+		if v.env != NO_VALUE {
+			io.write_string(w, " env ") or_return
+			write_value(w, v.env) or_return
+		}
 
 	case Call_Closure:
 		io.write_string(w, "call_closure ") or_return
