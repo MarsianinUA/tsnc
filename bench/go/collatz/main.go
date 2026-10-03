@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/collatz.ts.
+// The Go twin of bench/ts/collatz/main.ts.
 package main
 
 import "fmt"

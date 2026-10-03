@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/closures.ts.
+// The Go twin of bench/ts/closures/main.ts.
 package main
 
 import "fmt"

@@ -243,7 +243,7 @@ a_tagged_name_declared_as_references_is_truthy_unless_nullish :: proc(t: ^testin
 
 @(test)
 a_reference_or_null_is_one_pointer_slot :: proc(t: ^testing.T) {
-	// The node of bench/ts/trees.ts: a header and two pointers, 0 standing for null.
+	// The node of bench/ts/trees/main.ts: a header and two pointers, 0 standing for null.
 	result := lower_text(
 		t,
 		`

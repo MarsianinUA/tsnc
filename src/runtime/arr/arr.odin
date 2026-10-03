@@ -166,7 +166,7 @@ slot :: proc(array: ^abi.Array_Cell, kind: abi.Slot_Kind, index: int) -> rawptr 
 }
 
 // store is inlined into push, which builds an array element by element: as a call it cost
-// bench/ts/sieve.ts a fifth of its time once the slot kinds grew to six.
+// bench/ts/sieve/main.ts a fifth of its time once the slot kinds grew to six.
 @(private)
 store :: #force_inline proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 	switch kind {
