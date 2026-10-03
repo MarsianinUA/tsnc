@@ -266,6 +266,7 @@ the_integer_types_map_to_llvm_integers :: proc(t: ^testing.T) {
 		"srem i32 ",
 		"sub nsw i64 0, ",
 		"icmp slt i32 ",
+		"0x43E0000000000000",
 		"llvm.fptosi.sat.i32.f64",
 		"trunc i64 ",
 		"lshr i32 ",
