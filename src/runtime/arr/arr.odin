@@ -16,6 +16,7 @@ elements already stored, so a collection in the middle never reads a slot that h
 package arr
 
 import "../../abi"
+import "../fail"
 import "../gc"
 import "../num"
 import "../str"
@@ -29,8 +30,24 @@ BUFFER :: abi.Type_Table_ID(abi.Builtin_Table.Buffer)
 @(private)
 MIN_CAPACITY :: 4
 
+// One element more is "RangeError: Invalid array length" in Node and a runtime failure with Node's
+// text here. No array's capacity passes it, so neither does its length.
+MAX_LENGTH :: abi.MAX_ARRAY_LENGTH
+
+@(private)
+ensure_length :: proc(length: int) {
+	if !length_fits(length) {
+		fail.at({error = .Invalid_Array_Length})
+	}
+}
+
+length_fits :: proc "contextless" (length: int) -> bool {
+	return length <= MAX_LENGTH
+}
+
 // new_array makes no buffer for a capacity of 0.
 new_array :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, capacity: int) -> ^abi.Array_Cell {
+	ensure_length(capacity)
 	array := (^abi.Array_Cell)(gc.alloc(heap, table, size_of(abi.Array_Cell)))
 	if capacity > 0 {
 		grow(heap, array, element_kind(heap, array), capacity)
@@ -52,7 +69,9 @@ new_zeroed :: proc(heap: ^gc.Heap, table: abi.Type_Table_ID, length: int) -> ^ab
 // before it stores the element and raises the length itself.
 reserve :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) {
 	if array.length == array.capacity {
-		grow(heap, array, element_kind(heap, array), max(MIN_CAPACITY, 2 * array.capacity))
+		ensure_length(array.length + 1)
+		capacity := min(max(MIN_CAPACITY, 2 * array.capacity), MAX_LENGTH)
+		grow(heap, array, element_kind(heap, array), capacity)
 	}
 }
 

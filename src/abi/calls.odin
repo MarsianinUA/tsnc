@@ -230,6 +230,7 @@ Runtime_Error :: enum i32 {
 	// object's own toString, or for `+` its own valueOf.
 	Not_Convertible_To_String,
 	Invalid_String_Length, // a string past str.MAX_LENGTH units: Node's RangeError
+	Invalid_Array_Length, // an array past arr.MAX_LENGTH elements: Node's RangeError
 	// %d of an object with its own valueOf or toString, which Node would call.
 	Not_Convertible_To_Number,
 	// %j of an object with its own toJSON, which Node would call.

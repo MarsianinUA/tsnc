@@ -503,7 +503,7 @@ Where: requirements §3.1; finding 1 of [performance-review.md](performance-revi
 After: none.
 Done: the corpora are green at both `-o` levels, under stress and ASan too; a diff program takes ToInt32 of doubles on both sides of 2^31, 2^32, 2^53 and 2^63, of both signs, of NaN and of the infinities; `hash` and `mask` run in at most 1.5 times Node's time; `bench/RESULTS.md` has the row of `integers`.
 
-### [ ] T6.16 `opt`: an upper bound on the length of an array
+### [x] T6.16 `opt`: an upper bound on the length of an array
 
 What: `ranges` caps the length of a string at `abi.MAX_STRING_LENGTH` and leaves the length of an array at 2^53 - 1 (`length_limit` in `src/opt/ranges.odin`), so `length + 1` may leave the safe range and stays a double. Every `push` then converts the length to f64, adds 1 and converts back, and the length is carried through memory from one pass to the next: a copy of `sieve` that only pushes takes more than half of the program's time. In `bsearch`, `hi` comes from `a.length - 1`, so `(lo + hi) >> 1` adds doubles. The task gives an array a largest length the way requirements §3.2 give a string one: an `abi` constant that `ranges` reads and the runtime enforces where an array grows (`reserve` and `new_array` in `src/runtime/arr`), failing with Node's `Invalid array length`. The plan picks the bound: 2^32 - 1 as in ECMAScript, or what a buffer of the widest element can ever take.
 Where: requirements §3.1, §3.6, §3.8; finding 2 of [performance-review.md](performance-review.md); `src/opt/ranges.odin`, `src/abi`, `src/runtime/arr`; `bench/ts/sieve/main.ts`.

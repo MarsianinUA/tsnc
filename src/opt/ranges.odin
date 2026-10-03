@@ -429,7 +429,7 @@ compute :: proc(a: ^Analysis, id: ir.Func_ID, value: ir.Value_ID, block: ir.Bloc
 
 @(private = "file")
 length_limit :: proc(a: ^Analysis, func: ir.Func, cell: ir.Value_ID) -> f64 {
-	return a.ranges.string_limit if func.values[cell].type == ir.STR else SAFE
+	return a.ranges.string_limit if func.values[cell].type == ir.STR else abi.MAX_ARRAY_LENGTH
 }
 
 @(private = "file")

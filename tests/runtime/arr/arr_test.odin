@@ -71,6 +71,18 @@ new_zeroed_has_its_length_and_zero_elements :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, gc.Heap_Problem.None)
 }
 
+// The bound is ECMAScript's:
+//
+//	node -e 'const a = []; a.length = 2 ** 32 - 1; console.log(a.length); a.push(1)'
+//
+// prints the length, then throws "RangeError: Invalid array length".
+@(test)
+an_array_is_as_long_as_ecmascript_allows :: proc(t: ^testing.T) {
+	testing.expect_value(t, arr.MAX_LENGTH, 4_294_967_295)
+	testing.expect(t, arr.length_fits(arr.MAX_LENGTH))
+	testing.expect(t, !arr.length_fits(arr.MAX_LENGTH + 1))
+}
+
 // An empty result allocates nothing: a slice or a split with no elements has no buffer, and an
 // empty join is the static empty string.
 @(test)

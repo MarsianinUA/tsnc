@@ -807,6 +807,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Fraction_Digits_Out_Of_Range = "fraction_digits_out_of_range",
 	.Not_Convertible_To_String    = "not_convertible_to_string",
 	.Invalid_String_Length        = "invalid_string_length",
+	.Invalid_Array_Length         = "invalid_array_length",
 	.Not_Convertible_To_Number    = "not_convertible_to_number",
 	.Not_Convertible_To_Json      = "not_convertible_to_json",
 	.Reduce_Of_Empty_Array        = "reduce_of_empty_array",

@@ -55,6 +55,67 @@ a_counter_below_a_length_is_i64 :: proc(t: ^testing.T) {
 	testing.expectf(t, found && init.values[phi].type == ir.I64, "%s", result.after)
 }
 
+// Both stand on abi.MAX_ARRAY_LENGTH: with a length bounded only by 2^53 - 1, `length + 1` and
+// `lo + hi` stay F64.
+@(test)
+the_length_a_push_writes_is_an_integer_add :: proc(t: ^testing.T) {
+	result := optimize_text(
+		t,
+		`
+		const values: number[] = [];
+		for (let i = 0; i < 10; i++) {
+			values.push(i);
+		}
+		console.log(values.length);
+	`,
+	)
+	init := harness.func_named(t, result.output, "init$m1")
+	_, sets := instructions_of(init, ir.Set_Length)
+	if !testing.expectf(t, len(sets) == 1, "%s", result.after) {
+		return
+	}
+	add, is_binary := init.values[sets[0].length].variant.(ir.Binary)
+	testing.expectf(t, is_binary && add.op == .Add, "%s", result.after)
+	testing.expectf(t, init.values[sets[0].length].type == ir.I64, "%s", result.after)
+}
+
+@(test)
+the_sum_of_two_indices_stays_an_integer :: proc(t: ^testing.T) {
+	result := optimize_text(
+		t,
+		`
+		function find(a: number[], key: number): number {
+			let lo = 0;
+			let hi = a.length - 1;
+			while (lo <= hi) {
+				const mid = (lo + hi) >> 1;
+				if (a[mid] === key) {
+					return mid;
+				}
+				if (a[mid] < key) {
+					lo = mid + 1;
+				} else {
+					hi = mid - 1;
+				}
+			}
+			return -1;
+		}
+		console.log(find([1, 3, 5], 5));
+	`,
+	)
+	find := harness.func_named(t, result.output, "m1.find")
+	_, binaries := instructions_of(find, ir.Binary)
+	summed := false
+	for binary in binaries {
+		if binary.op != .Shift_Right {
+			continue
+		}
+		add, is_binary := find.values[binary.left].variant.(ir.Binary)
+		summed = is_binary && add.op == .Add && find.values[binary.left].type == ir.I64
+	}
+	testing.expectf(t, summed, "%s", result.after)
+}
+
 @(test)
 what_no_bound_holds_stays_f64 :: proc(t: ^testing.T) {
 	// steps has no bound, and x = 3x + 1 is the Collatz problem: nothing proves it stays small.
