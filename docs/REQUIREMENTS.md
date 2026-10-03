@@ -104,6 +104,7 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 ### 3.6 Arrays
 - `T[]` is a growable contiguous buffer with a length and a capacity, with unboxed elements (`number[]` is an array of f64), unless it flows into an array type of a wider element (below).
 - `push` is amortized O(1). Arrays have no holes.
+- An array holds at most 2^32 - 1 elements, as in ECMAScript. Growing a longer one, by `push` or any other method, is a runtime error with Node's message, `Invalid array length`, where Node throws a `RangeError`.
 - An array passes where an array of a wider element type is expected, as in TypeScript: `Triangle[]` goes where `(Sphere | Triangle)[]` is expected. The value is the same array, not a copy, so `===` holds and a `push` through either type shows through the other. As for objects (3.3), the compiler gives each class of array types that flow into each other one element slot: a tagged slot where their element types differ, or a pointer that may be 0 where they differ only in `null` or `undefined` (3.4). A read through the narrower type checks what the slot holds (3.8).
 - `map`, `filter`, `forEach` and `reduce` follow Node when the callback changes the array: the length is read once, and `forEach`, `filter` and `reduce` stop where the array now ends. `map` over an array its callback shortens is a runtime error (3.8), because Node would leave a hole. `reduce` of an empty array without an initial value is a runtime error with Node's message, `Reduce of empty array with no initial value`.
 

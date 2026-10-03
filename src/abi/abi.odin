@@ -58,6 +58,10 @@ Ascii_Cells :: [ASCII_LIMIT]Ascii_Cell
 // bounds the length of a string by it.
 MAX_STRING_LENGTH :: 536_870_888
 
+// MAX_ARRAY_LENGTH is ECMAScript's longest array, 2^32 - 1 elements. arr fails an array that would
+// grow past it, as Node does, and opt bounds the length of an array by it.
+MAX_ARRAY_LENGTH :: 4_294_967_295
+
 Array_Cell :: struct {
 	using header: Cell_Header,
 	length:       int,
