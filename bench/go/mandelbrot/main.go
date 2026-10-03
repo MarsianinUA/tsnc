@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/mandelbrot.ts.
+// The Go twin of bench/ts/mandelbrot/main.ts.
 package main
 
 import "fmt"

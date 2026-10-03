@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/sieve.ts.
+// The Go twin of bench/ts/sieve/main.ts.
 package main
 
 import "fmt"

@@ -16,6 +16,7 @@ PROGRAMS := [?]string {
 	"objects",
 	"closures",
 	"trees",
+	"raytracer",
 }
 RUNS :: 5
 HELLO_RUNS :: 20
@@ -37,7 +38,7 @@ REQUIRED :: bit_set[Column]{.tsnc, .node, .go}
 LIMIT_SECONDS :: 30
 
 // check_set holds bench/ts and bench/go to PROGRAMS and hello both ways, so that no program runs
-// without its twin and no file lies there unmeasured.
+// without its twin and no directory lies there unmeasured.
 check_set :: proc() -> (ok: bool) {
 	names := slice.concatenate([][]string{PROGRAMS[:], {"hello"}}, context.temp_allocator)
 	ok = true
@@ -50,19 +51,13 @@ check_set :: proc() -> (ok: bool) {
 		}
 	}
 
-	sources := read_directory("bench/ts") or_return
-	for info in sources {
-		name := strings.trim_suffix(info.name, ".ts")
-		if name != info.name && !slice.contains(names, name) {
-			fmt.eprintfln("bench: bench/ts/%s is not in PROGRAMS", info.name)
-			ok = false
-		}
-	}
-	twins := read_directory("bench/go") or_return
-	for info in twins {
-		if info.type == .Directory && !slice.contains(names, info.name) {
-			fmt.eprintfln("bench: bench/go/%s is not in PROGRAMS", info.name)
-			ok = false
+	for root in ([]string{"bench/ts", "bench/go"}) {
+		infos := read_directory(root) or_return
+		for info in infos {
+			if info.type == .Directory && !slice.contains(names, info.name) {
+				fmt.eprintfln("bench: %s/%s is not in PROGRAMS", root, info.name)
+				ok = false
+			}
 		}
 	}
 	return ok
@@ -279,7 +274,7 @@ agree :: proc(
 }
 
 source_of :: proc(name: string) -> string {
-	return fmt.tprintf("bench/ts/%s.ts", name)
+	return fmt.tprintf("bench/ts/%s/main.ts", name)
 }
 
 build_tsnc :: proc(setup: Setup, name: string) -> (executable: string, ok: bool) {

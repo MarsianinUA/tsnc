@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/objects.ts.
+// The Go twin of bench/ts/objects/main.ts.
 package main
 
 import (

@@ -209,7 +209,7 @@ The define makes the first command fail if the build lost the sanitizer, where e
 
 ## Benchmarks
 
-`bench/ts/` holds the programs of requirements 10: `mandelbrot` and `collatz` (numeric loops), `sieve` (a `boolean[]`), `chars` and `strings` (a scan by `s[i]` and the string methods), `objects` (an array of records sorted and filtered), `closures`, `trees` (binary-trees, for the collector) and `hello`. Each has a Go twin in `bench/go/<name>/main.go`. The twins run the same algorithm on the same data, in the types a Go programmer would pick: `int` where a value is always an integer, byte indexing for ASCII text, a slice of structs for records.
+Each program of requirements 10 lives in `bench/ts/<name>/`, entered at `main.ts`, and its Go twin in `bench/go/<name>/`, entered at `main.go`. The programs: `mandelbrot` and `collatz` (numeric loops), `sieve` (a `boolean[]`), `chars` and `strings` (a scan by `s[i]` and the string methods), `objects` (an array of records sorted and filtered), `closures`, `trees` (binary-trees, for the collector), `raytracer` and `hello`. `raytracer` is a whole program of about 1500 lines over the modules beside its `main.ts`: it parses a scene from text, builds meshes and a BVH, and renders three frames. The twins run the same algorithm on the same data, in the types a Go programmer would pick: `int` where a value is always an integer, byte indexing for ASCII text, a slice of structs for records.
 
 `bench/bench.sh`, or `bench\bench` in the Windows shells, runs `bench/runner` from the repository root, wherever it is called from. The runner needs Node and Go on `PATH`. scriptc and Bun are optional, and `npm install -g scriptc bun` installs both. On Windows scriptc links through Zig 0.16, which `winget install zig.zig` puts on `PATH`. npm puts only `.cmd` shims there, which the runner cannot start, so it runs the `.exe` from the package in `npm root -g`.
 
@@ -221,7 +221,7 @@ bench/bench.sh -against:base trees
 
 The names pick benchmarks: a program, `hello` or `compile`. With no names, everything runs, which takes about four minutes.
 
-Before any run the runner checks that every program has both `bench/ts/<name>.ts` and `bench/go/<name>/main.go`, and that neither directory holds a program missing from `PROGRAMS` in `bench/runner/programs.odin`. So adding a benchmark means two files and one line. Then it builds `dist/tsnc.exe` and the runtime object with the commands above, but only when a file in `src/` is newer than they are.
+Before any run the runner checks that every program has both `bench/ts/<name>/main.ts` and `bench/go/<name>/main.go`, and that neither directory holds one missing from `PROGRAMS` in `bench/runner/programs.odin`. So adding a benchmark means two directories and one line. Then it builds `dist/tsnc.exe` and the runtime object with the commands above, but only when a file in `src/` is newer than they are.
 
 | flag | effect |
 | --- | --- |

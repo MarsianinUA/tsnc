@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/hello.ts.
+// The Go twin of bench/ts/hello/main.ts.
 package main
 
 import "fmt"

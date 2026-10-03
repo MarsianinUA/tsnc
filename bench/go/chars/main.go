@@ -1,4 +1,4 @@
-// The Go twin of bench/ts/chars.ts.
+// The Go twin of bench/ts/chars/main.ts.
 package main
 
 import (
