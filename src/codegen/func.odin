@@ -8,23 +8,21 @@ import "../llvm"
 
 @(private)
 Body :: struct {
-	func:        ir.Func,
-	function:    llvm.LLVMValueRef,
-	blocks:      []llvm.LLVMBasicBlockRef, // by ir.Block_ID; nil when the block cannot be reached
-	// tails holds, by ir.Block_ID, the LLVM block the IR block ends in. A bounds check splits the
-	// block it stands in, so a phi's edge names the tail and a jump names the head.
-	tails:       []llvm.LLVMBasicBlockRef,
-	values:      []llvm.LLVMValueRef, // by ir.Value_ID
-	// result_slot is where the runtime writes a tagged result (abi.C_Type.Tagged); nil in a function
-	// that calls for none. Every such call reads it back at once, so one slot serves them all.
-	result_slot: llvm.LLVMValueRef,
+	func:      ir.Func,
+	function:  llvm.LLVMValueRef,
+	blocks:    []llvm.LLVMBasicBlockRef, // by ir.Block_ID; nil when the block cannot be reached
+	// tails holds, by ir.Block_ID, the LLVM block the IR block ends in. An instruction that branches
+	// inside, a bounds check or a Reserve, splits the block it stands in, so a phi's edge names the
+	// tail and a jump names the head.
+	tails:     []llvm.LLVMBasicBlockRef,
+	values:    []llvm.LLVMValueRef, // by ir.Value_ID
 	// rest_slot holds the values of a Rest parameter (abi.C_Type.Rest), room for the widest call of
 	// the function; nil in a function that makes none. The runtime is done with them when the call
 	// returns, so one slot serves every call.
-	rest_slot:   llvm.LLVMValueRef,
+	rest_slot: llvm.LLVMValueRef,
 	// cells holds, by ir.Value_ID, the slot of a stack cell. Every evaluation starts it afresh: opt
 	// proved nothing still points into it by then.
-	cells:       []Stack_Cell,
+	cells:     []Stack_Cell,
 }
 
 @(private)
@@ -55,10 +53,6 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	}
 	// At the head of the entry block: an alloca anywhere else takes more stack at every pass of a
 	// loop through it.
-	if calls_for_a_tagged_result(func) {
-		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
-		body.result_slot = llvm.LLVMBuildAlloca(m.builder, m.types.tagged, "")
-	}
 	if capacity := rest_capacity(func); capacity > 0 {
 		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[ir.ENTRY])
 		values := llvm.LLVMArrayType2(m.types.tagged, u64(capacity))
@@ -108,18 +102,6 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 // anyway, and the memset that starts the cell may use aligned vector stores.
 @(private)
 STACK_CELL_ALIGNMENT :: 16
-
-@(private)
-calls_for_a_tagged_result :: proc(func: ir.Func) -> bool {
-	exports := abi.RUNTIME_EXPORTS
-	for instruction in func.values {
-		call, is_call := instruction.variant.(ir.Call_Runtime)
-		if is_call && exports[call.export].result == .Tagged {
-			return true
-		}
-	}
-	return false
-}
 
 @(private)
 rest_capacity :: proc(func: ir.Func) -> int {

@@ -26,9 +26,8 @@ HEAP_SYMBOL :: "tsnc_heap"
 ASCII_CELLS_SYMBOL :: "tsnc_ascii_cells"
 
 // C_Type is the type of a runtime export parameter or result in the C calling convention; codegen
-// maps each to one LLVM type, a Tagged parameter to two words and a Tagged result to a leading
-// slot. A boolean is b64 here, the width the package uses for a boolean slot, so no export depends
-// on how a C compiler widens a narrower one.
+// maps each to one LLVM type and a Tagged to two words. A boolean is b64 here, the width the package
+// uses for a boolean slot, so no export depends on how a C compiler widens a narrower one.
 C_Type :: enum u8 {
 	Void,
 	Ptr,
@@ -36,9 +35,7 @@ C_Type :: enum u8 {
 	Boolean, // b64, 0 or 1
 	// A Tagged travels as two word parameters, the tag and then the payload's bits. A 16-byte
 	// struct does not travel alike everywhere: Win64 passes a pointer to a copy, SysV and arm64 two
-	// registers. For the same reason a Tagged result comes back through the caller's slot: codegen
-	// passes the address of a Tagged on its stack ahead of the other parameters, the export writes
-	// it and returns nothing. That is Win64's hidden pointer, spelled out on every target.
+	// registers. A parameter only: no export answers one.
 	Tagged,
 	// Any number of Tagged values, as the last parameter only and never as a result. They travel
 	// as two parameters: the address of an array of Tagged on the caller's stack, nil when there
@@ -60,11 +57,9 @@ Runtime_Proc :: enum u8 {
 	// (argv): fills argv, an empty string[] lower made, with process.argv; main calls it once.
 	Process_Argv,
 	Process_Exit, // (code): flushes nothing and ends the process
-	// The three Math names that are not a C function: round takes a half toward positive infinity,
-	// max and min have their own rules for NaN and -0 (requirements 4.5).
+	// The Math name that is not a C function: round takes a half toward positive infinity
+	// (requirements 4.5).
 	Math_Round, // (x) -> f64
-	Math_Max, // (a, b) -> f64
-	Math_Min, // (a, b) -> f64
 	// Strings, requirements 3.2, and the String methods of 2.2. `length` has no row: generated code
 	// loads String_Cell.length. A string result may be an argument or a static cell, never a
 	// promised fresh one.
@@ -99,8 +94,7 @@ Runtime_Proc :: enum u8 {
 	// Arrays, requirements 3.6 and the Array methods of 2.2 that lower does not inline. An element
 	// goes in as a Tagged whatever the array holds; lower boxes it, which costs nothing for a number
 	// or a reference.
-	Array_Push, // (array, value: Tagged) -> f64: the new length; lower calls it once per item
-	Array_Pop, // (array) -> Tagged: the last element, or undefined
+	Array_Reserve, // (array): a bigger buffer for a full array, the slow path of ir.Reserve
 	Array_Index_Of, // (array, search: Tagged, from) -> f64: `===`, so NaN is never found
 	Array_Includes, // (array, search: Tagged, from) -> b64: SameValueZero, so NaN finds NaN
 	Array_Slice, // (array, start, end) -> ^Array_Cell: always a new array
@@ -142,8 +136,6 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 		diverges = true,
 	},
 	.Math_Round = {symbol = "tsnc_math_round", params = {.Number}, result = .Number},
-	.Math_Max = {symbol = "tsnc_math_max", params = {.Number, .Number}, result = .Number},
-	.Math_Min = {symbol = "tsnc_math_min", params = {.Number, .Number}, result = .Number},
 	// An argument TypeScript lets a call leave out arrives as MISSING_END for an end, MISSING_LIMIT
 	// for a limit, and 0 for a start, a position or a digit count. A separator join was not given
 	// is the string constant ",".
@@ -205,8 +197,7 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 		params = {.Tagged},
 		result = .Ptr,
 	},
-	.Array_Push = {symbol = "tsnc_array_push", params = {.Ptr, .Tagged}, result = .Number},
-	.Array_Pop = {symbol = "tsnc_array_pop", params = {.Ptr}, result = .Tagged},
+	.Array_Reserve = {symbol = "tsnc_array_reserve", params = {.Ptr}, result = .Void},
 	.Array_Index_Of = {
 		symbol = "tsnc_array_index_of",
 		params = {.Ptr, .Tagged, .Number},

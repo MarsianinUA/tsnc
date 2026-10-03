@@ -342,6 +342,16 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, "length ") or_return
 		write_value(w, v.value) or_return
 
+	case Reserve:
+		io.write_string(w, "reserve ") or_return
+		write_value(w, v.array) or_return
+
+	case Set_Length:
+		io.write_string(w, "set_length ") or_return
+		write_value(w, v.array) or_return
+		io.write_string(w, ", ") or_return
+		write_value(w, v.length) or_return
+
 	case Bounds_Check:
 		io.write_string(w, "bounds_check ") or_return
 		write_element(w, v.array, v.index) or_return
@@ -750,6 +760,8 @@ INTRINSIC_TEXT := [Intrinsic_Op]string {
 	.Log2  = "log2",
 	.Log10 = "log10",
 	.Cbrt  = "cbrt",
+	.Min   = "min",
+	.Max   = "max",
 }
 
 @(private, rodata)

@@ -359,27 +359,6 @@ a_tagged_parameter_of_the_runtime_takes_only_a_tagged_value :: proc(t: ^testing.
 }
 
 @(test)
-a_tagged_result_of_the_runtime_is_a_tagged_value :: proc(t: ^testing.T) {
-	p := ir.make_builder(context.temp_allocator)
-	params := [?]ir.Type{ir.ref(ir.array_layout(&p, .Number))}
-	last := ir.declare_func(&p, "last", params[:], ir.TAGGED, at(1))
-	main := declare_main(&p)
-	build_return_body(&p, main)
-
-	f := ir.begin_func(&p, last)
-	array := [?]ir.Value_ID{0}
-	popped := ir.emit(&f, ir.TAGGED, ir.Call_Runtime{export = .Array_Pop, args = array[:]}, at(2))
-	ir.emit(&f, ir.F64, ir.Call_Runtime{export = .Array_Pop, args = array[:]}, at(3))
-	ir.emit(&f, ir.VOID, ir.Return{value = popped}, at(4))
-	ir.end_func(&f)
-
-	found := ir.verify(ir.finish(&p, main, nil), context.temp_allocator)
-
-	// pop answers `number | undefined`, never a bare number, even from a number array.
-	expect_one(t, found, .Result_Type)
-}
-
-@(test)
 a_return_carries_the_result_of_its_function :: proc(t: ^testing.T) {
 	p := ir.make_builder(context.temp_allocator)
 	empty := ir.declare_func(&p, "empty", nil, ir.F64, at(1))
@@ -542,6 +521,8 @@ a_heap_instruction_of_the_wrong_kind_is_a_violation :: proc(t: ^testing.T) {
 		{.Unit_Unchecked, .Unchecked_Index},
 		{.Ascii_Of_Number, .Operand_Type},
 		{.Same_Cell_Of_Object, .Operand_Type},
+		{.Reserve_Of_Str, .Operand_Type},
+		{.Bool_Length, .Operand_Type},
 	}
 	for c in cases {
 		found := ir.verify(build_heap(c.fault), context.temp_allocator)
@@ -698,6 +679,8 @@ Heap_Fault :: enum {
 	Unit_Unchecked,
 	Ascii_Of_Number, // a unit that no Unit_Load answered
 	Same_Cell_Of_Object,
+	Reserve_Of_Str,
+	Bool_Length,
 }
 
 @(private = "file")
@@ -732,6 +715,7 @@ build_heap :: proc(fault: Heap_Fault) -> ir.Program_IR {
 	measured := object if fault == .Length_Of_Object else read
 	ir.emit(&f, ir.F64, ir.Length{value = measured}, at(1))
 	ir.emit(&f, ir.F64, ir.Length{value = array}, at(1))
+	ir.emit(&f, ir.VOID, ir.Reserve{array = text if fault == .Reserve_Of_Str else array}, at(1))
 	zero := ir.emit(&f, ir.F64, ir.Const_Number{value = 0}, at(1))
 	check := ir.Bounds_Check {
 		array        = text,
@@ -756,7 +740,9 @@ build_heap :: proc(fault: Heap_Fault) -> ir.Program_IR {
 	ir.emit(&f, ir.BOOL, ir.Null_Test{value = tested}, at(1))
 	made := cell if fault == .Array_Of_Object else numbers
 	ir.emit(&f, ir.ref(made), ir.New_Array{layout = made, length = count}, at(1))
-	ir.emit(&f, ir.BOOL, ir.Layout_Test{cell = object, layout = cell}, at(1))
+	is_cell := ir.emit(&f, ir.BOOL, ir.Layout_Test{cell = object, layout = cell}, at(1))
+	shortened := is_cell if fault == .Bool_Length else zero
+	ir.emit(&f, ir.VOID, ir.Set_Length{array = array, length = shortened}, at(1))
 	if fault == .Refs_Of_Two_Layouts {
 		stranger := ir.emit(&f, ir.ref(other), ir.Alloc{layout = other}, at(1))
 		same := ir.Compare {

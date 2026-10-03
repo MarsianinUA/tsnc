@@ -65,8 +65,8 @@ Method :: struct {
 // Fold is a name that takes any number of numbers and folds them two at a time, left to right.
 // empty is its answer for a call with no arguments at all.
 Fold :: struct {
-	export: abi.Runtime_Proc,
-	empty:  f64,
+	op:    ir.Intrinsic_Op,
+	empty: f64,
 }
 
 // Builtin is a name lower builds out of other instructions rather than calling anything for.
@@ -82,6 +82,7 @@ Builtin :: enum u8 {
 	String_Includes,
 	String_Split,
 	Array_Push,
+	Array_Pop,
 	Array_Join,
 	Array_Sort,
 	Array_Map,
@@ -158,8 +159,8 @@ LIB_STRATEGIES := []Lib_Entry {
 	{.Value, "Math", "log10", Intrinsic{.Log10}},
 	{.Value, "Math", "log1p", Intrinsic{.Log1p}},
 	{.Value, "Math", "log2", Intrinsic{.Log2}},
-	{.Value, "Math", "max", Fold{.Math_Max, NEG_INFINITY}},
-	{.Value, "Math", "min", Fold{.Math_Min, INFINITY}},
+	{.Value, "Math", "max", Fold{.Max, NEG_INFINITY}},
+	{.Value, "Math", "min", Fold{.Min, INFINITY}},
 	{.Value, "Math", "pow", Operator{.Power}},
 	{.Value, "Math", "round", Runtime{.Math_Round}},
 	{.Value, "Math", "sign", Builtin.Math_Sign},
@@ -187,7 +188,7 @@ LIB_STRATEGIES := []Lib_Entry {
 	{.Instance, "String", "endsWith", Method{.String_Ends_With, {0, abi.MISSING_END}}},
 	{.Instance, "Array", "length", Builtin.Length},
 	{.Instance, "Array", "push", Builtin.Array_Push},
-	{.Instance, "Array", "pop", Method{.Array_Pop, {}}},
+	{.Instance, "Array", "pop", Builtin.Array_Pop},
 	{.Instance, "Array", "indexOf", Method{.Array_Index_Of, {0, 0}}},
 	{.Instance, "Array", "includes", Method{.Array_Includes, {0, 0}}},
 	{.Instance, "Array", "slice", Method{.Array_Slice, {0, abi.MISSING_END}}},

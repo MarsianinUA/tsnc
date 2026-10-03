@@ -251,7 +251,7 @@ list_uses :: proc(n: ^Narrowing) -> []Use {
 				use.want = n.compared[consumer]
 			case ir.Phi:
 				use.want = n.types[consumer]
-			case ir.Bounds_Check, ir.Element_Load, ir.Unit_Load, ir.Ascii_Cell:
+			case ir.Bounds_Check, ir.Element_Load, ir.Unit_Load, ir.Ascii_Cell, ir.Set_Length:
 				use.want = n.types[value]
 			case ir.Element_Store:
 				if field == &v.index {

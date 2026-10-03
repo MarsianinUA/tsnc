@@ -13,7 +13,7 @@ import "str"
 import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 40)
+#assert(len(abi.Runtime_Proc) == 37)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -69,18 +69,6 @@ process_argv :: proc "c" (argv: ^abi.Array_Cell) {
 math_round :: proc "c" (x: f64) -> f64 {
 	context = export_context()
 	return num.round(x)
-}
-
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Max].symbol)
-math_max :: proc "c" (a, b: f64) -> f64 {
-	context = export_context()
-	return num.max(a, b)
-}
-
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Min].symbol)
-math_min :: proc "c" (a, b: f64) -> f64 {
-	context = export_context()
-	return num.min(a, b)
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Concat].symbol)
@@ -235,17 +223,10 @@ value_to_primitive_string :: proc "c" (tag: abi.Tag, payload: u64) -> ^abi.Strin
 	return text
 }
 
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Push].symbol)
-array_push :: proc "c" (array: ^abi.Array_Cell, tag: abi.Tag, payload: u64) -> f64 {
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Reserve].symbol)
+array_reserve :: proc "c" (array: ^abi.Array_Cell) {
 	context = export_context()
-	return f64(arr.push(&heap, array, tagged(tag, payload)))
-}
-
-// A tagged result goes into the slot the caller passes first (abi.C_Type.Tagged).
-@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Pop].symbol)
-array_pop :: proc "c" (result: ^abi.Tagged, array: ^abi.Array_Cell) {
-	context = export_context()
-	result^ = arr.pop(&heap, array)
+	arr.reserve(&heap, array)
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Array_Index_Of].symbol)

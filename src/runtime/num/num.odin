@@ -35,37 +35,6 @@ round :: proc "contextless" (x: f64) -> f64 {
 	return -0.0 if result == 0 && math.sign_bit(x) else result
 }
 
-// max is Math.max of two values; the compiler folds a longer call into a chain of them. NaN wins
-// over everything, and a positive zero wins over a negative one, neither of which C's fmax does.
-max :: proc "contextless" (a, b: f64) -> f64 {
-	if a != a {
-		return a
-	}
-	if b != b {
-		return b
-	}
-	if a == b {
-		// The two zeros compare equal, so the sign bit is what picks between them.
-		return b if math.sign_bit(a) else a
-	}
-	return a if a > b else b
-}
-
-// min is Math.min of two values. It mirrors max: NaN wins, and a negative zero is below a positive
-// one.
-min :: proc "contextless" (a, b: f64) -> f64 {
-	if a != a {
-		return a
-	}
-	if b != b {
-		return b
-	}
-	if a == b {
-		return a if math.sign_bit(a) else b
-	}
-	return a if a < b else b
-}
-
 // exit_code turns the argument of process.exit into the code the process ends with, as Node 24
 // does. A code that is not an integer, NaN and the infinities among them, is a RangeError there and
 // `ok = false` here. An integer is reduced by ToInt32, so 4294967299 exits with 3; what the OS then

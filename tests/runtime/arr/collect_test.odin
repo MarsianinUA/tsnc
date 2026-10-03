@@ -166,9 +166,7 @@ allocate_then_descend :: proc "c" (env: ^abi.Environment_Cell, a, b: f64) -> f64
 pop_all_then_compare :: proc "c" (env: ^abi.Environment_Cell, a, b: ^abi.Cell_Header) -> f64 {
 	context = runtime.default_context()
 	stub := (^Stub)(env)
-	for stub.array.length > 0 {
-		arr.pop(stub.heap, stub.array)
-	}
+	stub.array.length = 0
 	str.from_utf8(stub.heap, "garbage")
 	x, y := (^abi.String_Cell)(a), (^abi.String_Cell)(b)
 	return f64(str.compare_units(str.units(x), str.units(y)))
@@ -181,8 +179,7 @@ push_pop_and_sort_once :: proc "c" (env: ^abi.Environment_Cell, a, b: ^abi.Cell_
 	stub.calls += 1
 	if stub.calls == 1 {
 		arr.push(stub.heap, stub.array, text(str.from_utf8(stub.heap, "date")))
-		arr.pop(stub.heap, stub.array)
-		arr.pop(stub.heap, stub.array)
+		stub.array.length -= 2
 		again := abi.Closure_Cell {
 			code = rawptr(push_pop_and_sort_once),
 			env  = env,

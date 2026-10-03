@@ -74,11 +74,23 @@ function sixteen(): number {
   return sum;
 }
 
+// A pop shortens an array on the stack in place, down to undefined.
+function popped(): number {
+  const values = [1, 2, 3];
+  let total = values.length;
+  let last = values.pop();
+  while (last !== undefined) {
+    total = total * 10 + last;
+    last = values.pop();
+  }
+  return total * 10 + values.length;
+}
+
 console.log(local());
 console.log(walked());
 console.log(closures(3));
 console.log(passed());
-console.log(sixteen());
+console.log(sixteen(), popped());
 
 // A cell that reaches the next pass through a phi: the next pass makes its own.
 function chain(n: number): number[] {

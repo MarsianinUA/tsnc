@@ -180,11 +180,6 @@ declare_runtime :: proc(
 	exports := abi.RUNTIME_EXPORTS
 	for export, id in exports {
 		params := make([dynamic]llvm.LLVMTypeRef, context.temp_allocator)
-		result := export.result
-		if result == .Tagged {
-			append(&params, types.ptr)
-			result = .Void
-		}
 		for param in export.params {
 			#partial switch param {
 			case .Tagged:
@@ -196,7 +191,7 @@ declare_runtime :: proc(
 			}
 		}
 		signature := llvm.LLVMFunctionType(
-			c_type(types, result),
+			c_type(types, export.result),
 			raw_data(params),
 			u32(len(params)),
 			false,
@@ -223,7 +218,7 @@ c_type :: proc(types: Types, kind: abi.C_Type) -> llvm.LLVMTypeRef {
 	case .Boolean, .Table:
 		return types.int64
 	case .Tagged, .Rest:
-		// Two parameters, or a slot for a result, which declare_runtime spells itself.
+		// Two parameters, which declare_runtime spells itself.
 		unreachable()
 	}
 	unreachable()

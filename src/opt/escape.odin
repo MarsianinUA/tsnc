@@ -269,9 +269,9 @@ kept :: proc(
 	field: ^ir.Value_ID,
 ) -> bool {
 	#partial switch &v in instruction.variant {
-	case ir.Field_Load, ir.Field_Store, ir.Element_Load, ir.Element_Store, ir.Length:
+	case ir.Field_Load, ir.Field_Store, ir.Element_Load, ir.Element_Store:
 		return true
-	case ir.Bounds_Check, ir.Layout_Test, ir.Null_Test, ir.Same_Cell:
+	case ir.Length, ir.Set_Length, ir.Bounds_Check, ir.Layout_Test, ir.Null_Test, ir.Same_Cell:
 		return true
 	case ir.Compare, ir.Non_Null:
 		return true
@@ -279,6 +279,10 @@ kept :: proc(
 		return field == &v.cell || held_here(frame, v.cell, field^)
 	case ir.Element_Store_Ref:
 		return field == &v.array
+	case ir.Reserve:
+		// A buffer grown for a stack array would hang off a stack word, and the collector traces a
+		// buffer only through its array.
+		return false
 	case ir.Call_Closure:
 		if field == &v.callee {
 			return true
