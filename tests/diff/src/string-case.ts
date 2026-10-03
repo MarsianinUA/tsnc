@@ -46,6 +46,10 @@ show("\u{10428}");
 show("a\ud800b\udc00");
 show("\u{1F600}1");
 show("Hello, World! 123");
+// Text of ASCII alone takes a short path: only the letters change, not the units either side of A-Z
+// and a-z, and text with no letter comes back as it was.
+show("@AZ[`az{");
+show("123 -_~");
 
 // Final_Sigma: a capital sigma lowers to the final form when a cased letter comes before it and
 // none after it, with case-ignorable code points skipped on both sides. U+0345 and U+02B0 are both

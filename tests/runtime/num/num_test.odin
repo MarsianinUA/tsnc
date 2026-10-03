@@ -1,5 +1,6 @@
 package num_tests
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 
@@ -40,6 +41,33 @@ to_string_matches_node_over_random_doubles :: proc(t: ^testing.T) {
 		hash_text(&h, num.to_string(buf[:], transmute(f64)bits))
 	}
 	testing.expect_value(t, h, 0xe48b7a26)
+}
+
+// Where the integer path meets the shortest digits, and where the decimal form meets the
+// exponential one: the double nearest every power of ten and its two neighbors, of both signs;
+// three steps either side of 2^53; the smallest and the largest double. Node gives:
+//
+//	node -e 'const b = new BigUint64Array(1), f = new Float64Array(b.buffer); let h = 0x811c9dc5; const add = x => { const t = String(x) + "\n"; for (let j = 0; j < t.length; j++) h = Math.imul(h ^ t.charCodeAt(j), 16777619) >>> 0 }; const near = (x, n) => { f[0] = x; const m = b[0]; for (let d = -n; d <= n; d++) { b[0] = m + BigInt(d); const v = f[0]; add(v); add(-v) } }; for (let e = -323; e <= 308; e++) near(Number("1e" + e), 1); near(2 ** 53, 3); b[0] = 1n; add(f[0]); b[0] = 0x7fefffffffffffffn; add(f[0]); console.log(h.toString(16))'
+@(test)
+to_string_matches_node_at_the_borders :: proc(t: ^testing.T) {
+	buf: [num.STRING_MAX]byte
+	h := u32(0x811c9dc5)
+	near :: proc(h: ^u32, buf: []byte, x: f64, steps: int) {
+		bits := transmute(u64)x
+		for step in -steps ..= steps {
+			value := transmute(f64)(bits + u64(step))
+			hash_text(h, num.to_string(buf, value))
+			hash_text(h, num.to_string(buf, -value))
+		}
+	}
+	literal: [8]byte
+	for e in -323 ..= 308 {
+		near(&h, buf[:], num.parse_float(fmt.bprintf(literal[:], "1e%d", e)), 1)
+	}
+	near(&h, buf[:], 1 << 53, 3)
+	hash_text(&h, num.to_string(buf[:], transmute(f64)u64(1)))
+	hash_text(&h, num.to_string(buf[:], transmute(f64)u64(0x7fef_ffff_ffff_ffff)))
+	testing.expect_value(t, h, 0x8555b62d)
 }
 
 // STRING_MAX is a promise to every caller, and console makes its buffer that size. Rather than

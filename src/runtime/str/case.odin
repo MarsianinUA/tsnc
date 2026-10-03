@@ -51,6 +51,9 @@ FINAL_SIGMA :: 0x03c2
 // map_case counts before it writes, so it allocates once, and not at all when nothing changes.
 @(private)
 map_case :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, to: Case) -> ^abi.String_Cell {
+	if cell, ascii := map_ascii_case(heap, text, to); ascii {
+		return cell
+	}
 	length, changed := write_case(nil, unit_slice(text), to)
 	if !changed {
 		return text
@@ -58,6 +61,44 @@ map_case :: proc(heap: ^gc.Heap, text: ^abi.String_Cell, to: Case) -> ^abi.Strin
 	cell, dst := new_cell(heap, length)
 	write_case(dst, unit_slice(text), to)
 	return cell
+}
+
+// map_ascii_case answers a text with no unit above U+007F, where a letter maps to one letter and
+// neither Final_Sigma nor a special row can occur; `ascii` is false for any other text.
+@(private)
+map_ascii_case :: proc(
+	heap: ^gc.Heap,
+	text: ^abi.String_Cell,
+	to: Case,
+) -> (
+	cell: ^abi.String_Cell,
+	ascii: bool,
+) {
+	first, last := u16('a'), u16('z')
+	if to == .Lower {
+		first, last = 'A', 'Z'
+	}
+	changes := -1
+	for unit, i in unit_slice(text) {
+		if unit >= 0x80 {
+			return nil, false
+		}
+		if changes < 0 && first <= unit && unit <= last {
+			changes = i
+		}
+	}
+	if changes < 0 {
+		return text, true
+	}
+	source := unit_slice(text)
+	dst: []u16
+	cell, dst = new_cell(heap, len(source))
+	copy(dst, source[:changes])
+	for unit, i in source[changes:] {
+		// The two cases of an ASCII letter differ in bit 0x20 alone.
+		dst[changes + i] = unit ~ 0x20 if first <= unit && unit <= last else unit
+	}
+	return cell, true
 }
 
 // write_case only counts when `dst` is nil.

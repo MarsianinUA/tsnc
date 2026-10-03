@@ -1,12 +1,12 @@
 /*
 Numbers to text: Number::toString (requirements 3.1) and Number.prototype.toFixed.
 
-core:strconv/decimal gives the exact decimal expansion of a double, and the rest is ours, which is
-the rule of requirements 4.5. strconv's own formatter writes a leading sign on every number, pads an
-exponent to two digits where ECMAScript writes 1e-7, and switches to the exponential form on
-thresholds that are not 1e21 and 1e-7. Its round_shortest, which picks the shortest digits that read
-back as the same double, is an old copy of Go's and answers 426147580146789560 for
-426147580146789570, so this file carries the current one.
+The shortest digits come from short_float (shortest.odin), and toFixed rounds the exact decimal
+expansion core:strconv/decimal gives; the layout is ours, which is the rule of requirements 4.5.
+strconv's own formatter writes a leading sign on every number, pads an exponent to two digits where
+ECMAScript writes 1e-7, and switches to the exponential form on thresholds that are not 1e21 and
+1e-7, and its round_shortest is an old copy of Go's that answers 426147580146789560 for
+426147580146789570.
 
 Both procedures write into the caller's buffer and allocate nothing.
 */
@@ -56,15 +56,28 @@ to_string :: proc(buf: []byte, value: f64) -> string {
 		return string(buf[:at + copy(buf[at:], "Infinity")])
 	}
 
-	d: decimal.Decimal
-	mantissa, exponent := expand(&d, magnitude)
-	round_shortest(&d, mantissa, exponent)
+	// Up to 2^53 every integer is a double and its neighbors lie at most one away, so its own
+	// digits are the shortest.
+	shortest, scale := u64(0), 0
+	if magnitude <= 1 << 53 && f64(u64(magnitude)) == magnitude {
+		shortest = u64(magnitude)
+	} else {
+		shortest, scale = short_float(magnitude)
+	}
+	digit_buf: [20]byte
+	count := num_digits(shortest)
+	for i := count - 1; i >= 0; i -= 1 {
+		digit_buf[i] = byte('0' + shortest % 10)
+		shortest /= 10
+	}
 
 	// The specification calls these s, k and n. The point is where the decimal point sits among the
 	// digits, so value is 0.<digits> times ten to the point.
-	digits := d.digits[:d.count]
-	count := d.count
-	point := d.decimal_point
+	point := count + scale
+	for digit_buf[count - 1] == '0' {
+		count -= 1
+	}
+	digits := digit_buf[:count]
 
 	switch {
 	case count <= point && point <= 21:
@@ -144,8 +157,7 @@ to_fixed :: proc(buf: []byte, value: f64, digits: f64) -> (text: string, ok: boo
 		magnitude = -magnitude
 	}
 
-	// No shortening here: toFixed rounds the exact value, which is what expand leaves behind. Its
-	// two results are the handoff to round_shortest and mean nothing on this path.
+	// No shortening here: toFixed rounds the exact value, which is what expand leaves behind.
 	d: decimal.Decimal
 	expand(&d, magnitude)
 
@@ -186,14 +198,13 @@ to_fixed :: proc(buf: []byte, value: f64, digits: f64) -> (text: string, ok: boo
 	return string(buf[:at]), true
 }
 
-// expand fills d with the exact decimal value of a finite magnitude and answers the mantissa and
-// exponent that round_shortest needs to shorten it. It is the opening of strconv.generic_ftoa
-// (core/strconv/generic_float.odin), the part of it that produces digits.
+// expand fills d with the exact decimal value of a finite magnitude. It is the opening of
+// strconv.generic_ftoa (core/strconv/generic_float.odin), the part of it that produces digits.
 @(private)
-expand :: proc(d: ^decimal.Decimal, value: f64) -> (mantissa: u64, exponent: int) {
+expand :: proc(d: ^decimal.Decimal, value: f64) {
 	bits := transmute(u64)value
-	exponent = int(bits >> 52) & 0x7ff
-	mantissa = bits & 0x000f_ffff_ffff_ffff
+	exponent := int(bits >> 52) & 0x7ff
+	mantissa := bits & 0x000f_ffff_ffff_ffff
 	if exponent == 0 {
 		exponent += 1 // A denormal carries no implicit bit and sits at the smallest exponent.
 	} else {
@@ -202,84 +213,6 @@ expand :: proc(d: ^decimal.Decimal, value: f64) -> (mantissa: u64, exponent: int
 	exponent -= 1023
 	decimal.assign(d, mantissa)
 	decimal.shift(d, exponent - 52)
-	return
-}
-
-// round_shortest cuts the exact expansion in d down to the fewest digits that lie strictly between
-// the halfway points to the neighboring doubles, or on one of them when the mantissa is even,
-// since a tie reads back to the even one. It is roundShortest of go1.23.0 (src/strconv/ftoa.go).
-// The copy in core:strconv predates two fixes: it compares digit i of lower, d and upper without
-// aligning their decimal points, and it misses a round up that carries through 9s in d over 0s in
-// upper, as in ...599 against ...600.
-//
-// Copyright 2009 The Go Authors. All rights reserved. Use of this source code is governed by a
-// BSD-style license that can be found at https://go.dev/LICENSE.
-@(private)
-round_shortest :: proc(d: ^decimal.Decimal, mantissa: u64, exponent: int) {
-	MANTISSA_BITS :: 52
-	MIN_EXPONENT :: -1022
-
-	// A shorter number is at least 10^(point - count) away and the bounds at most
-	// 2^(exponent - 52), so d is already shortest when the first is larger, log2(10) being above
-	// 3.32. A denormal has no such bound.
-	if exponent > MIN_EXPONENT &&
-	   332 * (d.decimal_point - d.count) >= 100 * (exponent - MANTISSA_BITS) {
-		return
-	}
-
-	upper: decimal.Decimal
-	decimal.assign(&upper, 2 * mantissa + 1)
-	decimal.shift(&upper, exponent - MANTISSA_BITS - 1)
-
-	// The double below is half as far when the mantissa is a power of two, unless the exponent is
-	// the smallest one and the double below is a denormal.
-	mantissa_below, exponent_below := mantissa - 1, exponent
-	if mantissa <= 1 << MANTISSA_BITS && exponent != MIN_EXPONENT {
-		mantissa_below, exponent_below = 2 * mantissa - 1, exponent - 1
-	}
-	lower: decimal.Decimal
-	decimal.assign(&lower, 2 * mantissa_below + 1)
-	decimal.shift(&lower, exponent_below - MANTISSA_BITS - 1)
-
-	inclusive := mantissa % 2 == 0
-
-	// upper_delta is 0 while d and upper agree, 1 once they differed by one in a digit and since
-	// then d had only 9s and upper only 0s, and 2 once rounding d up surely stays below upper.
-	upper_delta := 0
-	// upper has the most digits before its point, so its index leads and the other two follow it.
-	for u_at := 0;; u_at += 1 {
-		m_at := u_at - upper.decimal_point + d.decimal_point
-		if m_at >= d.count {
-			break
-		}
-		l_at := u_at - upper.decimal_point + lower.decimal_point
-		l := lower.digits[l_at] if 0 <= l_at && l_at < lower.count else '0'
-		m := d.digits[m_at] if m_at >= 0 else '0'
-		u := upper.digits[u_at] if u_at < upper.count else '0'
-
-		ok_down := l != m || inclusive && l_at + 1 == lower.count
-		switch {
-		case upper_delta == 0 && m + 1 < u:
-			upper_delta = 2
-		case upper_delta == 0 && m != u:
-			upper_delta = 1
-		case upper_delta == 1 && (m != '9' || u != '0'):
-			upper_delta = 2
-		}
-		ok_up := upper_delta > 0 && (inclusive || upper_delta > 1 || u_at + 1 < upper.count)
-
-		switch {
-		case ok_down && ok_up:
-			decimal.round(d, m_at + 1)
-			return
-		case ok_down:
-			decimal.round_down(d, m_at + 1)
-			return
-		case ok_up:
-			decimal.round_up(d, m_at + 1)
-			return
-		}
-	}
 }
 
 @(private)

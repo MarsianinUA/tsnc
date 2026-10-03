@@ -12,7 +12,7 @@ moves them in and out of cells.
 // from_number is String(value) and `${value}`: Number::toString, so -0 is "0".
 from_number :: proc(heap: ^gc.Heap, value: f64) -> ^abi.String_Cell {
 	buf: [num.STRING_MAX]byte
-	return from_utf8(heap, num.to_string(buf[:], value))
+	return from_ascii(heap, num.to_string(buf[:], value))
 }
 
 // to_fixed answers ok = false when `digits` falls outside [0, 100], where toFixed throws a
@@ -20,7 +20,20 @@ from_number :: proc(heap: ^gc.Heap, value: f64) -> ^abi.String_Cell {
 to_fixed :: proc(heap: ^gc.Heap, value, digits: f64) -> (text: ^abi.String_Cell, ok: bool) {
 	buf: [num.FIXED_MAX]byte
 	fixed := num.to_fixed(buf[:], value, digits) or_return
-	return from_utf8(heap, fixed), true
+	return from_ascii(heap, fixed), true
+}
+
+// from_ascii takes the text package num writes, never empty.
+@(private)
+from_ascii :: proc(heap: ^gc.Heap, text: string) -> ^abi.String_Cell {
+	if len(text) == 1 && heap.ascii != nil {
+		return &heap.ascii[text[0]].cell
+	}
+	cell, dst := new_cell(heap, len(text))
+	for i in 0 ..< len(text) {
+		dst[i] = u16(text[i])
+	}
+	return cell
 }
 
 // parse_float is parseFloat of a string. After the leading whitespace, only the units that can
