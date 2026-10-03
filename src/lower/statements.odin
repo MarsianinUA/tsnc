@@ -196,8 +196,8 @@ leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	ir.emit(&s.fb, ir.VOID, ir.Jump{target = frame.join}, span)
 }
 
-// leave_function returns what the function's own type gives as the result of its class, boxed into
-// a wider class. Poison ends the block unreachable; it was reported.
+// leave_function returns what the function's own type gives as the result of its signature, boxed
+// where that is wider. Poison ends the block unreachable; it was reported.
 @(private)
 leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if s.result == ir.VOID {

@@ -436,7 +436,7 @@ make_closure :: proc(s: ^Func_State, node: ast.Node_ID, span: source.Span) -> ir
 	if !declared {
 		return ir.NO_VALUE
 	}
-	describe_closure(s.low, s.file, node, func)
+	func = closure_func(s.low, s.file, node, func)
 	layout := s.low.builder.funcs[func].env
 	if layout == ir.NO_LAYOUT {
 		return ir.emit(&s.fb, ir.CLOSURE, ir.Make_Closure{func = func, env = ir.NO_VALUE}, span)
@@ -452,6 +452,30 @@ make_closure :: proc(s: ^Func_State, node: ast.Node_ID, span: source.Span) -> ir
 		store_slot(s, env, i32(i), local_value(s, symbol), span)
 	}
 	return ir.emit(&s.fb, ir.CLOSURE, ir.Make_Closure{func = func, env = env}, span)
+}
+
+// closure_func is the function a closure of node runs: func itself, or, where func keeps its own
+// signature and its class has another (declare_functions), the adapter that gives it the class's
+// (class_adapter).
+@(private)
+closure_func :: proc(
+	low: ^Lowering,
+	file: source.File_ID,
+	node: ast.Node_ID,
+	func: ir.Func_ID,
+) -> ir.Func_ID {
+	code := func
+	type := low.facts[file].typed.node_types[node]
+	class, _ := signature_of(low, low.facts[file].result.types, type)
+	own := Signature {
+		params = low.builder.funcs[func].params,
+		result = low.builder.funcs[func].result,
+	}
+	if !signature_equal(own, class) {
+		code = class_adapter(low, file, func, class)
+	}
+	describe_closure(low, file, node, code)
+	return code
 }
 
 // describe_closure records what the console prints of the function as a value: the name Node gives

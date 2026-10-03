@@ -17,11 +17,12 @@ direct call; a name of the lib, which the strategy table of lib.odin turns into 
 operator, a runtime call or a shape built here; or anything else that holds a function value, which
 is a call through the closure (closures.odin).
 
-Both kinds of call to the program pass the arguments of the callee's signature class (types.odin):
-each boxed where the class is wider than the call's own type, one the call leaves out as the zero of
-its class type, undefined for a tagged one. The answer comes back in the class type and is unboxed
-into the type the call has (coerce). A call typed void answers what came back as it is, since Node
-does: `console.log(f())` prints what f returned even where its type says it returns nothing.
+A direct call passes the arguments of the signature its callee declares, and a call through a
+function value those of the value's signature class (types.odin): each boxed where the callee takes
+it wider than the call's own type, one the call leaves out as the zero of that type, undefined for a
+tagged one. The answer comes back in the callee's type and is unboxed into the type the call has
+(coerce). A call typed void answers what came back as it is, since Node does: `console.log(f())`
+prints what f returned even where its type says it returns nothing.
 
 A method is called on its receiver, which is lowered once, before the arguments, as JavaScript
 evaluates it. `m.f()` through an `import * as m` is no method call: check recorded the export on the
@@ -153,7 +154,7 @@ lower_arguments :: proc(s: ^Func_State, node: ast.Call) -> (args: []ir.Value_ID,
 	return
 }
 
-// emit_class_call calls with the arguments of the callee's class (class_arguments), the first
+// emit_class_call calls with the arguments of the callee's signature (class_arguments), the first
 // count of them given, and reads the answer as want.
 @(private)
 emit_class_call :: proc(
@@ -183,8 +184,8 @@ emit_class_call :: proc(
 	return coerce(s, value, want, span, .Value_Of_Other_Kind)
 }
 
-// class_arguments passes the first `count` of the given values, each boxed into its class type
-// where the class is wider, and fills every other position of the class with the zero of its type,
+// class_arguments passes the first `count` of the given values, each boxed into the callee's type
+// where that is wider, and fills every other position of the signature with the zero of its type,
 // which is undefined for a tagged one: a value a function does not take must not land where
 // another member of its class takes something else.
 @(private)
@@ -245,12 +246,12 @@ callback_of :: proc(s: ^Func_State, id: ast.Node_ID) -> (callback: Callback, ok:
 	return callback, true
 }
 
-// call_callback passes the callback what Node passes it, as far as its signature class reaches: a
-// member of the class that takes more than the callback's own type sees the index and the array,
-// as in Node (lib_argument). given holds the check type of each argument.
+// call_callback passes the callback what Node passes it, as far as the signature it is called
+// through reaches: a member of a class that takes more than the callback's own type sees the index
+// and the array, as in Node (lib_argument). given holds the check type of each argument.
 //
-// A callback typed void answers what its class gives back, as Node keeps what the function
-// returned, and undefined where nothing comes back at all.
+// A callback typed void answers what comes back, as Node keeps what the function returned, and
+// undefined where nothing comes back at all.
 @(private)
 call_callback :: proc(
 	s: ^Func_State,
@@ -377,6 +378,52 @@ sort_adapter :: proc(
 	}
 	ir.end_func(&a.fb)
 	return func
+}
+
+// class_adapter answers a function of the class signature that unboxes each argument into the type
+// func declares, as a body of the class would (begin_function), calls func, and gives its answer as
+// the class's result; the positions of the class past func's own are left alone. There is one per
+// function, so its value is one closure and `===` holds. Built on the spot, as sort_adapter is.
+@(private)
+class_adapter :: proc(
+	low: ^Lowering,
+	file: source.File_ID,
+	func: ir.Func_ID,
+	class: Signature,
+) -> ir.Func_ID {
+	if adapter, built := low.adapters[func]; built {
+		return adapter
+	}
+	body := low.builder.funcs[func]
+	name := fmt.aprintf("%s.adapter", body.name, allocator = low.allocator)
+	adapter := ir.declare_func(&low.builder, name, class.params, class.result, body.span)
+	low.adapters[func] = adapter
+
+	a := Func_State {
+		low      = low,
+		fb       = ir.begin_func(&low.builder, adapter),
+		file     = file,
+		result   = class.result,
+		declared = class.result,
+	}
+	args := make([]ir.Value_ID, len(body.params), context.temp_allocator)
+	for param, i in body.params {
+		args[i] = coerce(&a, ir.Value_ID(i), param, body.span, .Value_Of_Other_Kind)
+	}
+	call := ir.Call {
+		func = func,
+		env  = ir.NO_VALUE,
+		args = args,
+	}
+	answer := ir.emit(&a.fb, body.result, call, body.span)
+	if class.result == ir.VOID {
+		answer = ir.NO_VALUE
+	} else {
+		answer = coerce(&a, answer, class.result, body.span)
+	}
+	ir.emit(&a.fb, ir.VOID, ir.Return{value = answer}, body.span)
+	ir.end_func(&a.fb)
+	return adapter
 }
 
 // lower_strategy takes the receiver of a method, and NO_VALUE for a name of the lib.

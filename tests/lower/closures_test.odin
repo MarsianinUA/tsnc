@@ -128,6 +128,44 @@ a_module_function_as_a_value_is_its_static_closure :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_declared_function_keeps_its_own_signature :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		function fib(n: number): number {
+			return n < 2 ? n : fib(n - 1) + fib(n - 2);
+		}
+		function each(items: number[], f: (x: number) => void): void {
+			for (let i = 0; i < items.length; i++) f(items[i]);
+		}
+		let seen = 0;
+		function note(x: number): number {
+			seen += x;
+			return seen;
+		}
+		each([1, 2, 3], note);
+		console.log(fib(40), seen);
+	`,
+	)
+	// note shares the key of its signature with fib, and its flow into a void type tags the result
+	// of that class.
+	fib := harness.func_named(t, result.output, "m1.fib")
+	testing.expectf(t, fib.result == ir.F64, "%s", result.text)
+	init := harness.func_named(t, result.output, "init$m1")
+	refs := instructions_of(init, ir.Func_Ref)
+	testing.expectf(t, len(refs) == 1, "%s", result.text)
+	for ref in refs {
+		adapter := result.output.funcs[ref.func]
+		testing.expectf(
+			t,
+			adapter.result == ir.TAGGED && calls_function(result.output, adapter, "m1.note"),
+			"note's value is not an adapter of its class:\n%s",
+			result.text,
+		)
+	}
+}
+
+@(test)
 a_let_of_a_for_header_gets_a_box_per_pass :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,

@@ -94,6 +94,9 @@ Lowering :: struct {
 	// The comparators that adapt a closure to what the array sort calls (arrays.odin), by the class
 	// signature and the slot, and by the call for one that checks the element.
 	sort_adapters: map[string]ir.Func_ID,
+	// The adapters that give a function that keeps its own signature the one of its class, by the
+	// function (closure_func).
+	adapters:      map[ir.Func_ID]ir.Func_ID,
 	diagnostics:   [dynamic]diag.Diagnostic,
 	allocator:     runtime.Allocator,
 }
@@ -128,6 +131,7 @@ lower :: proc(
 		signatures    = make_classes(Signature),
 		memos         = make_memos(results),
 		sort_adapters = make(map[string]ir.Func_ID, context.temp_allocator),
+		adapters      = make(map[ir.Func_ID]ir.Func_ID, context.temp_allocator),
 		diagnostics   = make([dynamic]diag.Diagnostic, allocator),
 		allocator     = allocator,
 	}
@@ -250,9 +254,9 @@ module_span :: proc(low: ^Lowering, file: source.File_ID) -> source.Span {
 
 // declare_functions declares every closure of the file (closures.odin), nested ones included,
 // before any body is built, which is what lets two of them call each other. Each takes the
-// signature of its class and the environment its captures need. A closure whose own signature
-// this build cannot represent is reported and left out; a call to it then finds nothing and stays
-// quiet.
+// environment its captures need, and the signature of its class or, for a declaration with no
+// environment, its own (types.odin). A closure whose own signature this build cannot represent is
+// reported and left out; a call to it then finds nothing and stays quiet.
 @(private)
 declare_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
@@ -290,6 +294,13 @@ declare_functions :: proc(low: ^Lowering, file: source.File_ID) {
 		}
 
 		signature, _ := signature_of(low, types, typed.node_types[id])
+		_, is_decl := tree.nodes[id].variant.(ast.Function_Decl)
+		if is_decl && env == ir.NO_LAYOUT {
+			signature, _ = own_signature(low, types, function)
+			if signature.result == ir.VOID && hands_on_value(low, file, id) {
+				signature.result = ir.TAGGED
+			}
+		}
 		name := function_name(low, file, bound, id)
 		span := tree.nodes[id].span
 		low.funcs[{file, id}] = ir.declare_func(

@@ -89,3 +89,34 @@ function sum(fs: ((x: number) => number)[]): number {
 console.log(sum(both));
 const chosen = both.length > 1 ? tripled : doubled;
 console.log(chosen(5), chosen == tripled, doubled != tripled);
+
+// A declaration keeps the signature it declares, so a call by its name passes and gets back a
+// number. Its value runs an adapter where its class has another signature: here a tagged result,
+// and for byValue the tagged first argument of pick's class above.
+let seen = 0;
+function note(x: number): number {
+  seen += x;
+  return seen;
+}
+function each(items: number[], f: (x: number) => void): void {
+  for (const item of items) {
+    f(item);
+  }
+}
+each([1, 2, 3], note);
+const noted: (x: number) => void = note;
+console.log(note(4), noted(5), seen, noted === note, noted);
+function byValue(a: number, b: number): number {
+  return a - b;
+}
+console.log([3, 1, 2].sort(byValue), byValue(2, 1));
+// A nested declaration that captures nothing is called directly too, and its closure runs the
+// adapter.
+function outer(n: number): void {
+  function inner(k: number): number {
+    return k * 2;
+  }
+  const g: (k: number) => void = inner;
+  console.log(inner(n), g(n), g === inner, g);
+}
+outer(3);
