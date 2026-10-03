@@ -225,20 +225,6 @@ program_tables_follow_the_builtin_ones :: proc(t: ^testing.T) {
 	testing.expect_value(t, gc.owner(&heap, cell), cell)
 }
 
-// The runtime makes a `string[]` for split, and only the program's tables know its number.
-@(test)
-an_array_table_is_found_by_its_element_kind :: proc(t: ^testing.T) {
-	heap: gc.Heap
-	init_heap(t, &heap)
-	defer gc.heap_destroy(&heap)
-
-	refs, found := gc.array_table(&heap, .Ref)
-	testing.expect(t, found, "the array of references in TABLES")
-	testing.expect_value(t, refs, ARRAY)
-	_, numbers_found := gc.array_table(&heap, .Number)
-	testing.expect(t, !numbers_found, "an array the program has no table for")
-}
-
 @(test)
 a_malformed_table_is_refused :: proc(t: ^testing.T) {
 	Case :: struct {

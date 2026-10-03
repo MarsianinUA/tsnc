@@ -218,24 +218,6 @@ table_of :: proc(heap: ^Heap, cell: ^abi.Cell_Header) -> abi.Type_Table {
 	return table
 }
 
-// array_table finds the program's table for an array of `element` slots. lower makes one table per
-// element kind, and only for the kinds the program uses, which includes the result of every call
-// that answers an array: a `string[]` exists wherever `split` is called.
-array_table :: proc(
-	heap: ^Heap,
-	element: abi.Slot_Kind,
-) -> (
-	table: abi.Type_Table_ID,
-	found: bool,
-) {
-	for program_table, i in heap.tables {
-		if program_table.kind == .Array && program_table.element == element {
-			return abi.Type_Table_ID(len(abi.Builtin_Table) + i), true
-		}
-	}
-	return 0, false
-}
-
 // alloc answers a cell of `size` bytes, header included, zero filled but for the header, which
 // names `table`. A string passes its units on top of the table's size. Running out of memory ends
 // the process: no caller could do anything else.

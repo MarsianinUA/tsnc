@@ -344,12 +344,15 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 		_, target_is_object := c.result.types[widening.target].(check.Object)
 		_, source_is_function := c.result.types[widening.source].(check.Function)
 		_, target_is_function := c.result.types[widening.target].(check.Function)
+		_, source_is_array := c.result.types[widening.source].(check.Array)
+		_, target_is_array := c.result.types[widening.target].(check.Array)
 		two_objects := source_is_object && target_is_object
 		two_functions := source_is_function && target_is_function
+		two_arrays := source_is_array && target_is_array
 		testing.expectf(
 			t,
-			(two_objects || two_functions) && widening.source != widening.target,
-			"a widening of %s into %s, which are not two object or two function types",
+			(two_objects || two_functions || two_arrays) && widening.source != widening.target,
+			"a widening of %s into %s, which are not two types of one kind",
 			type_text(c, widening.source),
 			type_text(c, widening.target),
 			loc = loc,

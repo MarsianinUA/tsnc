@@ -102,8 +102,9 @@ Any construct outside the v1 list produces a compile error with file, line, colu
 - A function passes where a function type that holds an argument or the result differently is expected, as in TypeScript: `(x: number | string) => void` goes where `(x: number) => void` is expected, and `() => number` where `() => void` is. The value is the same function, not a wrapper, so `===` holds. The compiler finds every such flow in the whole program and gives each class of function types that flow into each other one signature; an argument or a result whose type differs across the class travels tagged, and the function reads it back through its own declared type with a check.
 
 ### 3.6 Arrays
-- `T[]` is a growable contiguous buffer with a length and a capacity, with unboxed elements (`number[]` is an array of f64).
+- `T[]` is a growable contiguous buffer with a length and a capacity, with unboxed elements (`number[]` is an array of f64), unless it flows into an array type of a wider element (below).
 - `push` is amortized O(1). Arrays have no holes.
+- An array passes where an array of a wider element type is expected, as in TypeScript: `Triangle[]` goes where `(Sphere | Triangle)[]` is expected. The value is the same array, not a copy, so `===` holds and a `push` through either type shows through the other. As for objects (3.3), the compiler gives each class of array types that flow into each other one element slot: a tagged slot where their element types differ, or a pointer that may be 0 where they differ only in `null` or `undefined` (3.4). A read through the narrower type checks what the slot holds (3.8).
 - `map`, `filter`, `forEach` and `reduce` follow Node when the callback changes the array: the length is read once, and `forEach`, `filter` and `reduce` stop where the array now ends. `map` over an array its callback shortens is a runtime error (3.8), because Node would leave a hole. `reduce` of an empty array without an initial value is a runtime error with Node's message, `Reduce of empty array with no initial value`.
 
 ### 3.7 Equality
@@ -117,7 +118,7 @@ Where `tsc` trusts the programmer without a check, `tsnc` adds a runtime check i
 - writing `arr[i]`: when `i === arr.length`, append to the end, beyond that an error;
 - `x!`: a check, error on `null` / `undefined`;
 - reading a `let` or `const` before its declaration has run: a compile error where the read runs where it stands, and a runtime error, as Node's `ReferenceError`, where it stands in a function that may run before the declaration or after it, or in a later `case` of the `switch` that declares it, which a jump to that case skips;
-- reading a field through its declared type when a write through a wider type of the same object (3.3) left a value that type does not allow: runtime error;
+- reading a field or an element through its declared type when a write through a wider type of the same object or array (3.3, 3.6) left a value that type does not allow: runtime error;
 - a read the checker narrowed, and an `any` or a union given to a static type: the tag is checked, or that a pointer that may be 0 is not, and for an object or an array its layout, so a value that came through `any`, or changed after the test that narrowed it, is a runtime error. The check is shallow: a layout is a shape, so two object types of one layout, such as `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal type checks the tag only;
 - `as`: widening and union narrowing with a runtime tag check are allowed; `as any`, `as unknown as T` are forbidden;
 - recursion deeper than the stack, which is 8 MiB on every OS: a runtime error with Node's words, `Maximum call stack size exceeded`, and no source location;
@@ -195,7 +196,7 @@ The GC heap never becomes `context.allocator`. Allocating a TS value always name
 - Contextual typing: arrow function parameters get their type from the expected signature (`arr.map(x => x * 2)`, `x: number`).
 - Instantiation of generic signatures of built-in types: `map<U>` infers `U` from the body of the passed function.
 - Union narrowing: `typeof`, also of `any` and `unknown`, `===` on a field with a literal type, `switch` on such a field, `null` / `undefined` checks, `!`.
-- Object compatibility by the exact-type rule (3.3), primitives and union by TS rules.
+- Object compatibility by the exact-type rule (3.3), arrays by their element type (3.6), primitives and union by TS rules.
 - Diagnostics: several errors per pass, format `file:line:col: error[T0123]: text`, a stable error code from a registry in the repository, each code with a hint on how to rewrite; with parallel checking the output order is deterministic.
 
 ## 6. Memory management

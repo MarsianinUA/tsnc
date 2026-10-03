@@ -115,25 +115,29 @@ includes :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, search: abi.Tagged, fro
 	return false
 }
 
-// split is String.prototype.split with a string separator. Its array has the program's table for a
-// `string[]`, which lower emitted as the type of the call that got here.
-split :: proc(heap: ^gc.Heap, text, separator: ^abi.String_Cell, limit: f64) -> ^abi.Array_Cell {
-	table, found := gc.array_table(heap, .Ref)
-	ensure(found, "split in a program with no table for a string[]")
-
+// split is String.prototype.split with a string separator. It fills `pieces`, an empty array lower
+// made, by the kind of its slots.
+split :: proc(
+	heap: ^gc.Heap,
+	pieces: ^abi.Array_Cell,
+	text, separator: ^abi.String_Cell,
+	limit: f64,
+) {
 	count := 0
 	counter := str.splitter(text, separator, limit)
 	for _ in str.split_next(&counter) {
 		count += 1
 	}
-	pieces := new_array(heap, table, count)
+	kind := element_kind(heap, pieces)
+	if count > 0 {
+		grow(heap, pieces, kind, count)
+	}
 	walk := str.splitter(text, separator, limit)
 	for piece in str.split_next(&walk) {
 		cell := str.from_units(heap, piece)
-		(^^abi.String_Cell)(slot(pieces, .Ref, pieces.length))^ = cell
+		store(slot(pieces, kind, pieces.length), kind, {tag = .String, payload = {ref = cell}})
 		pieces.length += 1
 	}
-	return pieces
 }
 
 @(private)

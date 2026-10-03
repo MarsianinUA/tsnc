@@ -87,10 +87,9 @@ an_empty_result_takes_no_buffer :: proc(t: ^testing.T) {
 	}
 
 	empty, comma := str.from_utf8(&heap, ""), str.from_utf8(&heap, ",")
-	pieces := [?]^abi.Array_Cell {
-		arr.split(&heap, empty, empty, abi.MISSING_LIMIT),
-		arr.split(&heap, str.from_utf8(&heap, "a,b"), comma, 0),
-	}
+	pieces := [?]^abi.Array_Cell{arr.new_array(&heap, REFS, 0), arr.new_array(&heap, REFS, 0)}
+	arr.split(&heap, pieces[0], empty, empty, abi.MISSING_LIMIT)
+	arr.split(&heap, pieces[1], str.from_utf8(&heap, "a,b"), comma, 0)
 	for p in pieces {
 		testing.expect_value(t, p.length, 0)
 		testing.expect_value(t, p.capacity, 0)

@@ -763,11 +763,7 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 		piece = string_piece(s, iterable, checked, .String_Code_Point_At, span)
 		step = ir.emit(&s.fb, ir.F64, ir.Length{value = piece}, span)
 	} else {
-		load := ir.Element_Load {
-			array = iterable,
-			index = checked,
-		}
-		piece = ir.emit(&s.fb, element, load, span)
+		piece = load_checked(s, iterable, checked, element, span)
 		step = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
 	}
 	next := ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = index, right = step}, span)

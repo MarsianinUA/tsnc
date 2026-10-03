@@ -144,9 +144,7 @@ Field :: struct {
 	readonly: bool,
 }
 
-// Array is `T[]`, which is the same type as `Array<T>`. Elements are unboxed (requirements 3.6), so
-// the element type is invariant: a `number[]` buffer is not a `(number | string)[]` buffer, and tsnc
-// rejects the assignment that tsc allows.
+// Array is `T[]`, which is the same type as `Array<T>`.
 Array :: struct {
 	element: Type_ID,
 }
@@ -909,10 +907,9 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 	source_array, source_is_array := types[source].(Array)
 	target_array, target_is_array := types[target].(Array)
 	if source_is_array && target_is_array {
-		// Invariant, because requirements 3.6 stores elements unboxed: a `number[]` buffer holds f64
-		// and a `(number | string)[]` buffer holds tagged values, so one is not the other. tsc allows
-		// the assignment; tsnc may be stricter where its model says so (requirements 5).
-		return compare_types(types, source_array.element, target_array.element) == 0
+		// The array that flows is the same array, so lower gives both types the slot of the wider
+		// element (requirements 3.6), as it gives two objects one layout.
+		return assignable(types, source_array.element, target_array.element, trail)
 	}
 
 	source_object, source_is_object := types[source].(Object)
@@ -929,9 +926,8 @@ assignable :: proc(types: []Type, source, target: Type_ID, trail: ^Trail) -> boo
 // away.
 //
 // A rest parameter arrives as one array and a positional one as a value, so a signature with one
-// and a signature without are passed differently and neither is the other: the same argument arrays
-// are invariant for (requirements 3.6). tsc allows some of these mixes; tsnc may be stricter where
-// its model says so (requirements 5).
+// and a signature without are passed differently and neither is the other. tsc allows some of these
+// mixes; tsnc may be stricter where its model says so (requirements 5).
 //
 // An argument the target may leave out arrives as `undefined`, so a source that insists on a value
 // in that position does not fit either.
@@ -1001,12 +997,12 @@ object_assignable :: proc(
 	return true
 }
 
-// list_widenings adds to `out` every pair of object types, and every pair of function types, that
-// an accepted flow of source into target passes through. A union source flows member by member, a
-// union target takes the members the source fits, and two objects walk their fields, which the
-// exact-type rule has matched one for one. Two functions walk their parameters the other way round,
-// since a value flows into a parameter from the caller, and their results, unless the target throws
-// its result away. Arrays are invariant and add nothing. A pair already in the list ends the walk,
+// list_widenings adds to `out` every pair of object types, of function types and of array types
+// that an accepted flow of source into target passes through. A union source flows member by member,
+// a union target takes the members the source fits, two objects walk their fields, which the
+// exact-type rule has matched one for one, and two arrays their elements. Two functions walk their
+// parameters the other way round, since a value flows into a parameter from the caller, and their
+// results, unless the target throws its result away. A pair already in the list ends the walk,
 // which is what stops it on an interface that names itself.
 //
 // `functions` false leaves out the pair of the two functions at the top of this flow, but not the
@@ -1040,15 +1036,8 @@ list_widenings :: proc(
 	source_function, source_is_function := types[source].(Function)
 	target_function, target_is_function := types[target].(Function)
 	if source_is_function && target_is_function {
-		if functions {
-			pair := Widening {
-				source = source,
-				target = target,
-			}
-			if slice.contains(out[:], pair) {
-				return
-			}
-			append(out, pair)
+		if functions && !add_widening(out, source, target) {
+			return
 		}
 		shared := min(len(source_function.params), len(target_function.params))
 		for i in 0 ..< shared {
@@ -1066,22 +1055,38 @@ list_widenings :: proc(
 		return
 	}
 
-	source_object, source_is_object := types[source].(Object)
-	target_object, target_is_object := types[target].(Object)
-	if !source_is_object || !target_is_object {
+	source_array, source_is_array := types[source].(Array)
+	target_array, target_is_array := types[target].(Array)
+	if source_is_array && target_is_array {
+		if !add_widening(out, source, target) {
+			return
+		}
+		list_widenings(types, source_array.element, target_array.element, out, trail)
 		return
 	}
+
+	source_object, source_is_object := types[source].(Object)
+	target_object, target_is_object := types[target].(Object)
+	if !source_is_object || !target_is_object || !add_widening(out, source, target) {
+		return
+	}
+	for field, i in source_object.fields {
+		list_widenings(types, field.type, target_object.fields[i].type, out, trail)
+	}
+}
+
+// add_widening answers false for a pair already in the list.
+@(private)
+add_widening :: proc(out: ^[dynamic]Widening, source, target: Type_ID) -> bool {
 	pair := Widening {
 		source = source,
 		target = target,
 	}
 	if slice.contains(out[:], pair) {
-		return
+		return false
 	}
 	append(out, pair)
-	for field, i in source_object.fields {
-		list_widenings(types, field.type, target_object.fields[i].type, out, trail)
-	}
+	return true
 }
 
 // type_text is how a type reads: `number`, `"circle"`, `(a: number) => string`, `number | string`,
