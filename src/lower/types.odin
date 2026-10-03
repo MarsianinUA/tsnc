@@ -50,7 +50,9 @@ differ on is Tagged, and so is the result, where a member that returns nothing a
 A class of void functions has a tagged result as well where one of them returns what a call
 answered, which Node passes on (widen_void_results, closures.odin). A function then takes the
 arguments of its class and unboxes each into its own type (coerce), and a call gives the class what
-it wants and unboxes the answer.
+it wants and unboxes the answer. A declaration with no environment, which a call may name directly,
+keeps its own signature instead, so a flow it never meets leaves it alone, and its value runs an
+adapter with the signature of its class (closure_func).
 */
 
 representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_Kind, ok: bool) {

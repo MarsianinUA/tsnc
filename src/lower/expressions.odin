@@ -406,8 +406,8 @@ lower_symbol :: proc(s: ^Func_State, ref: check.Symbol_Ref, span: source.Span) -
 		if !declared {
 			return ir.NO_VALUE // refused where it is declared
 		}
-		describe_closure(s.low, ref.file, entry.declaration, func)
-		return ir.emit(&s.fb, ir.CLOSURE, ir.Func_Ref{func = func}, span)
+		code := closure_func(s.low, ref.file, entry.declaration, func)
+		return ir.emit(&s.fb, ir.CLOSURE, ir.Func_Ref{func = code}, span)
 	}
 	if ref.file != s.file {
 		return ir.NO_VALUE

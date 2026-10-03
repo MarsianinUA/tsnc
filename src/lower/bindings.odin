@@ -198,7 +198,7 @@ flat_lists :: proc(counts: []int) -> [][]bind.Symbol_ID {
 
 // begin_function opens the body of a function: node is its declaration or arrow, ast.ROOT for a
 // module init. A closure first takes what its environment holds, then each parameter, which
-// arrives in the type of the signature class and is unboxed into its own.
+// arrives in the type of the function's signature (declare_functions) and is unboxed into its own.
 @(private)
 begin_function :: proc(
 	low: ^Lowering,
