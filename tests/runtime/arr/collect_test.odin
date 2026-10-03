@@ -66,8 +66,10 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 
 	digits := numbers(heap, 10, 9, 1, 100)
 	part := arr.slice(heap, digits, 1, 3)
-	pieces := arr.split(
+	pieces := arr.new_array(heap, REFS, 0)
+	arr.split(
 		heap,
+		pieces,
 		str.from_utf8(heap, "x,yy,zzz"),
 		str.from_utf8(heap, ","),
 		abi.MISSING_LIMIT,

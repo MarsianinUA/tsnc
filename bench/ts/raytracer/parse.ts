@@ -6,7 +6,7 @@
 import type { Kind, Material, Texture } from "./material.ts";
 import { checker, marble, solid, strata, wood } from "./material.ts";
 import { box, icosphere, terrain } from "./mesh.ts";
-import type { Plane, Solid, Sphere, Triangle } from "./shapes.ts";
+import type { Plane, Solid, Sphere } from "./shapes.ts";
 import { sphere } from "./shapes.ts";
 import type { Vec } from "./vec.ts";
 import { addScaled, normalize, vec } from "./vec.ts";
@@ -271,9 +271,9 @@ function addSphere(scene: Scene, line: Line, s: Sphere): void {
   }
 }
 
-function addAll(scene: Scene, triangles: Triangle[]): void {
-  for (const t of triangles) {
-    scene.solids.push(t);
+function addAll(scene: Scene, solids: Solid[]): void {
+  for (const s of solids) {
+    scene.solids.push(s);
   }
 }
 

@@ -343,3 +343,37 @@ lower_string_includes :: proc(
 		span,
 	)
 }
+
+// lower_split makes the array the runtime fills, of the layout of the call's type: a string[] holds
+// its strings tagged where it flows into a wider array type (types.odin).
+@(private)
+lower_split :: proc(
+	s: ^Func_State,
+	id: ast.Node_ID,
+	node: ast.Call,
+	receiver: ir.Value_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if len(node.args) == 0 {
+		return ir.NO_VALUE
+	}
+	separator := runtime_argument(s, node.args[0], .Ptr)
+	limit: ir.Value_ID
+	if len(node.args) > 1 {
+		limit = optional_argument(s, node.args[1], abi.MISSING_LIMIT, span)
+	} else {
+		limit = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = abi.MISSING_LIMIT}, span)
+	}
+	if separator == ir.NO_VALUE || limit == ir.NO_VALUE {
+		return ir.NO_VALUE
+	}
+	type := node_type(s, id)
+	empty := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
+	pieces := ir.emit(&s.fb, type, ir.New_Array{layout = type.layout, length = empty}, span)
+	split := ir.Call_Runtime {
+		export = .String_Split,
+		args   = {pieces, receiver, separator, limit},
+	}
+	ir.emit(&s.fb, ir.VOID, split, span)
+	return pieces
+}

@@ -319,26 +319,32 @@ called_as_it_stands :: proc(signature: Signature, element: ir.Type) -> bool {
 // sort_adapter answers a function of the runtime's comparator shape that calls the closure its
 // environment holds through the closure's class signature: the two elements in the first two
 // positions of the class (lib_argument), the other positions at their zero, and the answer unboxed
-// into a number. One adapter serves every comparator of one class and element kind. It is built on the
-// spot, in the middle of the function that needs it: declare_func appends a row and end_func
-// writes it back by index, so the function being built is not disturbed.
+// into a number. The runtime passes an element as the array holds it, which is read as the declared
+// element with a check where the array's class widened the slot. One adapter serves every
+// comparator of one class and slot; one with that check serves its own call only, which the check
+// names when it fails. It is built on the spot, in the middle of the function that needs it:
+// declare_func appends a row and end_func writes it back by index, so the function being built is
+// not disturbed.
 @(private)
 sort_adapter :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
 	call: ast.Node_ID,
 	signature: Signature,
-	element: ir.Type,
+	held, element: ir.Type,
 	span: source.Span,
 ) -> ir.Func_ID {
-	key := fmt.tprintf("%s/%d:%d", signature_key(signature), element.kind, element.nullish)
+	key := fmt.tprintf("%s/%d:%d", signature_key(signature), held.kind, held.nullish)
+	if held != element {
+		key = fmt.tprintf("%s/m%d.%d", key, file, call)
+	}
 	if func, built := low.sort_adapters[key]; built {
 		return func
 	}
 
 	env := ir.environment_layout(&low.builder, {.Ref})
 	name := fmt.aprintf("m%d.sort$%d", file, call, allocator = low.allocator)
-	params := [2]ir.Type{element, element}
+	params := [2]ir.Type{held, held}
 	func := ir.declare_func(&low.builder, name, params[:], ir.F64, span, env)
 	ir.describe_func(&low.builder, func, "", len(params), false)
 	low.sort_adapters[key] = func
@@ -359,7 +365,8 @@ sort_adapter :: proc(
 	count := min(len(signature.params), 2)
 	given: [2]ir.Value_ID
 	for i in 0 ..< count {
-		given[i] = lib_argument(&a, ir.Value_ID(i), signature.params[i], span)
+		value := coerce(&a, ir.Value_ID(i), element, span, .Element_Holds_Other_Kind)
+		given[i] = lib_argument(&a, value, signature.params[i], span)
 	}
 	answer := emit_class_call(&a, callee, given[:count], count, ir.F64, span)
 	if answer == ir.NO_VALUE {
@@ -425,6 +432,8 @@ lower_strategy :: proc(
 			return lower_string_of(s, node, span)
 		case .String_Includes:
 			return lower_string_includes(s, node, receiver, span)
+		case .String_Split:
+			return lower_split(s, id, node, receiver, span)
 		case .Array_Push:
 			return lower_push(s, node, receiver, span)
 		case .Array_Join:
@@ -601,7 +610,8 @@ lower_method :: proc(
 }
 
 // runtime_call types the call as its node, except that a tagged answer is read into a node typed
-// as a reference that may hold null through a check, as the pop of a string array is.
+// as a reference that may hold null through a check, as the pop of a string array is. What pop
+// answers is an element, checked as a read of one is.
 @(private)
 runtime_call :: proc(
 	s: ^Func_State,
@@ -614,7 +624,11 @@ runtime_call :: proc(
 	if exports[call.export].result != .Tagged || want == ir.TAGGED {
 		return ir.emit(&s.fb, want, call, span)
 	}
-	return coerce(s, ir.emit(&s.fb, ir.TAGGED, call, span), want, span)
+	mismatch := abi.Runtime_Error.Tagged_Holds_Other_Kind
+	if call.export == .Array_Pop {
+		mismatch = .Element_Holds_Other_Kind
+	}
+	return coerce(s, ir.emit(&s.fb, ir.TAGGED, call, span), want, span, mismatch)
 }
 
 // number_args stays quiet about a call with the wrong count: check already reported it.

@@ -34,6 +34,13 @@ one slot per field: the kind every member agrees on, the one that may hold null 
 holds a present reference, or Tagged where they differ otherwise. A read through the narrower type
 then checks the tag, or for null (objects.odin).
 
+Arrays. An array layout is the kind of its element slot. An array that check accepted where an
+array of a wider element was expected is the same array after the flow too, so the two types need
+one slot. Their classes are built the way the widening classes are, joining the slot kinds, and
+keyed by the element below the slot: the class fields of an object, the element of an inner array.
+So a flow of `Triangle[]` into `(Sphere | Triangle)[]` leaves `string[]` alone. A read through the
+narrower element checks the slot (arrays.odin).
+
 Functions. A function value is a closure, whatever its signature, and its signature is the IR types
 of its parameters and its result. A function accepted where another function type was expected is
 the same closure after the flow, so the two types need one signature, or a call through the second
@@ -82,7 +89,7 @@ ir_type :: proc(
 	type: ir.Type,
 	ok: bool,
 ) {
-	ensure(low.objects.joined, "an object type is mapped before its widening class is complete")
+	ensure(low.arrays.joined, "a type is mapped before its widening class is complete")
 	memo := &memo_of(low, types).types[id]
 	if !memo.known {
 		memo.type, memo.ok = map_type(low, types, id)
@@ -121,8 +128,7 @@ map_type :: proc(
 	case check.Object:
 		return ir.ref(object_layout(low, types, v)), true
 	case check.Array:
-		element, _ := element_slot(types, v.element)
-		return ir.ref(ir.array_layout(&low.builder, element)), true
+		return ir.ref(ir.array_layout(&low.builder, array_slot(low, types, v))), true
 	case check.Union:
 		if member, nullish, held := nullable_member(types, v); held {
 			present := ir_type(low, types, member) or_return
@@ -443,39 +449,44 @@ class_value :: proc(classes: ^Classes($V), key: string) -> (value: V, found: boo
 	return classes.values[class_root(classes, node)], true
 }
 
-// build_classes joins the shallow keys of every widening of every result, then the signatures of
-// every pair of function types a flow recorded. The signatures come second: their key is the full
-// IR types of a signature, layouts included, and those are final only once every widening class
-// is.
+// build_classes joins the shallow keys of every widening of every result, then the arrays, then the
+// signatures of every pair of function types a flow recorded. The key of an array names the class
+// fields of an object element, and the key of a signature the full IR types, layouts included, so
+// each pass comes after the classes it reads are final.
 @(private)
 build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
-	for result in results {
-		for widening in result.widenings {
-			source, source_ok := object_node(low, result.types, widening.source)
-			target, target_ok := object_node(low, result.types, widening.target)
-			if source_ok && target_ok {
-				class_union(&low.objects, source, target)
-			}
-		}
-	}
+	union_widenings(low, results, &low.objects, object_node)
 	join_classes(&low.objects, join_slots)
+	union_widenings(low, results, &low.arrays, array_node)
+	join_classes(&low.arrays, join_slot_kind)
 
 	intern_signature_layouts(low, results)
 	interned := len(low.builder.layouts)
-	for result in results {
-		for widening in result.widenings {
-			source, source_ok := signature_node(low, result.types, widening.source)
-			target, target_ok := signature_node(low, result.types, widening.target)
-			if source_ok && target_ok {
-				class_union(&low.signatures, source, target)
-			}
-		}
-	}
+	union_widenings(low, results, &low.signatures, signature_node)
 	ensure(
 		len(low.builder.layouts) == interned,
 		"a signature interned a layout intern_signature_layouts did not see",
 	)
 	join_classes(&low.signatures, join_signatures)
+}
+
+// union_widenings joins the two nodes of every widening that names a type of the classes' kind.
+@(private)
+union_widenings :: proc(
+	low: ^Lowering,
+	results: []check.Check_Result,
+	classes: ^Classes($V),
+	node: proc(low: ^Lowering, types: []check.Type, id: check.Type_ID) -> (int, bool),
+) {
+	for result in results {
+		for widening in result.widenings {
+			source, source_ok := node(low, result.types, widening.source)
+			target, target_ok := node(low, result.types, widening.target)
+			if source_ok && target_ok {
+				class_union(classes, source, target)
+			}
+		}
+	}
 }
 
 // intern_signature_layouts interns the layouts of the signature pass in key order. That pass meets
@@ -548,8 +559,7 @@ collect_layout :: proc(
 		slots := class_slots(low, types, v)
 		append(&wanted.objects, Object_Shape{key = slots_key(slots), slots = slots})
 	case check.Array:
-		element, _ := element_slot(types, v.element)
-		wanted.arrays += {element}
+		wanted.arrays += {array_slot(low, types, v)}
 	case check.Union:
 		if member, _, held := nullable_member(types, v); held {
 			collect_layout(low, types, member, wanted)
@@ -574,24 +584,89 @@ object_node :: proc(
 	return class_node(&low.objects, slots_key(slots), slots), true
 }
 
-// join_slots keeps a kind two members agree on, a reference that may hold null where the other
-// member holds a present one, and takes Tagged where they differ otherwise. Every member of a class
-// has the same fields, since check widens only between two types of one field set.
+// join_slots joins each field. Every member of a class has the same fields, since check widens only
+// between two types of one field set.
 @(private)
 join_slots :: proc(a, b: []ir.Slot) -> []ir.Slot {
 	joined := make([]ir.Slot, len(a), context.temp_allocator)
 	for slot, i in a {
 		joined[i] = slot
-		switch {
-		case b[i].kind == slot.kind:
-		case slot.kind == .Ref && (b[i].kind == .Ref_Or_Null || b[i].kind == .Ref_Or_Undefined):
-			joined[i].kind = b[i].kind
-		case b[i].kind == .Ref && (slot.kind == .Ref_Or_Null || slot.kind == .Ref_Or_Undefined):
-		case:
-			joined[i].kind = .Tagged
-		}
+		joined[i].kind = join_slot_kind(slot.kind, b[i].kind)
 	}
 	return joined
+}
+
+// join_slot_kind keeps a kind two members agree on, a reference that may hold null where the other
+// member holds a present one, and takes Tagged where they differ otherwise.
+@(private)
+join_slot_kind :: proc(a, b: abi.Slot_Kind) -> abi.Slot_Kind {
+	switch {
+	case a == b:
+		return a
+	case a == .Ref && (b == .Ref_Or_Null || b == .Ref_Or_Undefined):
+		return b
+	case b == .Ref && (a == .Ref_Or_Null || a == .Ref_Or_Undefined):
+		return a
+	}
+	return .Tagged
+}
+
+// array_slot is the element slot of the array's class, or its own where it takes part in no flow.
+@(private)
+array_slot :: proc(low: ^Lowering, types: []check.Type, array: check.Array) -> abi.Slot_Kind {
+	if joined, found := class_value(&low.arrays, element_key(low, types, array.element)); found {
+		return joined
+	}
+	own, _ := element_slot(types, array.element)
+	return own
+}
+
+@(private)
+array_node :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+) -> (
+	node: int,
+	ok: bool,
+) {
+	array := types[id].(check.Array) or_return
+	slot := element_slot(types, array.element) or_return
+	return class_node(&low.arrays, element_key(low, types, array.element), slot), true
+}
+
+@(private)
+element_key :: proc(low: ^Lowering, types: []check.Type, element: check.Type_ID) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	write_element_key(&b, low, types, element)
+	return strings.to_string(b)
+}
+
+@(private)
+write_element_key :: proc(
+	b: ^strings.Builder,
+	low: ^Lowering,
+	types: []check.Type,
+	element: check.Type_ID,
+) {
+	type, _ := shallow_type(types, element)
+	write_type_key(b, type)
+	below := element
+	if v, is_union := types[element].(check.Union); is_union {
+		if member, _, held := nullable_member(types, v); held {
+			below = member
+		}
+	}
+	#partial switch v in types[below] {
+	case check.Object:
+		strings.write_byte(b, '{')
+		strings.write_string(b, slots_key(class_slots(low, types, v)))
+		strings.write_byte(b, '}')
+	case check.Array:
+		strings.write_byte(b, '[')
+		write_element_key(b, low, types, v.element)
+		strings.write_byte(b, ']')
+	}
 }
 
 // slots_key quotes each name, so no name can spell the separators.

@@ -42,16 +42,14 @@ log_string :: proc "c" (text: ^abi.String_Cell) {
 	console.log_string(text)
 }
 
-// process_argv answers a new array: the path of the executable, the first argument as the process
-// was started with it, then the others, which is process.argv of a Node single executable
-// application. Generated code calls it once, before any module runs.
+// process_argv fills argv, an empty array of the layout lower gave a string[]: the path of the
+// executable, the first argument as the process was started with it, then the others, which is
+// process.argv of a Node single executable application. Generated code calls it once, before any
+// module runs.
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Process_Argv].symbol)
-process_argv :: proc "c" () -> ^abi.Array_Cell {
+process_argv :: proc "c" (argv: ^abi.Array_Cell) {
 	context = scratch_context()
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-	table, found := gc.array_table(&heap, .Ref)
-	ensure(found, "process.argv in a program with no table for a string[]")
-	argv := arr.new_array(&heap, table, 0)
 	path, _ := os.get_executable_path(context.allocator)
 	arr.push(&heap, argv, {tag = .String, payload = {ref = str.from_utf8(&heap, path)}})
 	when ODIN_OS == .Windows {
@@ -65,7 +63,6 @@ process_argv :: proc "c" () -> ^abi.Array_Cell {
 			arr.push(&heap, argv, {tag = .String, payload = {ref = cell}})
 		}
 	}
-	return argv
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Math_Round].symbol)
@@ -165,9 +162,9 @@ string_to_lower :: proc "c" (text: ^abi.String_Cell) -> ^abi.String_Cell {
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.String_Split].symbol)
-string_split :: proc "c" (text, separator: ^abi.String_Cell, limit: f64) -> ^abi.Array_Cell {
+string_split :: proc "c" (pieces: ^abi.Array_Cell, text, separator: ^abi.String_Cell, limit: f64) {
 	context = export_context()
-	return arr.split(&heap, text, separator, limit)
+	arr.split(&heap, pieces, text, separator, limit)
 }
 
 @(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Number_To_String].symbol)

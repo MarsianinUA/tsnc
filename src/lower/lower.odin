@@ -84,13 +84,15 @@ Lowering :: struct {
 	locals:        []File_Locals,
 	// argv holds process.argv, made the first time the program reads it and filled once by main.
 	argv:          Maybe(ir.Global_ID),
-	// The widening classes over the shallow keys of object types, and the signature classes over
-	// the signatures of function types (types.odin), both built before any body.
+	// The widening classes over the shallow keys of object types, the element slots of array types
+	// and the signature classes over the signatures of function types (types.odin), all built
+	// before any body.
 	objects:       Classes([]ir.Slot),
+	arrays:        Classes(abi.Slot_Kind),
 	signatures:    Classes(Signature),
 	memos:         []Type_Memo, // one per check result
 	// The comparators that adapt a closure to what the array sort calls (arrays.odin), by the class
-	// signature, the element kind and the number of arguments the closure takes.
+	// signature and the slot, and by the call for one that checks the element.
 	sort_adapters: map[string]ir.Func_ID,
 	diagnostics:   [dynamic]diag.Diagnostic,
 	allocator:     runtime.Allocator,
@@ -122,6 +124,7 @@ lower :: proc(
 		closures      = make([]File_Closures, len(prog.files), context.temp_allocator),
 		locals        = make([]File_Locals, len(prog.files), context.temp_allocator),
 		objects       = make_classes([]ir.Slot),
+		arrays        = make_classes(abi.Slot_Kind),
 		signatures    = make_classes(Signature),
 		memos         = make_memos(results),
 		sort_adapters = make(map[string]ir.Func_ID, context.temp_allocator),
@@ -433,7 +436,9 @@ build_main :: proc(low: ^Lowering, main: ir.Func_ID, inits: []ir.Func_ID) {
 	// Before any module runs, since any of them may read it.
 	if argv, used := low.argv.?; used {
 		type := low.builder.globals[argv].type
-		array := ir.emit(&f, type, ir.Call_Runtime{export = .Process_Argv}, span)
+		empty := ir.emit(&f, ir.F64, ir.Const_Number{value = 0}, span)
+		array := ir.emit(&f, type, ir.New_Array{layout = type.layout, length = empty}, span)
+		ir.emit(&f, ir.VOID, ir.Call_Runtime{export = .Process_Argv, args = {array}}, span)
 		ir.emit(&f, ir.VOID, ir.Global_Store{global = argv, value = array}, span)
 	}
 	for id in inits {

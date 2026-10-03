@@ -476,9 +476,10 @@ Where: requirements §10 "Benchmarks"; `bench/ts/raytracer/`, `bench/go/raytrace
 After: T6.11.
 Done: tsnc, Node and Go agree under `bench/bench.sh raytracer`, under ASan too; `bench/RESULTS.md` has its row.
 
-### [ ] T6.13 `check`: an array of a narrower element type where a wider one is expected
+### [x] T6.13 `check`: an array of a narrower element type where a wider one is expected
 
 What: tsnc rejects `Triangle[]` where `(Sphere | Triangle)[]` is expected with T3001, and tsc accepts it. `raytracer` met it passing a mesh's triangles to a function that takes `Solid[]`, so `addAll` in `bench/ts/raytracer/parse.ts` takes `Triangle[]` instead. The element slots differ, a pointer against a tagged 16-byte slot, so the array cannot pass as it is. Objects solve the same problem with flow classes (requirements §3.3): types that flow into each other get one layout. For arrays that would give both the tagged slot wherever such a flow exists, and the array stays one array: a push through either type shows through the other.
+Chosen (operator, 2026-10-03): the runtime no longer finds the table of a `string[]` it makes by element kind; lower makes the empty array of the call's type, and `split` and `process.argv` fill it, since a flow of `string[]` into a wider array type tags its slot.
 Where: requirements §3.3, §3.4; `src/check`, `src/lower` (the widening classes of T5.7).
 After: none.
 Done: a diff program passes a `T[]` where `(T | U)[]` is expected, writes through both and prints what Node prints; `addAll` in `bench/ts/raytracer/parse.ts` takes `Solid[]`.

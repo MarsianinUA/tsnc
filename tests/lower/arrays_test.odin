@@ -2,6 +2,7 @@ package lower_tests
 
 import "core:testing"
 
+import "../../src/abi"
 import "../../src/ir"
 import "../harness"
 
@@ -54,4 +55,45 @@ a_callback_may_be_the_name_of_a_function :: proc(t: ^testing.T) {
 	testing.expectf(t, calls_function(result.output, init, "m1.double"), "%s", result.text)
 	testing.expectf(t, len(instructions_of(init, ir.Func_Ref)) == 0, "%s", result.text)
 	testing.expectf(t, len(instructions_of(init, ir.Call_Closure)) == 0, "%s", result.text)
+}
+
+// A flow of one array type into a wider one tags the slot of those two only: the class is keyed
+// by the element below its slot, so the other arrays of references keep theirs.
+@(test)
+an_array_flow_widens_its_own_class_only :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		interface Disc { r: number; }
+		interface Square { side: number; }
+		const discs: Disc[] = [{ r: 1 }];
+		const shapes: (Disc | Square)[] = discs;
+		const squares: Square[] = [{ side: 2 }];
+		const words: string[] = ["a"];
+		const grid: number[][] = [[1]];
+		console.log(shapes, squares, words, grid);
+	`,
+	)
+	Slot :: struct {
+		name: string,
+		kind: abi.Slot_Kind,
+	}
+	want := [?]Slot {
+		{"m1.discs", .Tagged},
+		{"m1.squares", .Ref},
+		{"m1.words", .Ref},
+		{"m1.grid", .Ref},
+	}
+	for slot in want {
+		global := harness.global_named(t, result.output, slot.name)
+		element := result.output.layouts[global.type.layout].element
+		testing.expectf(
+			t,
+			element == slot.kind,
+			"%s holds %v: %s",
+			slot.name,
+			element,
+			result.text,
+		)
+	}
 }

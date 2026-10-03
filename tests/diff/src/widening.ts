@@ -79,3 +79,70 @@ function read(h: Holder): number {
 const holder: Holder = { item: { v: 8 } };
 const loosened = loosen(holder);
 console.log(read(holder), loosened.item === holder.item, loosened);
+
+// An array where an array of a wider element type is expected is the same array too (requirements
+// 3.6): a push through either type shows through the other. The writes through the wide type keep
+// to the narrow one; a read through the narrow type of what one did not keep to fails at run time,
+// which tests/expect/element-other-kind.ts runs.
+interface Disc {
+  kind: "disc";
+  r: number;
+}
+
+interface Square {
+  kind: "square";
+  side: number;
+}
+
+type Shape = Disc | Square;
+
+function addAll(into: Shape[], from: Shape[]): void {
+  for (const s of from) {
+    into.push(s);
+  }
+}
+
+function area(s: Shape): number {
+  return s.kind === "disc" ? 3 * s.r * s.r : s.side * s.side;
+}
+
+const discs: Disc[] = [{ kind: "disc", r: 3 }];
+const shapes: Shape[] = discs;
+shapes.push({ kind: "disc", r: 1 });
+discs.push({ kind: "disc", r: 2 });
+console.log(discs === shapes, shapes.length, discs[1].r, shapes[2]);
+
+discs[0] = { kind: "disc", r: 4 };
+discs.sort((a, b) => a.r - b.r);
+let radii = 0;
+for (const d of discs) {
+  radii += d.r;
+}
+const widest = discs.reduce((a, b) => (a.r > b.r ? a : b));
+console.log(
+  discs.map((d) => d.r),
+  discs.filter((d) => d.r > 1).length,
+  radii,
+  discs.reduce((sum, d) => sum + d.r, 0),
+  widest,
+);
+
+const all: Shape[] = [{ kind: "square", side: 2 }];
+addAll(all, discs);
+const grid: Disc[][] = [discs];
+const rows: Shape[][] = grid;
+const narrowed = shapes as Disc[];
+console.log(all.map(area), all, rows[0] === discs, narrowed === discs);
+
+const items: Item[] = [{ v: 1 }];
+const holes: (Item | null)[] = items;
+holes.push({ v: 2 });
+console.log(items[1].v + 1, holes);
+
+// split and process.argv make a string[], which here flows into a wider array type.
+const words = "b,a".split(",");
+const mixed: (string | number)[] = words;
+mixed.push(3);
+words.push("c");
+console.log(words, mixed.length, words[1].toUpperCase(), words.join("-"));
+console.log(process.argv.slice(2), typeof process.argv[0]);

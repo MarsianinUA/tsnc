@@ -80,16 +80,17 @@ Check_Result :: struct {
 	partition: []source.File_ID, // in the order they were given
 	types:     []Type, // indexed by Type_ID
 	files:     []Typed_File, // one per partition entry, in the same order
-	// Every flow of an object into another object type, or of a function into another function
-	// type, the rules accepted, sorted by (source, target) with no repeats. lower gives two objects
-	// one layout and two functions one signature, so the value that flows is the same object or the
-	// same function with no copy, as in Node.
+	// Every flow of an object, a function or an array into another type of its kind the rules
+	// accepted, sorted by (source, target) with no repeats. lower gives two objects one layout, two
+	// functions one signature and two arrays one element slot, so the value that flows is the same
+	// value with no copy, as in Node.
 	widenings: []Widening,
 }
 
-// Widening is an object type accepted where another object type was expected, or a function type
-// where another function type was: `const b: B = a`, an argument, a return, a field of either, a
-// member of a union, a parameter or the result of a function that flows.
+// Widening is an object type accepted where another object type was expected, a function type where
+// another function type was, or an array type where another array type was: `const b: B = a`, an
+// argument, a return, a field of either, a member of a union, an element of an array, a parameter
+// or the result of a function that flows.
 Widening :: struct {
 	source: Type_ID,
 	target: Type_ID,

@@ -237,14 +237,16 @@ console_program :: proc() -> ir.Program_IR {
 	main := ir.declare_func(&p, abi.MAIN_SYMBOL, nil, ir.VOID, SPAN)
 	f := ir.begin_func(&p, main)
 
-	argv := call(&f, .Process_Argv, strings_type)
+	argv := new_strings(&f, strings_type)
+	call(&f, .Process_Argv, ir.VOID, argv)
 	log(&f, false, box(&f, argv))
 	separator := ir.emit(&f, ir.STR, ir.Const_String{text = line_end}, SPAN)
 	log(&f, false, box(&f, call(&f, .Array_Join, ir.STR, argv, separator)))
 
 	text := ir.emit(&f, ir.STR, ir.Const_String{text = cab}, SPAN)
 	splitter := ir.emit(&f, ir.STR, ir.Const_String{text = comma}, SPAN)
-	pieces := call(&f, .String_Split, strings_type, text, splitter, number(&f, abi.MISSING_LIMIT))
+	pieces := new_strings(&f, strings_type)
+	call(&f, .String_Split, ir.VOID, pieces, text, splitter, number(&f, abi.MISSING_LIMIT))
 	log(
 		&f,
 		false,
@@ -275,6 +277,11 @@ log :: proc(f: ^ir.Func_Builder, err: bool, values: ..ir.Value_ID) {
 @(private = "file")
 number :: proc(f: ^ir.Func_Builder, n: f64) -> ir.Value_ID {
 	return ir.emit(f, ir.F64, ir.Const_Number{value = n}, SPAN)
+}
+
+@(private = "file")
+new_strings :: proc(f: ^ir.Func_Builder, type: ir.Type) -> ir.Value_ID {
+	return ir.emit(f, type, ir.New_Array{layout = type.layout, length = number(f, 0)}, SPAN)
 }
 
 @(private = "file")

@@ -57,7 +57,8 @@ Runtime_Proc :: enum u8 {
 	// once.
 	Console_Log, // (err, args: Rest): console.log, or console.error when err is true
 	Log_String, // (text: ^String_Cell): the units as UTF-8 and a newline to stdout
-	Process_Argv, // () -> ^Array_Cell of strings: a new process.argv; lower calls it once
+	// (argv): fills argv, an empty string[] lower made, with process.argv; main calls it once.
+	Process_Argv,
 	Process_Exit, // (code): flushes nothing and ends the process
 	// The three Math names that are not a C function: round takes a half toward positive infinity,
 	// max and min have their own rules for NaN and -0 (requirements 4.5).
@@ -82,7 +83,7 @@ Runtime_Proc :: enum u8 {
 	String_Trim, // (text) -> ^String_Cell
 	String_To_Upper, // (text) -> ^String_Cell
 	String_To_Lower, // (text) -> ^String_Cell
-	String_Split, // (text, separator, limit) -> ^Array_Cell of strings
+	String_Split, // (pieces, text, separator, limit): fills pieces, an empty string[] lower made
 	// Numbers as strings, requirements 3.1.
 	Number_To_String, // (value) -> ^String_Cell: String(value) and `${value}`
 	Number_To_Fixed, // (value, digits) -> ^String_Cell; fails outside [0, 100] digits
@@ -133,7 +134,7 @@ MISSING_LIMIT :: 4294967295 // 2^32 - 1, split's limit
 RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.Console_Log = {symbol = "tsnc_console_log", params = {.Boolean, .Rest}, result = .Void},
 	.Log_String = {symbol = "tsnc_log_string", params = {.Ptr}, result = .Void},
-	.Process_Argv = {symbol = "tsnc_process_argv", params = {}, result = .Ptr},
+	.Process_Argv = {symbol = "tsnc_process_argv", params = {.Ptr}, result = .Void},
 	.Process_Exit = {
 		symbol = "tsnc_process_exit",
 		params = {.Number},
@@ -183,7 +184,11 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 	.String_Trim = {symbol = "tsnc_string_trim", params = {.Ptr}, result = .Ptr},
 	.String_To_Upper = {symbol = "tsnc_string_to_upper", params = {.Ptr}, result = .Ptr},
 	.String_To_Lower = {symbol = "tsnc_string_to_lower", params = {.Ptr}, result = .Ptr},
-	.String_Split = {symbol = "tsnc_string_split", params = {.Ptr, .Ptr, .Number}, result = .Ptr},
+	.String_Split = {
+		symbol = "tsnc_string_split",
+		params = {.Ptr, .Ptr, .Ptr, .Number},
+		result = .Void,
+	},
 	.Number_To_String = {symbol = "tsnc_number_to_string", params = {.Number}, result = .Ptr},
 	.Number_To_Fixed = {
 		symbol = "tsnc_number_to_fixed",
@@ -242,6 +247,9 @@ Runtime_Error :: enum i32 {
 	// A field read through its declared type holds a value of another kind, which a write through a
 	// wider type of the same object put there (requirements 3.8).
 	Field_Holds_Other_Kind,
+	// The same for an element read through its declared type, left by a write through a wider type
+	// of the same array.
+	Element_Holds_Other_Kind,
 	// A function called through the wider signature of its class (requirements 3.5) was given, or
 	// gave back, a value its own declared type does not allow: through `any`, or through a
 	// function field written through a narrower object type.

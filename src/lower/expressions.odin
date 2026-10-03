@@ -449,7 +449,7 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 			return ir.emit(&s.fb, ir.F64, ir.Const_Number{value = constant.value}, span)
 		}
 		if strategy == Builtin.Process_Argv {
-			return lower_process_argv(s, span)
+			return lower_process_argv(s, id, span)
 		}
 		return later(s, span, construct_of(strategy, node.name.text))
 	}
@@ -490,11 +490,10 @@ has_fields :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 // lower_process_argv reads one global, so every read answers the same array, as in Node. main
 // fills it before any module runs.
 @(private)
-lower_process_argv :: proc(s: ^Func_State, span: source.Span) -> ir.Value_ID {
+lower_process_argv :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	argv, made := s.low.argv.?
 	if !made {
-		strings := ir.array_layout(&s.low.builder, .Ref)
-		argv = ir.add_global(&s.low.builder, "process.argv", ir.ref(strings))
+		argv = ir.add_global(&s.low.builder, "process.argv", node_type(s, id))
 		s.low.argv = argv
 	}
 	type := s.low.builder.globals[argv].type

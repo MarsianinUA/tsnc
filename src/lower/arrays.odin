@@ -1,5 +1,6 @@
 package lower
 
+import "../abi"
 import "../ast"
 import "../check"
 import "../ir"
@@ -98,9 +99,40 @@ bounds_check :: proc(s: ^Func_State, array, index: ir.Value_ID, span: source.Spa
 	return ir.emit(&s.fb, ir.F64, check, span)
 }
 
+// load_checked reads an element through its declared type with a check where the array's class
+// widened the slot: a write through the wider array type may have left another kind there, or null.
+@(private)
+load_checked :: proc(
+	s: ^Func_State,
+	array, checked: ir.Value_ID,
+	element: ir.Type,
+	span: source.Span,
+) -> ir.Value_ID {
+	load := ir.Element_Load {
+		array = array,
+		index = checked,
+	}
+	held := slot_type(element_kind(s, array), element)
+	if held == element {
+		return ir.emit(&s.fb, element, load, span)
+	}
+	loaded := ir.emit(&s.fb, held, load, span)
+	return coerce(s, loaded, element, span, .Element_Holds_Other_Kind)
+}
+
+@(private)
+element_kind :: proc(s: ^Func_State, array: ir.Value_ID) -> abi.Slot_Kind {
+	return s.low.builder.layouts[value_type(s, array).layout].element
+}
+
+// store_checked boxes into a widened slot what the declared type holds unboxed.
 @(private)
 store_checked :: proc(s: ^Func_State, array, checked, value: ir.Value_ID, span: source.Span) {
-	kind := s.low.builder.layouts[value_type(s, array).layout].element
+	kind := element_kind(s, array)
+	value := value
+	if kind == .Tagged {
+		value = coerce(s, value, ir.TAGGED, span)
+	}
 	if ir.traced(kind) {
 		store := ir.Element_Store_Ref {
 			array = array,
@@ -159,11 +191,7 @@ load_element :: proc(s: ^Func_State, place: ^Element_Place, span: source.Span) -
 	if value_type(s, place.array) == ir.STR {
 		return string_piece(s, place.array, place.index, .String_At, span)
 	}
-	load := ir.Element_Load {
-		array = place.array,
-		index = place.index,
-	}
-	return ir.emit(&s.fb, place.type, load, span)
+	return load_checked(s, place.array, place.index, place.type, span)
 }
 
 // store_element appends at an index equal to the length, as `a[a.length] = x` does in Node; any
@@ -316,8 +344,9 @@ lower_sort :: proc(
 	if !element_ok || comparator == ir.NO_VALUE || !is_function || !signature_ok {
 		return ir.NO_VALUE
 	}
-	if !called_as_it_stands(signature, element) {
-		adapter := sort_adapter(s.low, s.file, id, signature, element, span)
+	held := slot_type(element_kind(s, receiver), element)
+	if !called_as_it_stands(signature, held) {
+		adapter := sort_adapter(s.low, s.file, id, signature, held, element, span)
 		env_type := box_type(s, ir.CLOSURE)
 		env := ir.emit(&s.fb, env_type, ir.Alloc{layout = env_type.layout}, span)
 		store_slot(s, env, 0, comparator, span)
@@ -489,11 +518,7 @@ lower_reduce :: proc(
 			span,
 		)
 		ir.use_block(&s.fb, started)
-		load := ir.Element_Load {
-			array = receiver,
-			index = bounds_check(s, receiver, zero, span),
-		}
-		loaded := ir.emit(&s.fb, element, load, span)
+		loaded := load_checked(s, receiver, bounds_check(s, receiver, zero, span), element, span)
 		first = flow_into(s, loaded, passed[0], accumulated, result, span)
 		if first == ir.NO_VALUE {
 			return ir.NO_VALUE
@@ -607,11 +632,7 @@ begin_pass :: proc(
 ) -> ir.Value_ID {
 	one := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
 	loop.next = ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = loop.index, right = one}, span)
-	load := ir.Element_Load {
-		array = array,
-		index = bounds_check(s, array, loop.index, span),
-	}
-	return ir.emit(&s.fb, element, load, span)
+	return load_checked(s, array, bounds_check(s, array, loop.index, span), element, span)
 }
 
 // close_inline_loop takes the back edge unless the pass cannot end, and leaves the builder in the

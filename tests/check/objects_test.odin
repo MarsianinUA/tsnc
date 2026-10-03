@@ -87,7 +87,7 @@ a_widening_of_an_interface_that_names_itself_ends :: proc(t: ^testing.T) {
 }
 
 @(test)
-one_type_and_arrays_record_nothing :: proc(t: ^testing.T) {
+one_type_records_nothing :: proc(t: ^testing.T) {
 	c := expect_checked(
 		t,
 		lines(
@@ -101,6 +101,21 @@ one_type_and_arrays_record_nothing :: proc(t: ^testing.T) {
 		),
 	)
 	testing.expectf(t, len(c.result.widenings) == 0, "%v", widening_texts(c))
+}
+
+@(test)
+an_array_flow_lists_its_pair_and_its_elements :: proc(t: ^testing.T) {
+	c := expect_checked(
+		t,
+		lines(
+			`interface Narrow { v: number; }`, //
+			`interface Wide { v: number | string; }`,
+			`const ns: Narrow[] = [{ v: 1 }];`,
+			`const ws: Wide[] = ns;`,
+		),
+	)
+	want := []string{"Narrow -> Wide", "Narrow[] -> Wide[]"}
+	testing.expectf(t, slice.equal(widening_texts(c), want), "%v", widening_texts(c))
 }
 
 // A function that flows into another function type is a widening too, which lower turns into one

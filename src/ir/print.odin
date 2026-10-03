@@ -799,6 +799,7 @@ RUNTIME_ERROR_TEXT := [abi.Runtime_Error]string {
 	.Not_Convertible_To_Json      = "not_convertible_to_json",
 	.Reduce_Of_Empty_Array        = "reduce_of_empty_array",
 	.Field_Holds_Other_Kind       = "field_holds_other_kind",
+	.Element_Holds_Other_Kind     = "element_holds_other_kind",
 	.Value_Of_Other_Kind          = "value_of_other_kind",
 	.Tagged_Holds_Other_Kind      = "tagged_holds_other_kind",
 	.Read_Before_Initialization   = "read_before_initialization",

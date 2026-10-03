@@ -6,7 +6,7 @@
 // expect: T3001 17:23 "type `"many"` is not assignable to type `number`"
 // expect: T3001 19:31
 // expect: T3001 21:22
-// expect: T3001 23:36
+// expect: T3001 23:25
 // expect: T3001 26:9
 // expect: T3001 31:22
 // expect: T3001 34:25
@@ -20,7 +20,7 @@ const numbers: number[] = [1, "a"];
 const digits = [1, 2, 3];
 const first = digits["0"];
 const pair: number[] = [1, 2];
-const mixed: (number | string)[] = pair;
+const mixed: string[] = pair;
 
 let total = 0;
 total = "a";
