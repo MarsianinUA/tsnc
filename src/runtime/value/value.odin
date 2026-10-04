@@ -139,7 +139,15 @@ field :: proc(
 	return v, !(entry.optional && v.tag == .Undefined)
 }
 
-// load boxes what a slot of `kind` holds: an array element, an object field.
+// load_element boxes an array element, which differs from a field only in a boolean's one byte.
+load_element :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
+	if kind == .Boolean {
+		return {tag = .Boolean, payload = {boolean = b64((^b8)(slot)^)}}
+	}
+	return load(heap, slot, kind)
+}
+
+// load boxes what a slot of `kind` holds: a field, or an array element other than a boolean.
 load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
 	switch kind {
 	case .Number:

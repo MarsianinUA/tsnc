@@ -83,6 +83,28 @@ an_array_is_as_long_as_ecmascript_allows :: proc(t: ^testing.T) {
 	testing.expect(t, !arr.length_fits(arr.MAX_LENGTH + 1))
 }
 
+// A boolean element is one byte, the way generated code indexes it: push, growth and slice keep that
+// stride.
+@(test)
+a_boolean_element_is_one_byte :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	flags := arr.new_array(&heap, BOOLEANS, 0)
+	for i in 0 ..< 10 {
+		arr.push(&heap, flags, boolean(i % 3 == 0))
+	}
+	part := arr.slice(&heap, flags, 1, 10)
+	for i in 0 ..< 10 {
+		want := u8(i % 3 == 0)
+		testing.expect_value(t, ([^]u8)(flags.elements)[i], want)
+		if i > 0 {
+			testing.expect_value(t, ([^]u8)(part.elements)[i - 1], want)
+		}
+	}
+}
+
 // An empty result allocates nothing: a slice or a split with no elements has no buffer, and an
 // empty join is the static empty string.
 @(test)

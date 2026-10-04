@@ -122,13 +122,17 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Element_Load:
 		address := element_address(m, body, v.array, v.index)
-		load := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		load := llvm.LLVMBuildLoad2(m.builder, element_type(m, body, v.array), address, "")
 		stored := mark(m, load, element_tag(m, body, v.array))
 		body.values[value] = from_storage(m, stored, instruction.type)
 
 	case ir.Element_Store:
 		address := element_address(m, body, v.array, v.index)
-		store(m, body, v.value, address, element_tag(m, body, v.array))
+		stored := body.values[v.value]
+		if body.func.values[v.value].type.kind == .Bool {
+			stored = llvm.LLVMBuildZExt(m.builder, stored, element_type(m, body, v.array), "")
+		}
+		mark(m, llvm.LLVMBuildStore(m.builder, stored, address), element_tag(m, body, v.array))
 
 	case ir.Element_Store_Ref:
 		address := element_address(m, body, v.array, v.index)
@@ -515,12 +519,19 @@ field_address :: proc(
 // poison.
 @(private)
 element_address :: proc(m: ^Module, body: ^Body, array, index: ir.Value_ID) -> llvm.LLVMValueRef {
-	kind := m.program.layouts[body.func.values[array].type.layout].element
 	pointer := byte_offset(m, body.values[array], int(offset_of(abi.Array_Cell, elements)))
 	load := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, pointer, "")
 	elements := mark(m, load, m.places[.Array_Elements])
 	position := index_word(m, body, index)
-	return llvm.LLVMBuildInBoundsGEP2(m.builder, slot_type(m, kind), elements, &position, 1, "")
+	element := element_type(m, body, array)
+	return llvm.LLVMBuildInBoundsGEP2(m.builder, element, elements, &position, 1, "")
+}
+
+// element_type is slot_type but for a boolean, which an array holds in one byte (abi.ELEMENT_SIZE).
+@(private)
+element_type :: proc(m: ^Module, body: ^Body, array: ir.Value_ID) -> llvm.LLVMTypeRef {
+	kind := m.program.layouts[body.func.values[array].type.layout].element
+	return m.types.int8 if kind == .Boolean else slot_type(m, kind)
 }
 
 // index_word takes a number the caller proved an integer, so fptosi is never poison.

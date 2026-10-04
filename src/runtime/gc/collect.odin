@@ -156,7 +156,7 @@ scan_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 		}
 		slots := ([^]byte)(array.elements)
 		for i in 0 ..< array.length {
-			mark_slot(heap, &slots[i * abi.SLOT_SIZE[table.element]], table.element)
+			mark_slot(heap, &slots[i * abi.ELEMENT_SIZE[table.element]], table.element)
 		}
 	}
 }

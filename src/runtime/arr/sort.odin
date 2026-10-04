@@ -85,7 +85,7 @@ sort_default :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> (ok: bool) {
 	defer delete(spans)
 	for index in state.order {
 		start := len(pool)
-		item := value.load(heap, slot(state.items, state.kind, index), state.kind)
+		item := value.load_element(heap, slot(state.items, state.kind, index), state.kind)
 		write_string(&pool, heap, item, nil) or_return
 		spans[index] = {start, len(pool)}
 	}
@@ -238,7 +238,7 @@ less :: proc(state: ^Sort_State, a, b: int) -> bool {
 	case .Number:
 		order = Compare_Numbers(code)(env, (^f64)(x)^, (^f64)(y)^)
 	case .Boolean:
-		order = Compare_Booleans(code)(env, (^b64)(x)^, (^b64)(y)^)
+		order = Compare_Booleans(code)(env, b64((^b8)(x)^), b64((^b8)(y)^))
 	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		order = Compare_Refs(code)(env, (^^abi.Cell_Header)(x)^, (^^abi.Cell_Header)(y)^)
 	case .Tagged:
@@ -266,7 +266,7 @@ write_back :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, state: ^Sort_State) {
 			array,
 			state,
 			i,
-			value.load(heap, slot(state.items, state.kind, index), state.kind),
+			value.load_element(heap, slot(state.items, state.kind, index), state.kind),
 		)
 	}
 	for i in len(state.order) ..< state.items.length {

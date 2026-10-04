@@ -62,8 +62,8 @@ each_kind_of_place_has_its_alias_tag :: proc(t: ^testing.T) {
 	wants := [?]Access {
 		{"load double", "number element"},
 		{"store double", "number element"},
-		{"load i64", "boolean element"},
-		{"store i64", "boolean element"},
+		{"load i8", "boolean element"},
+		{"store i8", "boolean element"},
 		{"store ptr", "reference element"},
 		{"load i64", "array length"},
 		{"store i64", "array length"},

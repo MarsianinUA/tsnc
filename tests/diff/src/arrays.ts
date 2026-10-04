@@ -170,3 +170,28 @@ function walk(root: Tree): number {
 }
 
 console.log(walk(grow(8, 1)));
+
+// A boolean element is one byte: each reader of an array's buffer walks it at that stride.
+const bits: boolean[] = [];
+for (let i = 0; i < 20; i++) {
+  bits.push(i % 3 === 0);
+}
+bits[1] = true;
+console.log(bits);
+console.log(bits.join(""), String(bits.slice(15)), bits.indexOf(true, 2), bits.includes(false));
+console.log("%j", bits.slice(0, 5));
+console.log(bits.slice(0, 8).sort(), bits.slice(0, 8).sort((a, b) => (b ? 1 : 0) - (a ? 1 : 0)));
+console.log(bits.pop(), bits.pop(), bits.length);
+
+// An array that stays in its function lives on the stack.
+function majority(a: boolean, b: boolean, c: boolean): boolean {
+  const votes = [a, b, c];
+  let yes = 0;
+  for (const vote of votes) {
+    if (vote) {
+      yes++;
+    }
+  }
+  return yes >= 2;
+}
+console.log(majority(true, false, true), majority(false, false, true));

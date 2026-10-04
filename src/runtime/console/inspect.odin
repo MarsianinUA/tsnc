@@ -238,9 +238,9 @@ format_array :: proc(
 	entries: ^[dynamic][]u16,
 ) {
 	shown := min(array.length, MAX_ARRAY_LENGTH)
-	size := abi.SLOT_SIZE[kind]
+	size := abi.ELEMENT_SIZE[kind]
 	for i in 0 ..< shown {
-		element := value.load(ins.heap, &([^]byte)(array.elements)[i * size], kind)
+		element := value.load_element(ins.heap, &([^]byte)(array.elements)[i * size], kind)
 		entry := make([dynamic]u16)
 		ins.indentation += 2
 		format_value(ins, element, recurse_times, &entry)
@@ -557,8 +557,8 @@ group_array_elements :: proc(ins: ^Inspector, output: [][]u16, array: ^abi.Array
 	pad_start := len(output) <= array.length
 	kind := gc.table_of(ins.heap, array).element
 	for i := 0; pad_start && i < len(output); i += 1 {
-		slot := &([^]byte)(array.elements)[i * abi.SLOT_SIZE[kind]]
-		pad_start = value.load(ins.heap, slot, kind).tag == .Number
+		slot := &([^]byte)(array.elements)[i * abi.ELEMENT_SIZE[kind]]
+		pad_start = value.load_element(ins.heap, slot, kind).tag == .Number
 	}
 
 	grouped := make([dynamic][]u16)

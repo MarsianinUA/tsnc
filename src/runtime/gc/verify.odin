@@ -168,12 +168,21 @@ verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind
 		return .Bad_Cell
 	}
 	room := slot_of(heap, buffer) - size_of(abi.Cell_Header)
-	if array.capacity > room / abi.SLOT_SIZE[kind] {
+	if array.capacity > room / abi.ELEMENT_SIZE[kind] {
 		return .Bad_Cell
 	}
 	slots := ([^]byte)(array.elements)
+	if kind == .Boolean {
+		for i in 0 ..< array.length {
+			if slots[i] > 1 {
+				return .Bad_Cell
+			}
+		}
+		return .None
+	}
 	for i in 0 ..< array.length {
-		if problem := verify_slot(heap, &slots[i * abi.SLOT_SIZE[kind]], kind); problem != .None {
+		slot := &slots[i * abi.ELEMENT_SIZE[kind]]
+		if problem := verify_slot(heap, slot, kind); problem != .None {
 			return problem
 		}
 	}
