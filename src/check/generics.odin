@@ -166,9 +166,7 @@ check_signature_call :: proc(
 	for argument, i in node.args {
 		parameter := substitute(c, parameter_at(c, function, i), subst)
 		callback := is_lib_callback(c, node.callee, function, i)
-		if !fits(c, arguments[i], parameter, functions = !callback) {
-			report_assign_failure(c, span_of(c, argument), arguments[i], parameter)
-		}
+		flow(c, arguments[i], parameter, span_of(c, argument), functions = !callback)
 	}
 
 	instantiated := substitute(c, signature, subst)

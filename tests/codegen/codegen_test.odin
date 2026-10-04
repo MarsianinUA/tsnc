@@ -1,7 +1,6 @@
 package codegen_tests
 
 import "core:fmt"
-import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -18,9 +17,9 @@ a_program_writes_an_object_and_llvm_ir :: proc(t: ^testing.T) {
 	output := hello_program(HELLO)
 	unit := output.units[0]
 	object_err := codegen.emit(&output, unit, target.HOST, .speed, .Object, "dist/hello.obj")
-	testing.expect_value(t, object_err, codegen.Error.None)
+	testing.expect_value(t, object_err.kind, codegen.Error_Kind.None)
 	ir_err := codegen.emit(&output, unit, target.HOST, .speed, .LLVM_IR, "dist/hello.ll")
-	testing.expect_value(t, ir_err, codegen.Error.None)
+	testing.expect_value(t, ir_err.kind, codegen.Error_Kind.None)
 
 	object, object_read_err := os.read_entire_file("dist/hello.obj", context.allocator)
 	defer delete(object)
@@ -51,7 +50,7 @@ every_level_emits_an_object :: proc(t: ^testing.T) {
 	for level in codegen.Optimization {
 		path := fmt.tprintf("dist/codegen-%v.obj", level)
 		err := codegen.emit(&output, output.units[0], target.HOST, level, .Object, path)
-		testing.expectf(t, err == .None, "%v: %v", level, err)
+		testing.expectf(t, err.kind == .None, "%v: %v", level, err)
 	}
 }
 
@@ -77,7 +76,7 @@ every_supported_target_emits_its_object_format :: proc(t: ^testing.T) {
 		}
 		path := fmt.tprintf("dist/codegen-%v.obj", id)
 		err := codegen.emit(&output, output.units[0], id, .speed, .Object, path)
-		if !testing.expectf(t, err == .None, "%v: %v", id, err) {
+		if !testing.expectf(t, err.kind == .None, "%v: %v", id, err) {
 			continue
 		}
 		object, read_err := os.read_entire_file(path, context.allocator)
@@ -109,7 +108,7 @@ console.log(xs[i % 3], i | 1, Math.trunc(i / 2));`,
 		}
 		path := fmt.tprintf("dist/codegen-trunc-%v.obj", id)
 		err := codegen.emit(&output, output.units[0], id, .speed, .Object, path)
-		if !testing.expectf(t, err == .None, "%v: %v", id, err) {
+		if !testing.expectf(t, err.kind == .None, "%v: %v", id, err) {
 			continue
 		}
 		object, read_err := os.read_entire_file(path, context.temp_allocator)
@@ -130,7 +129,7 @@ target_without_a_row_is_unsupported :: proc(t: ^testing.T) {
 	output := hello_program(HELLO)
 	path := "dist/codegen-wasm32_wasi.obj"
 	err := codegen.emit(&output, output.units[0], .wasm32_wasi, .speed, .Object, path)
-	testing.expect_value(t, err, codegen.Error.Unsupported_Target)
+	testing.expect_value(t, err.kind, codegen.Error_Kind.Unsupported_Target)
 	testing.expectf(t, !os.exists(path), "%s was written", path)
 }
 
@@ -139,13 +138,16 @@ missing_directory_is_a_write_error :: proc(t: ^testing.T) {
 	output := hello_program(HELLO)
 	for artifact in codegen.Artifact {
 		path := fmt.tprintf("dist/codegen-missing-directory/hello-%v", artifact)
-		err: codegen.Error
-		{
-			// emit logs LLVM's reason at error level, and the test runner fails a test on any
-			// error log. The scope keeps the expects below on the runner's logger.
-			context.logger = log.nil_logger()
-			err = codegen.emit(&output, output.units[0], target.HOST, .speed, artifact, path)
-		}
-		testing.expectf(t, err == .Write_Failed, "%v: %v", artifact, err)
+		err := codegen.emit(
+			&output,
+			output.units[0],
+			target.HOST,
+			.speed,
+			artifact,
+			path,
+			context.temp_allocator,
+		)
+		testing.expectf(t, err.kind == .Write_Failed, "%v: %v", artifact, err)
+		testing.expectf(t, err.detail != "", "%v: no reason from LLVM", artifact)
 	}
 }

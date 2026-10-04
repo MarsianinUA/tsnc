@@ -1,5 +1,5 @@
 /*
-Everything after check: the rest of the pipeline, and running what came out of it.
+Everything after lower: the rest of the pipeline, and running what came out of it.
 
 Atomicity. An artifact is written into a temporary directory and renamed into place once it is
 whole, so whoever reads the output path sees either the program that was there before or the new
@@ -26,10 +26,8 @@ import "core:strings"
 import "core:time"
 
 import "../codegen"
-import "../diag"
 import "../ir"
 import "../link"
-import "../lower"
 import "../opt"
 import "../program"
 import "../source"
@@ -53,15 +51,16 @@ build :: proc(
 	report: Build_Report,
 	err: Driver_Error,
 ) {
-	// The command line is read first, so that a contradictory one costs no work at all: none of
-	// these answers needs a file to have been opened.
-	artifact: Artifact
-	if artifact, err = artifact_of(options); err.kind != .None {
-		return {}, err
+	// link builds for the host alone in v1, so there is no executable for another platform. Its
+	// LLVM IR and its IR dump there are fine, and that is what -target: is good for until v2. The
+	// answer needs no file, so it costs no work at all.
+	artifact := options.artifact
+	if artifact == .Executable && options.target != target.HOST {
+		return {}, {kind = .Cross_Link}
 	}
-	report.artifact = artifact
 
-	if report.check, err = check_only(options, allocator); err.kind != .None {
+	program_ir: ir.Program_IR
+	if report.check, program_ir, err = check_and_lower(options, allocator); err.kind != .None {
 		return report, err
 	}
 	if has_errors(report.check) {
@@ -71,24 +70,7 @@ build :: proc(
 
 	memory := report.check.memory
 	arena := virtual.arena_allocator(&memory.arena)
-
-	// --- Lower, into the phase arena that holds the IR for the rest of the build.
-	if virtual.arena_init_growing(&memory.lowering) != nil {
-		return report, {kind = .Out_Of_Memory}
-	}
 	lowering := virtual.arena_allocator(&memory.lowering)
-	program_ir, lower_diagnostics := lower.lower(
-		&report.check.program,
-		report.check.results,
-		lowering,
-	)
-	if len(lower_diagnostics) > 0 {
-		// The gate above left the report's list empty, so there is nothing to merge these with:
-		// sorting lower's own diagnostics is the whole of print order here.
-		diag.sort(lower_diagnostics)
-		report.check.diagnostics = lower_diagnostics
-		return report, {}
-	}
 
 	// --- Verify. codegen relies on what the verifier promises and does not check again, so a
 	// broken instruction is caught here, where it can still be named, instead of inside LLVM.
@@ -174,29 +156,6 @@ run :: proc(report: Build_Report) -> (code: int, err: Driver_Error) {
 		return 1, {.Program_Unrunnable, reason_text(path, wait_err, arena)}
 	}
 	return state.exit_code, {}
-}
-
-@(private = "file")
-artifact_of :: proc(options: Options) -> (artifact: Artifact, err: Driver_Error) {
-	switch {
-	case options.emit_llvm && options.emit_ir:
-		return {}, {kind = .Two_Artifacts}
-	case options.emit_llvm:
-		artifact = .LLVM_IR
-	case options.emit_ir:
-		artifact = .IR_Dump
-	case:
-		artifact = .Executable
-	}
-	if options.command == .run && artifact != .Executable {
-		return {}, {kind = .Nothing_To_Run}
-	}
-	// link builds for the host alone in v1, so there is no executable for another platform. Its
-	// LLVM IR and its IR dump there are fine, and that is what -target: is good for until v2.
-	if artifact == .Executable && options.target != target.HOST {
-		return {}, {kind = .Cross_Link}
-	}
-	return artifact, {}
 }
 
 // output_path takes -out: exactly as it was written; without it the name comes from the entry
@@ -376,8 +335,6 @@ write_dump :: proc(
 	return {}
 }
 
-// run_codegen names the failure in the detail, because codegen explains an LLVM failure through
-// context.logger and the detail is all that reaches a user who installed no logger.
 @(private = "file")
 run_codegen :: proc(
 	p: ^ir.Program_IR,
@@ -395,16 +352,18 @@ run_codegen :: proc(
 		options.optimization,
 		artifact,
 		paths.temporary,
+		allocator,
 	)
-	switch err {
-	case .None:
+	if err.kind == .None {
 		return {}
-	case .Write_Failed:
-		// The only one of these a user can do anything about, and the path is the whole of it.
-		return {.Output_Unwritable, strings.clone(paths.output, allocator)}
-	case .Unsupported_Target, .Invalid_Module, .Passes_Failed:
 	}
-	return {.Codegen_Failed, fmt.aprintf("%v", err, allocator = allocator)}
+	why := err.detail if err.detail != "" else fmt.tprintf("%v", err.kind)
+	detail := strings.concatenate({paths.output, ": ", why}, allocator)
+	// The only one of these a user can do anything about.
+	if err.kind == .Write_Failed {
+		return {.Output_Unwritable, detail}
+	}
+	return {.Codegen_Failed, detail}
 }
 
 @(private = "file")

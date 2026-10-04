@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "core:slice"
@@ -24,7 +25,6 @@ where a write through the wider type of the same object left something else ther
 3.8).
 */
 
-@(private)
 lower_object_literal :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -64,7 +64,6 @@ lower_object_literal :: proc(
 // ascending, then the other properties in the order the literal wrote them. An optional field the
 // literal left out follows in canonical order; Node prints one only once it was set, in the order
 // it was set (requirements 3.9).
-@(private)
 print_order :: proc(s: ^Func_State, node: ast.Object_Literal, object: check.Object) -> []string {
 	order := make([dynamic]string, 0, len(object.fields), context.temp_allocator)
 	for field in object.fields {
@@ -94,13 +93,11 @@ print_order :: proc(s: ^Func_State, node: ast.Object_Literal, object: check.Obje
 	return order[:]
 }
 
-@(private)
 has_field :: proc(object: check.Object, name: string) -> bool {
 	_, found := find_field(object, name)
 	return found
 }
 
-@(private)
 find_field :: proc(object: check.Object, name: string) -> (field: check.Field, found: bool) {
 	for candidate in object.fields {
 		if candidate.name == name {
@@ -112,7 +109,6 @@ find_field :: proc(object: check.Object, name: string) -> (field: check.Field, f
 
 // array_index answers the value of a key ECMAScript orders before the others: the decimal of an
 // integer below 2^32 - 1 with no leading zero, so "2" and "10" are one and "01" is not.
-@(private)
 array_index :: proc(key: string) -> (index: u64, ok: bool) {
 	if len(key) == 0 || len(key) > 10 || len(key) > 1 && key[0] == '0' {
 		return 0, false
@@ -126,7 +122,6 @@ array_index :: proc(key: string) -> (index: u64, ok: bool) {
 	return index, index < 4294967295
 }
 
-@(private)
 field_place :: proc(
 	s: ^Func_State,
 	cell: ir.Value_ID,
@@ -143,7 +138,6 @@ field_place :: proc(
 // field_in finds the slot by name: the layout is the object's widening class, whose fields are the
 // object's own. type is what a read answers, the field's declared type, undefined included for an
 // optional one.
-@(private)
 field_in :: proc(
 	s: ^Func_State,
 	layout: ir.Layout_ID,
@@ -175,7 +169,6 @@ field_in :: proc(
 
 // load_field reads a widened slot through the field's declared type with a check: a write through
 // the wider type may have left another kind there, another layout, or null.
-@(private)
 load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.Value_ID {
 	load := ir.Field_Load {
 		cell  = place.cell,
@@ -194,7 +187,6 @@ load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.
 // string or a function there is the declared one: a slot is Any_Ref only where some member of the
 // class declares objects of several types, and check accepts no flow between them and a string or a
 // function, so such a member only shares the shallow key.
-@(private)
 slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
 	#partial switch kind {
 	case .Tagged:
@@ -214,7 +206,6 @@ slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
 // view_slot_type is what a slot of one of the layouts of a view gives: held is what the types of
 // that layout declare the slot holds, and declared what the view does. The slot may hold less than
 // the view declares, a number where the view has a number or a string, which the read then boxes.
-@(private)
 view_slot_type :: proc(kind: abi.Slot_Kind, held, declared: ir.Type) -> ir.Type {
 	#partial switch kind {
 	case .Number:
@@ -232,7 +223,6 @@ view_slot_type :: proc(kind: abi.Slot_Kind, held, declared: ir.Type) -> ir.Type 
 }
 
 // store_field boxes into a widened slot what the declared type holds unboxed.
-@(private)
 store_field :: proc(
 	s: ^Func_State,
 	place: Field_Place,
@@ -251,7 +241,6 @@ store_field :: proc(
 	return true
 }
 
-@(private)
 slot_kind :: proc(s: ^Func_State, place: Field_Place) -> abi.Slot_Kind {
 	return s.low.builder.layouts[value_type(s, place.cell).layout].fields[place.field].kind
 }

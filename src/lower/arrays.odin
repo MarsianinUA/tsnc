@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "../abi"
@@ -26,7 +27,6 @@ because Node would leave a hole an array of unboxed elements cannot hold. The ot
 of the runtime.
 */
 
-@(private)
 lower_array_literal :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -66,19 +66,16 @@ lower_array_literal :: proc(
 
 // element_type is the IR type of an element of an array of this TypeScript type. An element of
 // `void`, which only map makes, holds undefined.
-@(private)
 element_type :: proc(s: ^Func_State, array_type: check.Type_ID) -> (type: ir.Type, ok: bool) {
 	array := s.types[array_type].(check.Array) or_return
 	type = ir_type(s.low, s.types, array.element) or_return
 	return ir.TAGGED if type == ir.VOID else type, true
 }
 
-@(private)
 receiver_element :: proc(s: ^Func_State, node: ast.Call) -> (ir.Type, bool) {
 	return element_type(s, receiver_type(s, node))
 }
 
-@(private)
 receiver_type :: proc(s: ^Func_State, node: ast.Call) -> check.Type_ID {
 	member := s.tree.nodes[node.callee].variant.(ast.Member)
 	return s.typed.node_types[member.object]
@@ -86,13 +83,11 @@ receiver_type :: proc(s: ^Func_State, node: ast.Call) -> check.Type_ID {
 
 // passed_types is the check type of each argument map, filter, forEach and reduce pass their
 // callback after the accumulator: the element, its index and the array.
-@(private)
 passed_types :: proc(s: ^Func_State, node: ast.Call) -> [3]check.Type_ID {
 	array := receiver_type(s, node)
 	return {s.types[array].(check.Array).element, check.NUMBER, array}
 }
 
-@(private)
 bounds_check :: proc(s: ^Func_State, array, index: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	check := ir.Bounds_Check {
 		array        = array,
@@ -106,7 +101,6 @@ bounds_check :: proc(s: ^Func_State, array, index: ir.Value_ID, span: source.Spa
 // load_checked reads an element through its declared type with a check where the array's class
 // widened the slot: a write through the wider array type may have left another kind there, or null.
 // An array of a type only read through is one of the layouts of its view (load_view_element).
-@(private)
 load_checked :: proc(
 	s: ^Func_State,
 	array, checked: ir.Value_ID,
@@ -131,7 +125,6 @@ load_checked :: proc(
 
 // load_view_element tests which layout of the view the array has, and reads the element as that
 // layout holds it, boxed into the element type where the view declares more.
-@(private)
 load_view_element :: proc(
 	s: ^Func_State,
 	array, checked: ir.Value_ID,
@@ -181,7 +174,6 @@ load_view_element :: proc(
 // Length and Bounds_Check take; an element is read through the cell's own layout
 // (load_view_element). Any other array is itself. The cell is tested first: an `any` given to the
 // view's type is checked only where it is used.
-@(private)
 whole_array :: proc(
 	s: ^Func_State,
 	array: ir.Value_ID,
@@ -204,14 +196,12 @@ whole_array :: proc(
 	return cell
 }
 
-@(private)
 element_kind :: proc(s: ^Func_State, array: ir.Value_ID) -> abi.Slot_Kind {
 	ensure(value_type(s, array).kind == .Ref, "a write check did not record")
 	return s.low.builder.layouts[value_type(s, array).layout].element
 }
 
 // store_checked boxes into a widened slot what the declared type holds unboxed.
-@(private)
 store_checked :: proc(s: ^Func_State, array, checked, value: ir.Value_ID, span: source.Span) {
 	kind := element_kind(s, array)
 	value := value
@@ -236,7 +226,6 @@ store_checked :: proc(s: ^Func_State, array, checked, value: ir.Value_ID, span: 
 }
 
 // element_place takes a string too, whose units a read gives out one at a time.
-@(private)
 element_place :: proc(
 	s: ^Func_State,
 	node: ast.Index,
@@ -274,7 +263,6 @@ element_place :: proc(
 	return place, true
 }
 
-@(private)
 load_element :: proc(s: ^Func_State, place: ^Element_Place, span: source.Span) -> ir.Value_ID {
 	if !place.checked {
 		whole := whole_array(s, place.array, place.array_type, span)
@@ -291,7 +279,6 @@ load_element :: proc(s: ^Func_State, place: ^Element_Place, span: source.Span) -
 // other index is checked. The test comes after the value, which JavaScript evaluates before it
 // writes, and so against the length at the write even where a read checked the index first: the
 // right side of `a[2] += f()` may have shortened the array.
-@(private)
 store_element :: proc(
 	s: ^Func_State,
 	place: Element_Place,
@@ -339,7 +326,6 @@ store_element :: proc(
 
 // push answers the new length. Nothing from Set_Length to the store allocates, so no collection
 // reads the new slot before it holds the element.
-@(private)
 push :: proc(s: ^Func_State, array, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	ir.emit(&s.fb, ir.VOID, ir.Reserve{array = array}, span)
 	length := ir.emit(&s.fb, ir.F64, ir.Length{value = array}, span)
@@ -356,7 +342,6 @@ push :: proc(s: ^Func_State, array, value: ir.Value_ID, span: source.Span) -> ir
 }
 
 // lower_pop reads the last element, then shortens the array over it.
-@(private)
 lower_pop :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -412,7 +397,6 @@ lower_pop :: proc(
 
 // lower_push evaluates every argument before the first push, as Node evaluates the whole list, and
 // answers the length after the last one.
-@(private)
 lower_push :: proc(
 	s: ^Func_State,
 	node: ast.Call,
@@ -448,7 +432,6 @@ lower_push :: proc(
 
 // lower_join passes the string constant "," for a separator the call leaves out, or one that is
 // undefined when it runs.
-@(private)
 lower_join :: proc(
 	s: ^Func_State,
 	node: ast.Call,
@@ -475,7 +458,6 @@ lower_join :: proc(
 // code(env, a, b) -> f64 with the two elements as the array holds them, which is the closure
 // convention as it stands when the comparator's class signature is exactly that. Any other class
 // goes through an adapter (sort_adapter).
-@(private)
 lower_sort :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -514,7 +496,6 @@ lower_sort :: proc(
 	return ir.emit(&s.fb, node_type(s, id), call, span)
 }
 
-@(private)
 lower_for_each :: proc(
 	s: ^Func_State,
 	node: ast.Call,
@@ -541,7 +522,6 @@ lower_for_each :: proc(
 
 // lower_map makes the result at the length it reads once, and each pass reads its element through
 // a check that fails where the callback shortened the array.
-@(private)
 lower_map :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -577,7 +557,6 @@ lower_map :: proc(
 }
 
 // lower_filter pushes each element the callback keeps onto an array that starts empty.
-@(private)
 lower_filter :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -626,7 +605,6 @@ lower_filter :: proc(
 // lower_reduce without an initial value starts from the first element and fails on an empty array
 // with Node's message. With one, the value is evaluated before the length is read, as the arguments
 // of a call come before its body.
-@(private)
 lower_reduce :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -708,7 +686,6 @@ lower_reduce :: proc(
 // callback writes, then the index and, for reduce, the accumulator. next is the index of the next
 // pass, computed at the top of the body, where it dominates the back edge: nothing in an inlined
 // callback can jump to the end of the pass but its own `return`, which joins inside the body.
-@(private)
 Inline_Loop :: struct {
 	entry:       ir.Block_ID, // the block that jumps into the header
 	header:      ir.Block_ID,
@@ -722,7 +699,6 @@ Inline_Loop :: struct {
 }
 
 // open_inline_loop leaves the builder in the header, where reduce adds the accumulator's phi.
-@(private)
 open_inline_loop :: proc(
 	s: ^Func_State,
 	callback: ast.Node_ID,
@@ -748,7 +724,6 @@ open_inline_loop :: proc(
 // leave_past_either_end leaves the loop at the length read before the first pass or at the
 // length the array has now, whichever comes first: forEach, filter and reduce stop where a
 // callback shortened the array.
-@(private)
 leave_past_either_end :: proc(
 	s: ^Func_State,
 	loop: ^Inline_Loop,
@@ -761,7 +736,6 @@ leave_past_either_end :: proc(
 
 // leave_unless_before goes on in a block of its own while the index is below `bound`, and leaves
 // the loop otherwise.
-@(private)
 leave_unless_before :: proc(
 	s: ^Func_State,
 	loop: ^Inline_Loop,
@@ -787,7 +761,6 @@ leave_unless_before :: proc(
 
 // begin_pass sets the index of the next pass and answers the element of this one. whole is array
 // as whole_array gave it before the loop.
-@(private)
 begin_pass :: proc(
 	s: ^Func_State,
 	loop: ^Inline_Loop,
@@ -804,7 +777,6 @@ begin_pass :: proc(
 
 // close_inline_loop takes the back edge unless the pass cannot end, and leaves the builder in the
 // exit. A poisoned accumulator keeps its old value, so the IR stays whole; it was reported.
-@(private)
 close_inline_loop :: proc(
 	s: ^Func_State,
 	loop: ^Inline_Loop,

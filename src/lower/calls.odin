@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "core:fmt"
@@ -33,7 +34,6 @@ format string in the first argument decides how the others print, so only the ru
 the line. Every argument is evaluated before the call, as Node does it.
 */
 
-@(private)
 lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	ref := s.typed.node_symbols[node.callee]
@@ -64,7 +64,6 @@ lower_call :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Call) -> ir.Value_
 	return emit_class_call(s, callee, given, len(given), node_type(s, id), span)
 }
 
-@(private)
 lower_method_call :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -81,7 +80,6 @@ lower_method_call :: proc(
 
 // Callee is what a call of the program calls, by its class signature: a declared function that
 // takes no environment, directly, or a function value, through its closure.
-@(private)
 Callee :: struct {
 	func:      ir.Func_ID, // called directly when closure is NO_VALUE
 	closure:   ir.Value_ID,
@@ -91,7 +89,6 @@ Callee :: struct {
 // call_target evaluates a function value once, before the arguments, as JavaScript does; the name
 // of a declared function with no environment evaluates nothing. span is where a function type with
 // no signature is reported.
-@(private)
 call_target :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -136,7 +133,6 @@ call_target :: proc(
 
 // lower_arguments evaluates every argument in order, then checks the flow of each into its
 // parameter (flow_checked); class_arguments converts them.
-@(private)
 lower_arguments :: proc(s: ^Func_State, node: ast.Call) -> (args: []ir.Value_ID, ok: bool) {
 	function, is_function := s.types[s.typed.node_types[node.callee]].(check.Function)
 	args = make([]ir.Value_ID, len(node.args), context.temp_allocator)
@@ -156,7 +152,6 @@ lower_arguments :: proc(s: ^Func_State, node: ast.Call) -> (args: []ir.Value_ID,
 
 // emit_class_call calls with the arguments of the callee's signature (class_arguments), the first
 // count of them given, and reads the answer as want.
-@(private)
 emit_class_call :: proc(
 	s: ^Func_State,
 	callee: Callee,
@@ -188,7 +183,6 @@ emit_class_call :: proc(
 // where that is wider, and fills every other position of the signature with the zero of its type,
 // which is undefined for a tagged one: a value a function does not take must not land where
 // another member of its class takes something else.
-@(private)
 class_arguments :: proc(
 	s: ^Func_State,
 	signature: Signature,
@@ -215,7 +209,6 @@ class_arguments :: proc(
 
 // Callback is what an array method calls for each element: an arrow written in the call, inlined
 // (inline_arrow), or anything else, called through call_target.
-@(private)
 Callback :: struct {
 	arrow:    ast.Node_ID, // NO_NODE unless the callback is inlined
 	callee:   Callee, // what is called when the callback is not inlined
@@ -224,7 +217,6 @@ Callback :: struct {
 }
 
 // callback_of evaluates a function value once, here, before the loop that calls it.
-@(private)
 callback_of :: proc(s: ^Func_State, id: ast.Node_ID) -> (callback: Callback, ok: bool) {
 	span := s.tree.nodes[id].span
 	function := s.types[s.typed.node_types[id]].(check.Function) or_return
@@ -252,7 +244,6 @@ callback_of :: proc(s: ^Func_State, id: ast.Node_ID) -> (callback: Callback, ok:
 //
 // A callback typed void answers what comes back, as Node keeps what the function returned, and
 // undefined where nothing comes back at all.
-@(private)
 call_callback :: proc(
 	s: ^Func_State,
 	callback: Callback,
@@ -287,7 +278,6 @@ call_callback :: proc(
 // only another member of its signature class takes: boxed where the class slot is tagged, and the
 // class zero where the slot holds something else, such as a string where the lib passes the index,
 // which is what a position the lib passes nothing to gets as well.
-@(private)
 lib_argument :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -304,7 +294,6 @@ lib_argument :: proc(
 // called_as_it_stands says whether a signature takes what the runtime passes a comparator: two
 // elements of the array, as C types, and a number back. An element that may be null goes only to a
 // parameter that may be the same null.
-@(private)
 called_as_it_stands :: proc(signature: Signature, element: ir.Type) -> bool {
 	if len(signature.params) != 2 || signature.result != ir.F64 {
 		return false
@@ -327,7 +316,6 @@ called_as_it_stands :: proc(signature: Signature, element: ir.Type) -> bool {
 // names when it fails. It is built on the spot, in the middle of the function that needs it:
 // declare_func appends a row and end_func writes it back by index, so the function being built is
 // not disturbed.
-@(private)
 sort_adapter :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
@@ -384,7 +372,6 @@ sort_adapter :: proc(
 // func declares, as a body of the class would (begin_function), calls func, and gives its answer as
 // the class's result; the positions of the class past func's own are left alone. There is one per
 // function, so its value is one closure and `===` holds. Built on the spot, as sort_adapter is.
-@(private)
 class_adapter :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
@@ -427,7 +414,6 @@ class_adapter :: proc(
 }
 
 // lower_strategy takes the receiver of a method, and NO_VALUE for a name of the lib.
-@(private)
 lower_strategy :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -506,7 +492,6 @@ lower_strategy :: proc(
 // runtime_argument lowers an argument and hands it over in the C type its row declares: boxed for a
 // tagged parameter, where a narrowed read stays as it is (lower_raw), a reference as it is, and a
 // tagged value unboxed after a check where the parameter is static.
-@(private)
 runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) -> ir.Value_ID {
 	span := s.tree.nodes[arg].span
 	value: ir.Value_ID
@@ -541,7 +526,6 @@ runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) ->
 // Stand_In is what the runtime takes for an argument the call leaves out: for a number, the one the
 // specification treats exactly as undefined there (abi.MISSING_END and its kin), for join's
 // separator the string ",".
-@(private)
 Stand_In :: union {
 	f64,
 	string,
@@ -549,7 +533,6 @@ Stand_In :: union {
 
 // optional_argument hands over an argument that may be undefined at run time as the stand-in,
 // which is emitted, and a text interned, only where the argument turns out undefined.
-@(private)
 optional_argument :: proc(
 	s: ^Func_State,
 	arg: ast.Node_ID,
@@ -599,7 +582,6 @@ optional_argument :: proc(
 }
 
 // lower_runtime stays quiet about a call with the wrong count: check already reported it.
-@(private)
 lower_runtime :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -626,7 +608,6 @@ lower_runtime :: proc(
 
 // lower_method passes the receiver first. An argument the call leaves out, always a number, takes
 // the row's stand-in for undefined.
-@(private)
 lower_method :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -664,7 +645,6 @@ lower_method :: proc(
 }
 
 // number_args stays quiet about a call with the wrong count: check already reported it.
-@(private)
 number_args :: proc(s: ^Func_State, node: ast.Call, want: int) -> ([]ir.Value_ID, bool) {
 	if len(node.args) != want {
 		return nil, false
@@ -679,7 +659,6 @@ number_args :: proc(s: ^Func_State, node: ast.Call, want: int) -> ([]ir.Value_ID
 	return args, true
 }
 
-@(private)
 lower_fold :: proc(s: ^Func_State, node: ast.Call, fold: Fold, span: source.Span) -> ir.Value_ID {
 	if len(node.args) == 0 {
 		return ir.emit(&s.fb, ir.F64, ir.Const_Number{value = fold.empty}, span)
@@ -700,7 +679,6 @@ lower_fold :: proc(s: ^Func_State, node: ast.Call, fold: Fold, span: source.Span
 }
 
 // lower_console answers undefined, the value of a call the lib types void.
-@(private)
 lower_console :: proc(
 	s: ^Func_State,
 	node: ast.Call,
@@ -731,7 +709,6 @@ lower_console :: proc(
 // since a call may have written the variable after the test. Any other argument typed undefined
 // or null is that constant, and one typed void that answered nothing, as a ternary of two void
 // calls, is undefined.
-@(private)
 console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	value := lower_raw(s, id)
@@ -753,7 +730,6 @@ console_argument :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 
 // lower_process_exit emits no terminator of its own: the export never returns, and the statement
 // that holds the call closes its block with an unreachable terminator.
-@(private)
 lower_process_exit :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	code := ir.NO_VALUE
 	if len(node.args) > 0 {
@@ -774,7 +750,6 @@ lower_process_exit :: proc(s: ^Func_State, node: ast.Call, span: source.Span) ->
 
 // lower_is_integer is Number.isInteger: the value equals its own truncation and is finite. The
 // second half runs only when the first holds, since an infinity passes the first.
-@(private)
 lower_is_integer :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	args, ok := number_args(s, node, 1)
 	if !ok {
@@ -813,7 +788,6 @@ lower_is_integer :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> i
 
 // lower_sign is Math.sign: 1, -1, or the value itself, which keeps a negative zero and a NaN as
 // they are.
-@(private)
 lower_sign :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	args, ok := number_args(s, node, 1)
 	if !ok {

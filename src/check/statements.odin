@@ -379,7 +379,5 @@ check_return :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Return) {
 		append(c.at.returns, value)
 		return
 	}
-	if !fits(c, value, c.at.result) {
-		report_assign_failure(c, span_of(c, node.value), value, c.at.result)
-	}
+	flow(c, value, c.at.result, span_of(c, node.value))
 }

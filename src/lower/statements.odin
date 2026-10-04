@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "../ast"
@@ -21,7 +22,6 @@ terminator and a `return` in the middle of one is ordinary TypeScript.
 
 // build_module_init opens by writing the zero of its type into every global of the module, which
 // is the rule of the package doc.
-@(private)
 build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) {
 	span := module_span(low, file)
 	s := begin_function(low, file, id, ast.ROOT, bind.MODULE_SCOPE, nil, span)
@@ -54,7 +54,6 @@ build_module_init :: proc(low: ^Lowering, file: source.File_ID, id: ir.Func_ID) 
 	end_function(&s)
 }
 
-@(private)
 build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 	tree := &low.prog.trees[file]
 	bound := &low.prog.bound[file]
@@ -87,7 +86,6 @@ build_functions :: proc(low: ^Lowering, file: source.File_ID) {
 // lower_arrow_body lowers the body of an arrow, a closure's or one inline_arrow puts in a loop, and
 // leaves it. A block runs off its end as close_body says. An expression either does not come back,
 // or the arrow returns it, one typed void as leave says.
-@(private)
 lower_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
 	if _, is_block := s.tree.nodes[body].variant.(ast.Block); is_block {
 		lower_statement(s, body)
@@ -114,7 +112,6 @@ lower_arrow_body :: proc(s: ^Func_State, body: ast.Node_ID, span: source.Span) {
 // pass, as a new call's would. `break` and `continue` cannot leave an arrow, so the loops around the
 // call are no targets inside it. Inside it, a `return` produces the arrow's own result and goes to
 // the join of its Inline_Frame.
-@(private)
 inline_arrow :: proc(
 	s: ^Func_State,
 	callback: Callback,
@@ -157,7 +154,6 @@ inline_arrow :: proc(
 // for a result of void, and with undefined for one that may be undefined. Any other result makes
 // the end unreachable, since check reports a body that promises a value and can reach its end
 // (T3024).
-@(private)
 close_body :: proc(s: ^Func_State, span: source.Span) {
 	if terminated(s) {
 		return
@@ -180,7 +176,6 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 
 // leave returns from the innermost inlined arrow, a jump to the join of its frame, or else from the
 // function. A body typed void gives back what its value turned out to be (handed_on).
-@(private)
 leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if len(s.inlines) == 0 {
 		leave_function(s, value, span)
@@ -198,7 +193,6 @@ leave :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 
 // leave_function returns what the function's own type gives as the result of its signature, boxed
 // where that is wider. Poison ends the block unreachable; it was reported.
-@(private)
 leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 	if s.result == ir.VOID {
 		ir.emit(&s.fb, ir.VOID, ir.Return{value = ir.NO_VALUE}, span)
@@ -220,7 +214,6 @@ leave_function :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) {
 // handed_on is what a body typed void gives back where the caller keeps the answer as want: what a
 // call in it answered, since Node returns that whatever the type says, or undefined where nothing
 // came back. Nothing reads an answer wanted as VOID, so no undefined is made for it.
-@(private)
 handed_on :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -236,7 +229,6 @@ handed_on :: proc(
 
 // lower_statement first replaces a block the last terminator closed, so whatever follows a
 // `return` still has somewhere to go.
-@(private)
 lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 	if id == ast.NO_NODE {
 		return
@@ -288,7 +280,6 @@ lower_statement :: proc(s: ^Func_State, id: ast.Node_ID) {
 
 // lower_declarator leaves a binding with no initializer at the zero it was given when its body
 // opened.
-@(private)
 lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 	node := s.tree.nodes[id].variant.(ast.Declarator)
 	span := s.tree.nodes[id].span
@@ -331,7 +322,6 @@ lower_declarator :: proc(s: ^Func_State, id: ast.Node_ID) {
 
 // lower_return inside an inlined arrow ends the arrow and not the function around it (leave), a bare
 // one as well.
-@(private)
 lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
 	if node.value == ast.NO_NODE {
 		close_body(s, span)
@@ -348,7 +338,6 @@ lower_return :: proc(s: ^Func_State, node: ast.Return, span: source.Span) {
 
 // lower_jump ignores a missing frame: bind has already reported a `break` or `continue` that leaves
 // nothing, so the program will not be built.
-@(private)
 lower_jump :: proc(s: ^Func_State, frame: ^Loop_Frame, is_continue: bool, span: source.Span) {
 	if frame == nil {
 		return
@@ -366,7 +355,6 @@ lower_jump :: proc(s: ^Func_State, frame: ^Loop_Frame, is_continue: bool, span: 
 // branch_condition puts a constant in place of a condition this build cannot compile, which was
 // reported already: it keeps the shape of the program, so the statements inside are still walked
 // and everything wrong in them is still named.
-@(private)
 branch_condition :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	if id == ast.NO_NODE {
 		return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
@@ -378,7 +366,6 @@ branch_condition :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> 
 	return ir.emit(&s.fb, ir.BOOL, ir.Const_Bool{value = true}, span)
 }
 
-@(private)
 lower_if :: proc(s: ^Func_State, node: ast.If, span: source.Span) {
 	test := branch_condition(s, node.condition, span)
 	then_block := ir.add_block(&s.fb)
@@ -416,7 +403,6 @@ lower_if :: proc(s: ^Func_State, node: ast.If, span: source.Span) {
 	open_join(s, join, edges[:], span)
 }
 
-@(private)
 Loop_Blocks :: struct {
 	header: ir.Block_ID,
 	body:   ir.Block_ID,
@@ -424,7 +410,6 @@ Loop_Blocks :: struct {
 	exit:   ir.Block_ID,
 }
 
-@(private)
 open_loop :: proc(s: ^Func_State) -> Loop_Blocks {
 	return {
 		header = ir.add_block(&s.fb),
@@ -434,7 +419,6 @@ open_loop :: proc(s: ^Func_State) -> Loop_Blocks {
 	}
 }
 
-@(private)
 enter_loop :: proc(
 	s: ^Func_State,
 	loop: ast.Node_ID,
@@ -450,7 +434,6 @@ enter_loop :: proc(
 
 // open_latch answers false when nothing reaches the latch, which leaves the header with the one
 // edge that entered it.
-@(private)
 open_latch :: proc(
 	s: ^Func_State,
 	latch: ir.Block_ID,
@@ -468,7 +451,6 @@ open_latch :: proc(
 
 // close_latch renews the boxed `let` bindings of a `for` header ahead of the update, once every
 // `continue` has joined, so the next pass has bindings of its own.
-@(private)
 close_latch :: proc(
 	s: ^Func_State,
 	blocks: Loop_Blocks,
@@ -491,7 +473,6 @@ close_latch :: proc(
 	patch_header(s, phis, assigned, back)
 }
 
-@(private)
 lower_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.While, span: source.Span) {
 	lower_for(s, id, ast.For{condition = node.condition, body = node.body}, span)
 }
@@ -500,7 +481,6 @@ lower_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.While, span: sour
 // ECMAScript's CreatePerIterationEnvironment does: once after the init, so that a closure the init
 // made keeps the first binding, and again at the latch. lower_while shares this with an id that
 // opens no scope.
-@(private)
 lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.Span) {
 	renewed: []bind.Symbol_ID
 	_, is_for := s.tree.nodes[id].variant.(ast.For)
@@ -556,7 +536,6 @@ lower_for :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For, span: source.S
 }
 
 // boxed_lets lists the `let` bindings of a scope that live in a box, in symbol order.
-@(private)
 boxed_lets :: proc(s: ^Func_State, scope: bind.Scope_ID) -> []bind.Symbol_ID {
 	found := make([dynamic]bind.Symbol_ID, 0, 2, context.temp_allocator)
 	for symbol in s.bound.scopes[scope].symbols {
@@ -569,14 +548,12 @@ boxed_lets :: proc(s: ^Func_State, scope: bind.Scope_ID) -> []bind.Symbol_ID {
 }
 
 // renew_bindings moves each variable into a box of its own, holding the value it has now.
-@(private)
 renew_bindings :: proc(s: ^Func_State, symbols: []bind.Symbol_ID, span: source.Span) {
 	for symbol in symbols {
 		bind_local(s, symbol, read_local(s, symbol, span), span)
 	}
 }
 
-@(private)
 lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span: source.Span) {
 	assigned := assigned_locals(s, id)
 	blocks := open_loop(s)
@@ -615,7 +592,6 @@ lower_do_while :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Do_While, span
 	open_join(s, blocks.exit, exits[:], span)
 }
 
-@(private)
 leave_loop :: proc(
 	s: ^Func_State,
 	exit: ir.Block_ID,
@@ -631,7 +607,6 @@ leave_loop :: proc(
 
 // lower_switch builds the comparisons first and the case bodies after, in source order. A body is a
 // join of the test that picked it and of the case above it, when that one fell through.
-@(private)
 lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: source.Span) {
 	subject := switch_subject(s, node.value)
 	// Before the first test: a case test may call a function declared in one of the cases.
@@ -702,7 +677,6 @@ lower_switch :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Switch, span: so
 
 // case_test stays quiet about a subject this build cannot compare: the expression itself reported
 // it.
-@(private)
 case_test :: proc(s: ^Func_State, subject: ^Switch_Subject, value: ast.Node_ID) -> ir.Value_ID {
 	span := s.tree.nodes[value].span
 	if subject.operand != ir.NO_VALUE {
@@ -723,7 +697,6 @@ case_test :: proc(s: ^Func_State, subject: ^Switch_Subject, value: ast.Node_ID) 
 // lower_for_of reads the length again before every step, as the iterator does, so a body that
 // pushes is walked to the new end. A string is walked by code point: a step takes a surrogate pair
 // whole and moves the index by the length of what it took.
-@(private)
 lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: source.Span) {
 	iterable := lower_expression(s, node.iterable)
 	declaration := s.tree.nodes[node.declaration].variant.(ast.Var_Decl)

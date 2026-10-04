@@ -102,7 +102,8 @@ add_entry :: proc(c: ^Closure, input: string) -> Driver_Error {
 		return {kind = .Entry_Unreadable, detail = detail}
 	}
 
-	_ = add_file(c, display_of(input, c.arena), absolute, strip_bom(string(data)))
+	entry := add_file(c, display_of(input, c.arena), absolute, strip_bom(string(data)))
+	ensure(entry == program.ENTRY, "the entry file comes right after the lib")
 	return {}
 }
 

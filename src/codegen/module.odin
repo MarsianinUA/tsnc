@@ -82,7 +82,7 @@ build_module :: proc(
 	module: llvm.LLVMModuleRef,
 	program: ^ir.Program_IR,
 	unit: ir.Unit,
-) -> Error {
+) {
 	m := Module {
 		ctx     = ctx,
 		module  = module,
@@ -107,7 +107,6 @@ build_module :: proc(
 	for id in unit.funcs {
 		build_func(&m, id)
 	}
-	return .None
 }
 
 @(private)

@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "core:strings"
@@ -99,7 +100,6 @@ binding_type :: proc(
 	return ir_type(low, types, id)
 }
 
-@(private)
 map_type :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -131,7 +131,6 @@ map_type :: proc(
 
 // made_type is the type of a cell made as this object or array type: the layout of its own class,
 // where the type is a view too, whose places also hold the layouts that flow in.
-@(private)
 made_type :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -151,7 +150,6 @@ made_type :: proc(
 }
 
 // object_view answers the layouts a place of an object type holds where it holds more than one.
-@(private)
 object_view :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -165,7 +163,6 @@ object_view :: proc(
 	return views, found
 }
 
-@(private)
 array_view :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -179,7 +176,6 @@ array_view :: proc(
 }
 
 // view_layouts interns and answers the layouts of an object or array type that is a view.
-@(private)
 view_layouts :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -245,7 +241,6 @@ construct_text :: proc(types: []check.Type, id: check.Type_ID) -> string {
 
 // shallow_kind is representation with an object or an array taken as a reference and not looked
 // into, which is what a slot and a union member need.
-@(private)
 shallow_kind :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_Kind, ok: bool) {
 	switch v in types[id] {
 	case check.Basic_Kind:
@@ -309,7 +304,6 @@ shallow_kind :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_K
 // reference_union says whether one pointer holds a union: one reference type with exactly one of
 // null and undefined (strings, functions, or one object or array type, which member names), or
 // objects and arrays of several types with at most one of them, which are an Any_Ref.
-@(private)
 reference_union :: proc(
 	types: []check.Type,
 	union_type: check.Union,
@@ -344,7 +338,6 @@ reference_union :: proc(
 
 // nullable_member is the object or array type of a union that holds one with null or undefined,
 // which gives the pointer its layout.
-@(private)
 nullable_member :: proc(
 	types: []check.Type,
 	union_type: check.Union,
@@ -360,7 +353,6 @@ nullable_member :: proc(
 
 // shallow_type is shallow_kind with what 0 stands for in a reference that may hold null, which is
 // what a slot needs. It carries no layout.
-@(private)
 shallow_type :: proc(types: []check.Type, id: check.Type_ID) -> (type: ir.Type, ok: bool) {
 	type.kind = shallow_kind(types, id) or_return
 	if v, is_union := types[id].(check.Union); is_union {
@@ -371,7 +363,6 @@ shallow_type :: proc(types: []check.Type, id: check.Type_ID) -> (type: ir.Type, 
 
 // optional_type is what a read of an optional field or parameter answers: undefined as well, which
 // a reference takes as its null and anything else as a tag.
-@(private)
 optional_type :: proc(type: ir.Type) -> ir.Type {
 	if ir.is_reference(type) && type.nullish != .Null {
 		return ir.nullable(type, .Undefined)
@@ -379,7 +370,6 @@ optional_type :: proc(type: ir.Type) -> ir.Type {
 	return ir.TAGGED
 }
 
-@(private)
 field_slot :: proc(types: []check.Type, field: check.Field) -> (slot: abi.Slot_Kind, ok: bool) {
 	type := shallow_type(types, field.type) or_return
 	if field.optional {
@@ -388,7 +378,6 @@ field_slot :: proc(types: []check.Type, field: check.Field) -> (slot: abi.Slot_K
 	return slot_of(type), true
 }
 
-@(private)
 element_slot :: proc(
 	types: []check.Type,
 	element: check.Type_ID,
@@ -402,7 +391,6 @@ element_slot :: proc(
 
 // slot_of gives a slot of `void` the Tagged kind: map over a callback that returns nothing makes an
 // array of undefined.
-@(private)
 slot_of :: proc(type: ir.Type) -> abi.Slot_Kind {
 	switch type.kind {
 	case .F64:
@@ -436,7 +424,6 @@ slot_of :: proc(type: ir.Type) -> abi.Slot_Kind {
 }
 
 // object_slots is the shallow shape of an object, in the canonical order of its fields.
-@(private)
 object_slots :: proc(types: []check.Type, object: check.Object) -> (slots: []ir.Slot, ok: bool) {
 	slots = make([]ir.Slot, len(object.fields), context.temp_allocator)
 	for field, i in object.fields {
@@ -452,12 +439,10 @@ object_slots :: proc(types: []check.Type, object: check.Object) -> (slots: []ir.
 
 // object_layout is the layout of the object's widening class, or of its own shape when it takes
 // part in no widening.
-@(private)
 object_layout :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -> ir.Layout_ID {
 	return ir.object_layout(&low.builder, class_slots(low, types, object))
 }
 
-@(private)
 class_slots :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -> []ir.Slot {
 	slots, _ := object_slots(types, object)
 	if joined, found := class_value(&low.objects, object_key(types, object, slots)); found {
@@ -469,7 +454,6 @@ class_slots :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -
 // object_key is the key of an object type's class: its slots, and what each reference slot holds, a
 // string, a function or an object, which the slot kind does not tell. So `{pos: string}` and
 // `{pos: Vec}`, one layout, are two classes, and a flow of the one leaves the other alone.
-@(private)
 object_key :: proc(types: []check.Type, object: check.Object, slots: []ir.Slot) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	for slot, i in slots {
@@ -488,7 +472,6 @@ object_key :: proc(types: []check.Type, object: check.Object, slots: []ir.Slot) 
 
 // object_held is what each field of an object type holds as the type declares it, in the order of
 // its slots.
-@(private)
 object_held :: proc(types: []check.Type, object: check.Object) -> []ir.Type {
 	held := make([]ir.Type, len(object.fields), context.temp_allocator)
 	for field, i in object.fields {
@@ -518,7 +501,6 @@ Memo_Signature :: struct {
 	signature: Signature,
 }
 
-@(private)
 make_memos :: proc(results: []check.Check_Result) -> []Type_Memo {
 	memos := make([]Type_Memo, len(results), context.temp_allocator)
 	for result, i in results {
@@ -533,7 +515,6 @@ make_memos :: proc(results: []check.Check_Result) -> []Type_Memo {
 
 // memo_of finds the memo by the table itself: every types slice lower is given is the table of one
 // check result, and there is one result per partition.
-@(private)
 memo_of :: proc(low: ^Lowering, types: []check.Type) -> ^Type_Memo {
 	for &memo in low.memos {
 		if raw_data(memo.of) == raw_data(types) {

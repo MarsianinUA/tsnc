@@ -39,10 +39,6 @@ error_text :: proc(err: driver.Driver_Error) -> string {
 		return fmt.tprintf("%s is larger than a compile unit can address", err.detail)
 	case .Out_Of_Memory:
 		return "out of memory"
-	case .Two_Artifacts:
-		return "-emit-llvm and -emit-ir name two different files\n  hint: pass one of them"
-	case .Nothing_To_Run:
-		return NOTHING_TO_RUN
 	case .Cross_Link:
 		return CROSS_LINK
 	case .Output_Unnamable:
@@ -87,9 +83,6 @@ error_text :: proc(err: driver.Driver_Error) -> string {
 
 // The messages too long to sit inside the switch. A string literal is the one thing the formatter
 // cannot wrap, so the long ones live here and the switch stays a table of one line per kind.
-
-@(private = "file")
-NOTHING_TO_RUN :: "tsnc run builds a program and runs it, while -emit-llvm and -emit-ir write a file\n  hint: `tsnc build` writes those"
 
 @(private = "file")
 CROSS_LINK :: "v1 builds a program for this machine only\n  hint: -emit-llvm and -emit-ir work for any -target:"

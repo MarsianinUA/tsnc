@@ -458,9 +458,7 @@ adds_flow :: proc(c: ^Checker, root: ast.Node_ID) -> bool {
 @(private)
 check_initializer :: proc(c: ^Checker, init: ast.Node_ID, declared: Type_ID) {
 	value := check_expression(c, init, declared)
-	if !fits(c, value, declared) {
-		report_assign_failure(c, span_of(c, init), value, declared)
-	}
+	flow(c, value, declared, span_of(c, init))
 }
 
 // written_signature types a function whose result is written out, and leaves its body for
@@ -599,7 +597,5 @@ check_body :: proc(c: ^Checker, body: ast.Node_ID, result: Type_ID, returns: ^[d
 		append(returns, type)
 		return
 	}
-	if !fits(c, type, result) {
-		report_assign_failure(c, span_of(c, body), type, result)
-	}
+	flow(c, type, result, span_of(c, body))
 }

@@ -328,7 +328,7 @@ REGISTRY := [Code]Row {
 	.Not_Lowered = {
 		number = 2027,
 		text = "tsnc cannot compile {0} yet",
-		hint = "it is part of the v1 language but not compiled yet; `tsnc check` already types the whole program",
+		hint = "it is part of the v1 language, but this version of tsnc does not compile it yet",
 	},
 	.Function_To_String = {
 		number = 2028,

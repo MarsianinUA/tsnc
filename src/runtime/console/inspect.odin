@@ -25,6 +25,7 @@ and an object or an array first builds one such text per entry, since the entrie
 it fits on one line.
 */
 
+@(private)
 Inspect_Options :: struct {
 	depth:       int, // the levels of arrays and objects that print before [Array] and [Object]
 	colors:      bool,
@@ -69,6 +70,7 @@ Inspector :: struct {
 	budget:        [dynamic]int, // by indentation
 }
 
+@(private)
 inspect :: proc(heap: ^gc.Heap, v: abi.Tagged, options: Inspect_Options, units: ^[dynamic]u16) {
 	ins := Inspector {
 		heap        = heap,

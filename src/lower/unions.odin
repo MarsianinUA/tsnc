@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "core:slice"
@@ -27,11 +28,6 @@ objects, going into a static type), `as`, `x!`, a tag test for `typeof`, `null` 
 the runtime rows for `typeof` as a value, `===`, truthiness and ToString, and a dispatch over the
 layouts for a field of a union of objects.
 
-An `any` never becomes a function: only its tag could be checked, never its signature, and a closure
-called through the wrong signature is a wrong program. check refuses what JavaScript would do to an
-`any` by converting it or looking something up at run time; lower refuses the one move only a flow
-shows (flow_intact) and `as`.
-
 The checks are shallow. A layout is a shape, so two object types of one layout, such as
 `{kind: "a", v: number}` and `{kind: "b", v: number}`, pass for each other, and an `as` to a literal
 type checks the tag only.
@@ -41,7 +37,6 @@ type checks the tag only.
 // the value holds another kind, or for an object or an array another layout. A closure is checked
 // by its tag only: a function in a union came in through a flow check recorded, so its signature
 // class is the member's.
-@(private)
 unbox_checked :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -109,7 +104,6 @@ unbox_checked :: proc(
 	return result
 }
 
-@(private)
 present_checked :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -122,7 +116,6 @@ present_checked :: proc(
 
 // present types a reference a test proved not null as present. A present value passes as it is: a
 // local that may hold null holds a present reference as it was given.
-@(private)
 present :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	if value == ir.NO_VALUE || value_type(s, value).nullish == .None {
 		return value
@@ -134,7 +127,6 @@ present :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Val
 // layout_checked reads a reference of several layouts as the one want names, after a Layout_Test
 // that fails with `error` where the cell has another. A null passes as want's null where want may
 // hold one, and fails where it may not.
-@(private)
 layout_checked :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -188,7 +180,6 @@ layout_checked :: proc(
 
 // as_layout types the object a dispatch on layouts found: the unbox of a tagged value, or a
 // reference of several layouts as the one the dispatch tested.
-@(private)
 as_layout :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -201,19 +192,16 @@ as_layout :: proc(
 	return ir.emit(&s.fb, ir.ref(layout), ir.As_Layout{cell = present(s, value, span)}, span)
 }
 
-@(private)
 nullish_tag :: proc(type: ir.Type) -> abi.Tag {
 	return .Null if type.nullish == .Null else .Undefined
 }
 
-@(private)
 may_be_nullish :: proc(type: ir.Type) -> bool {
 	return type == ir.TAGGED || type.nullish != .None
 }
 
 // nullish_test tests whether a value holds null or undefined, as tags name them. A reference
 // that may hold null holds only the one its 0 stands for, and a present one neither.
-@(private)
 nullish_test :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -231,7 +219,6 @@ nullish_test :: proc(
 }
 
 // tag_of is the tag a value of a static type has once it is boxed; an array is an object there.
-@(private)
 tag_of :: proc(type: ir.Type) -> (abi.Tag, bool) {
 	switch type.kind {
 	case .F64:
@@ -256,7 +243,6 @@ tag_of :: proc(type: ir.Type) -> (abi.Tag, bool) {
 // as present. Either fails the program where the value holds something else, which only a value
 // that came through `any`, or one changed after the test that narrowed it, can do. representation
 // comes first, so a node that stays tagged interns nothing.
-@(private)
 narrowed :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -284,7 +270,6 @@ narrowed :: proc(
 
 // typeof_tags is the set of tags whose values `typeof` answers the word for. "bigint" and "symbol"
 // name no value of v1, and `==` still lets a program compare with them.
-@(private)
 typeof_tags :: proc(word: string) -> (ir.Tag_Set, bool) {
 	switch word {
 	case "undefined":
@@ -304,7 +289,6 @@ typeof_tags :: proc(word: string) -> (ir.Tag_Set, bool) {
 }
 
 // members_of lists the members of a union, or the type itself for any other.
-@(private)
 members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
 	if union_type, is_union := types[id].(check.Union); is_union {
 		return union_type.members
@@ -316,7 +300,6 @@ members_of :: proc(types: []check.Type, id: check.Type_ID) -> []check.Type_ID {
 
 // lower_typeof answers the word statically where the operand's value has a static representation.
 // `typeof x === "number"` never gets here: it is a tag test (lower_typeof_test).
-@(private)
 lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	value, word := typeof_operand(s, operand)
 	if value != ir.NO_VALUE {
@@ -330,7 +313,6 @@ lower_typeof :: proc(s: ^Func_State, operand: ast.Node_ID, span: source.Span) ->
 
 // typeof_value is the word of a value that may be null or undefined: the runtime's for a tagged
 // value, and for a reference one of two words, picked by a test for null.
-@(private)
 typeof_value :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	type := value_type(s, value)
 	if type == ir.TAGGED {
@@ -353,7 +335,6 @@ typeof_value :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> i
 	return join_values(s, join, {nothing, something}, {nullish, present}, ir.STR, span)
 }
 
-@(private)
 typeof_words :: proc(type: ir.Type) -> (nullish: string, present: string) {
 	nullish = "object" if type.nullish == .Null else "undefined"
 	#partial switch type.kind {
@@ -372,7 +353,6 @@ typeof_words :: proc(type: ir.Type) -> (nullish: string, present: string) {
 // since its word is known without it; closures.odin counts `typeof f` as a call, so a nested
 // function with no environment has no local to read. A name read before its declaration ran still
 // fails, as in Node.
-@(private)
 typeof_operand :: proc(
 	s: ^Func_State,
 	operand: ast.Node_ID,
@@ -405,7 +385,6 @@ typeof_operand :: proc(
 
 // typeof_word is the word `typeof` answers for the static type of its operand, whose value is
 // present where the type may hold null, or "" when only the tag of a tagged value could tell.
-@(private)
 typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 	type := s.typed.node_types[operand]
 	switch type {
@@ -439,7 +418,6 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 // one a test of its tag, and a reference that may hold null a test for null (typeof_is). matched is
 // false for any other comparison. Both sides run in source order, the literal's own side only when
 // it is more than a literal.
-@(private)
 lower_typeof_test :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -496,7 +474,6 @@ lower_typeof_test :: proc(
 	return test, true
 }
 
-@(private)
 typeof_is :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -521,7 +498,6 @@ typeof_is :: proc(
 }
 
 // literal_word answers the text of a node check typed as a string literal type.
-@(private)
 literal_word :: proc(s: ^Func_State, id: ast.Node_ID) -> (string, bool) {
 	literal, is_literal := s.types[s.typed.node_types[id]].(check.Literal)
 	if !is_literal {
@@ -530,7 +506,6 @@ literal_word :: proc(s: ^Func_State, id: ast.Node_ID) -> (string, bool) {
 	return literal.value.(string)
 }
 
-@(private)
 is_string_literal :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 	_, is_literal := s.tree.nodes[id].variant.(ast.String_Literal)
 	return is_literal
@@ -539,14 +514,12 @@ is_string_literal :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 // Switch_Subject is what the cases of a `switch` compare with. For `switch (typeof x)` where only
 // run time tells the word, it holds x, and a case that names a word tests x (typeof_is); the word
 // itself is made once, at the first case that is no literal, whose test dominates every later one.
-@(private)
 Switch_Subject :: struct {
 	value:   ir.Value_ID,
 	operand: ir.Value_ID, // x, or NO_VALUE
 }
 
 // switch_subject lowers the subject once, before the scope of the cases is entered.
-@(private)
 switch_subject :: proc(s: ^Func_State, id: ast.Node_ID) -> Switch_Subject {
 	subject := Switch_Subject {
 		value   = ir.NO_VALUE,
@@ -567,7 +540,6 @@ switch_subject :: proc(s: ^Func_State, id: ast.Node_ID) -> Switch_Subject {
 
 // typeof_case_test answers the test of a case of `switch (typeof x)` that holds x, and false for
 // matched when the case is no string literal and needs the word itself.
-@(private)
 typeof_case_test :: proc(
 	s: ^Func_State,
 	subject: ^Switch_Subject,
@@ -593,7 +565,6 @@ typeof_case_test :: proc(
 // compare_tagged is `===` or `!==` with a tagged side where compare_references found no null or
 // undefined to test for: the runtime compares, both sides boxed. A type check narrowed a side to
 // never decides: a call may have written the variable since the test that narrowed it.
-@(private)
 compare_tagged :: proc(
 	s: ^Func_State,
 	op: ir.Compare_Op,
@@ -621,7 +592,6 @@ compare_tagged :: proc(
 // null, an answer known before anything runs, the addresses of two objects or two functions, or the
 // tests of compare_nullable. Against a tagged side both go to the runtime boxed. handled = false
 // leaves the comparison to the caller.
-@(private)
 compare_references :: proc(
 	s: ^Func_State,
 	values: [2]ir.Value_ID,
@@ -661,7 +631,6 @@ compare_references :: proc(
 
 // one_reference says whether two references compare by address, null aside: one type, or an
 // object or an array against a reference of several layouts that may be it.
-@(private)
 one_reference :: proc(a, b: ir.Type) -> bool {
 	x, y := ir.non_null(a), ir.non_null(b)
 	return x == y || ir.fits(x, y) || ir.fits(y, x)
@@ -670,7 +639,6 @@ one_reference :: proc(a, b: ir.Type) -> bool {
 // compare_nullable is `===` of two references of one type, either of which may hold null: a null
 // side equals only a null that stands for the same nullish, and two present sides compare as
 // strings or by address.
-@(private)
 compare_nullable :: proc(
 	s: ^Func_State,
 	values: [2]ir.Value_ID,
@@ -711,7 +679,6 @@ compare_nullable :: proc(
 
 // nullish_tags answers the tag of a value that is null or undefined whatever runs: the constant, or
 // the answer of a call typed void.
-@(private)
 nullish_tags :: proc(s: ^Func_State, value: ir.Value_ID) -> (tags: ir.Tag_Set, nullish: bool) {
 	if value == ir.NO_VALUE {
 		return {}, false
@@ -725,7 +692,6 @@ nullish_tags :: proc(s: ^Func_State, value: ir.Value_ID) -> (tags: ir.Tag_Set, n
 	return {.Undefined}, value_type(s, value) == ir.VOID
 }
 
-@(private)
 is_nullish_constant :: proc(s: ^Func_State, value: ir.Value_ID) -> bool {
 	_, nullish := nullish_tags(s, value)
 	return nullish
@@ -735,7 +701,6 @@ is_nullish_constant :: proc(s: ^Func_State, value: ir.Value_ID) -> bool {
 // references is true exactly when it is neither null nor undefined, which is one tag test and no
 // call. Its declaration decides, since check narrows a read past calls that may write the variable
 // again.
-@(private)
 truthy_tagged :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -752,7 +717,6 @@ truthy_tagged :: proc(
 	return ir.emit(&s.fb, ir.BOOL, call, span)
 }
 
-@(private)
 declared_nullish_or_reference :: proc(s: ^Func_State, operand: ast.Node_ID) -> bool {
 	if operand == ast.NO_NODE {
 		return false
@@ -768,7 +732,6 @@ declared_nullish_or_reference :: proc(s: ^Func_State, operand: ast.Node_ID) -> b
 	return type != check.ERROR && nullish_or_reference(facts.result.types, type)
 }
 
-@(private)
 nullish_or_reference :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 	for member in members_of(types, id) {
 		switch member {
@@ -786,17 +749,11 @@ nullish_or_reference :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 
 // lower_as converts the way requirements 3.8 allows: a widening boxes or changes nothing, and a
 // narrowing of a tagged value, or of a reference that may be null, checks what it holds, failing
-// with Type_Assertion. An `any` or an `unknown` never becomes a type that holds a function.
-@(private)
+// with Type_Assertion.
 lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	value := lower_expression(s, node.expr)
-	from, to := s.typed.node_types[node.expr], s.typed.node_types[id]
-	if (from == check.ANY || from == check.UNKNOWN) && holds_function(s.types, to) {
-		what := "any" if from == check.ANY else "unknown"
-		report(s.low, .Any_Operation, span, "become a function", what)
-		return ir.NO_VALUE
-	}
+	to := s.typed.node_types[id]
 	target := node_type(s, id)
 	if value != ir.NO_VALUE && value_type(s, value).kind == .Any_Ref && target.kind == .Any_Ref {
 		check_members(s, value, to, .Type_Assertion, span)
@@ -814,7 +771,6 @@ lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 // check_members fails the program unless a tagged value holds a member of the union: the tag of a
 // primitive or a function member, or an object of the layout of an object or an array member. An
 // `any` member admits everything, and a literal member its whole kind.
-@(private)
 check_members :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -888,7 +844,6 @@ check_members :: proc(
 // dispatch_layouts ends the current block with a branch on the object a tagged value holds: to
 // hits[i] where it has layouts[i], and to failed where it is no object or has none of them. It
 // answers the cell it tested, which the hits may read the length of where every layout is an array.
-@(private)
 dispatch_layouts :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -931,123 +886,7 @@ dispatch_layouts :: proc(
 	return
 }
 
-// any_to_function answers ANY or UNKNOWN where a flow of given into wanted brings a value of that
-// type to a position that may hold a function, and ERROR where it does not. It walks the positions
-// the way check's list_widenings does: a union member by member, the parameters of two functions
-// the other way round and their results, unless wanted throws its result away, the fields of two
-// objects and the elements of two arrays. A pair walked once ends the walk.
-@(private)
-any_to_function :: proc(types: []check.Type, given, wanted: check.Type_ID) -> check.Type_ID {
-	seen := make([dynamic][2]check.Type_ID, 0, 8, context.temp_allocator)
-	return any_to_function_in(types, given, wanted, &seen)
-}
-
-@(private)
-any_to_function_in :: proc(
-	types: []check.Type,
-	given, wanted: check.Type_ID,
-	seen: ^[dynamic][2]check.Type_ID,
-) -> check.Type_ID {
-	if given == wanted || given == check.ERROR || wanted == check.ERROR {
-		return check.ERROR
-	}
-	if given == check.ANY || given == check.UNKNOWN {
-		return given if holds_function(types, wanted) else check.ERROR
-	}
-	pair := [2]check.Type_ID{given, wanted}
-	if slice.contains(seen[:], pair) {
-		return check.ERROR
-	}
-	append(seen, pair)
-
-	if members, is_union := types[given].(check.Union); is_union {
-		for member in members.members {
-			if found := any_to_function_in(types, member, wanted, seen); found != check.ERROR {
-				return found
-			}
-		}
-		return check.ERROR
-	}
-	if members, is_union := types[wanted].(check.Union); is_union {
-		for member in members.members {
-			if found := any_to_function_in(types, given, member, seen); found != check.ERROR {
-				return found
-			}
-		}
-		return check.ERROR
-	}
-	#partial switch from in types[given] {
-	case check.Function:
-		to := types[wanted].(check.Function) or_break
-		for i in 0 ..< min(len(from.params), len(to.params)) {
-			found := any_to_function_in(types, to.params[i].type, from.params[i].type, seen)
-			if found != check.ERROR {
-				return found
-			}
-		}
-		if to.result != check.VOID {
-			return any_to_function_in(types, from.result, to.result, seen)
-		}
-	case check.Object:
-		to := types[wanted].(check.Object) or_break
-		for field in from.fields {
-			other, found := find_field(to, field.name)
-			if !found {
-				continue
-			}
-			nested := any_to_function_in(types, field.type, other.type, seen)
-			if nested != check.ERROR {
-				return nested
-			}
-		}
-	case check.Array:
-		to := types[wanted].(check.Array) or_break
-		return any_to_function_in(types, from.element, to.element, seen)
-	}
-	return check.ERROR
-}
-
-// holds_function says whether a value of the type may hold a function anywhere: the type itself, a
-// member, a field or an element. An interface that holds itself is walked once.
-@(private)
-holds_function :: proc(types: []check.Type, id: check.Type_ID) -> bool {
-	seen := make([dynamic]check.Type_ID, 0, 8, context.temp_allocator)
-	return holds_function_in(types, id, &seen)
-}
-
-@(private)
-holds_function_in :: proc(
-	types: []check.Type,
-	id: check.Type_ID,
-	seen: ^[dynamic]check.Type_ID,
-) -> bool {
-	#partial switch v in types[id] {
-	case check.Function, check.Overload:
-		return true
-	case check.Union:
-		for member in v.members {
-			if holds_function_in(types, member, seen) {
-				return true
-			}
-		}
-	case check.Array:
-		return holds_function_in(types, v.element, seen)
-	case check.Object:
-		if slice.contains(seen[:], id) {
-			return false
-		}
-		append(seen, id)
-		for field in v.fields {
-			if holds_function_in(types, field.type, seen) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // Union_Field is how the members of one layout hold the field: its slot, and the type a read gives.
-@(private)
 Union_Field :: struct {
 	layout: ir.Layout_ID,
 	field:  i32,
@@ -1057,7 +896,6 @@ Union_Field :: struct {
 
 // Union_Field_Place is a field of a value typed as a union of objects, or as an object type only
 // read through (a view): one entry per layout its members have. type is what a read answers.
-@(private)
 Union_Field_Place :: struct {
 	value:     ir.Value_ID,
 	members:   []Union_Field,
@@ -1067,17 +905,14 @@ Union_Field_Place :: struct {
 
 // is_union_value says whether a value of a union type is held as one: tagged, or a reference of
 // several layouts.
-@(private)
 is_union_value :: proc(type: ir.Type) -> bool {
 	return type == ir.TAGGED || type.kind == .Any_Ref
 }
 
-@(private)
 is_object_reference :: proc(type: ir.Type) -> bool {
 	return type.kind == .Ref || type.kind == .Any_Ref
 }
 
-@(private)
 is_object_union :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 	union_type, is_union := types[id].(check.Union)
 	if !is_union {
@@ -1097,7 +932,6 @@ is_object_union :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 // reference slot where every member holds an object or an array, since the box of either is an
 // object; anything else is reported. A read of the whole answers the type the members declare
 // where they agree, or a tagged value, as check has the field.
-@(private)
 union_field_place :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -1197,7 +1031,6 @@ union_field_place :: proc(
 	return out, true
 }
 
-@(private)
 load_union_field :: proc(
 	s: ^Func_State,
 	place: Union_Field_Place,
@@ -1229,7 +1062,6 @@ load_union_field :: proc(
 
 // store_union_field unboxes the object again in every arm: the references a load unboxed do not
 // reach the store of a compound assignment, which comes after the join of the load.
-@(private)
 store_union_field :: proc(
 	s: ^Func_State,
 	place: Union_Field_Place,
@@ -1267,7 +1099,6 @@ store_union_field :: proc(
 
 // union_dispatch branches on the layout of the object and answers a block for each member entry of
 // the place, and the block that fails.
-@(private)
 union_dispatch :: proc(
 	s: ^Func_State,
 	place: Union_Field_Place,
@@ -1289,7 +1120,6 @@ union_dispatch :: proc(
 
 // union_length is the length of a union of strings and arrays. Every array keeps its length where
 // a string does, so an array of any of the layouts is read through the first.
-@(private)
 union_length :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,

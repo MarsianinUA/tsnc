@@ -1089,6 +1089,112 @@ add_widening :: proc(out: ^[dynamic]Widening, source, target: Type_ID) -> bool {
 	return true
 }
 
+// any_to_function answers ANY or UNKNOWN where a flow of given into wanted brings a value of that
+// type to a position that may hold a function, and ERROR where it does not. Only the tag of a
+// function out of either could be checked at run time, not its signature, so such a flow is outside
+// the subset. It walks the positions list_widenings does; a pair walked once ends the walk.
+@(private)
+any_to_function :: proc(types: []Type, given, wanted: Type_ID) -> Type_ID {
+	seen := make([dynamic][2]Type_ID, context.temp_allocator)
+	return any_to_function_in(types, given, wanted, &seen)
+}
+
+@(private)
+any_to_function_in :: proc(
+	types: []Type,
+	given, wanted: Type_ID,
+	seen: ^[dynamic][2]Type_ID,
+) -> Type_ID {
+	if given == wanted || given == ERROR || wanted == ERROR {
+		return ERROR
+	}
+	if given == ANY || given == UNKNOWN {
+		return given if holds_function(types, wanted) else ERROR
+	}
+	pair := [2]Type_ID{given, wanted}
+	if slice.contains(seen[:], pair) {
+		return ERROR
+	}
+	append(seen, pair)
+
+	if members, is_union := types[given].(Union); is_union {
+		for member in members.members {
+			if found := any_to_function_in(types, member, wanted, seen); found != ERROR {
+				return found
+			}
+		}
+		return ERROR
+	}
+	if members, is_union := types[wanted].(Union); is_union {
+		for member in members.members {
+			if found := any_to_function_in(types, given, member, seen); found != ERROR {
+				return found
+			}
+		}
+		return ERROR
+	}
+	#partial switch from in types[given] {
+	case Function:
+		to := types[wanted].(Function) or_break
+		for i in 0 ..< min(len(from.params), len(to.params)) {
+			found := any_to_function_in(types, to.params[i].type, from.params[i].type, seen)
+			if found != ERROR {
+				return found
+			}
+		}
+		if to.result != VOID {
+			return any_to_function_in(types, from.result, to.result, seen)
+		}
+	case Object:
+		to := types[wanted].(Object) or_break
+		for field in from.fields {
+			other := find_field(to.fields, field.name) or_continue
+			if found := any_to_function_in(types, field.type, other.type, seen); found != ERROR {
+				return found
+			}
+		}
+	case Array:
+		to := types[wanted].(Array) or_break
+		return any_to_function_in(types, from.element, to.element, seen)
+	}
+	return ERROR
+}
+
+// holds_function says whether a value of the type may hold a function anywhere: the type itself, a
+// member, a field or an element. An interface that holds itself is walked once.
+@(private)
+holds_function :: proc(types: []Type, id: Type_ID) -> bool {
+	seen := make([dynamic]Type_ID, context.temp_allocator)
+	return holds_function_in(types, id, &seen)
+}
+
+@(private)
+holds_function_in :: proc(types: []Type, id: Type_ID, seen: ^[dynamic]Type_ID) -> bool {
+	#partial switch v in types[id] {
+	case Function, Overload:
+		return true
+	case Union:
+		for member in v.members {
+			if holds_function_in(types, member, seen) {
+				return true
+			}
+		}
+	case Array:
+		return holds_function_in(types, v.element, seen)
+	case Object:
+		if slice.contains(seen[:], id) {
+			return false
+		}
+		append(seen, id)
+		for field in v.fields {
+			if holds_function_in(types, field.type, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // type_text is how a type reads: `number`, `"circle"`, `(a: number) => string`, `number | string`,
 // `Point`, `{ x: number; y: number }`, `number[]`. types is the table the id belongs to, which is
 // Check_Result.types.

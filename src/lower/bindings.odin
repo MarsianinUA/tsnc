@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "core:slice"
@@ -103,7 +104,6 @@ File_Locals :: struct {
 // group_locals finds each function of the file its scopes: the nearest one, and the one lower
 // builds, which for an inlined arrow is the function it is inlined into. Two passes of counting
 // place every list in one flat array.
-@(private)
 group_locals :: proc(low: ^Lowering, file: source.File_ID) -> File_Locals {
 	bound := &low.prog.bound[file]
 	closures := &low.closures[file]
@@ -180,7 +180,6 @@ group_locals :: proc(low: ^Lowering, file: source.File_ID) -> File_Locals {
 }
 
 // flat_lists cuts one array into a list per key, of the length its count gives.
-@(private)
 flat_lists :: proc(counts: []int) -> [][]bind.Symbol_ID {
 	total := 0
 	for count in counts {
@@ -199,7 +198,6 @@ flat_lists :: proc(counts: []int) -> [][]bind.Symbol_ID {
 // begin_function opens the body of a function: node is its declaration or arrow, ast.ROOT for a
 // module init. A closure first takes what its environment holds, then each parameter, which
 // arrives in the type of the function's signature (declare_functions) and is unboxed into its own.
-@(private)
 begin_function :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
@@ -265,7 +263,6 @@ begin_function :: proc(
 
 // end_function closes the body and gives the numbers of its locals back, so the next function of
 // the file numbers its own.
-@(private)
 end_function :: proc(s: ^Func_State) {
 	for symbol in s.symbols {
 		s.low.locals[s.file].index[symbol] = -1
@@ -275,19 +272,16 @@ end_function :: proc(s: ^Func_State) {
 
 // local_at is the position of a symbol among the locals of the function being built, and -1 for a
 // symbol of another function.
-@(private)
 local_at :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> int {
 	return int(s.low.locals[s.file].index[symbol])
 }
 
 // local_value answers NO_VALUE for a symbol of another function.
-@(private)
 local_value :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Value_ID {
 	at := local_at(s, symbol)
 	return s.locals[at] if at >= 0 else ir.NO_VALUE
 }
 
-@(private)
 is_refused :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> bool {
 	at := local_at(s, symbol)
 	return at >= 0 && s.refused[at]
@@ -296,7 +290,6 @@ is_refused :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> bool {
 // zero_locals takes a body to be the scopes whose nearest enclosing function is this one; the
 // module scope is left out of the module init, because its bindings are globals of the program and
 // not values of a function.
-@(private)
 zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 	for symbol in s.low.locals[s.file].zeroed[scope] {
 		declared := s.bound.symbols[symbol]
@@ -319,7 +312,6 @@ zero_locals :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 // boxes of its variables, each holding the zero of its type, then the closures of the function
 // declarations hoisted there, in source order, since any statement of the scope may call one. The
 // module scope holds globals, and the variable of a `for...of` is bound at every step instead.
-@(private)
 enter_scope :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 	if scope == bind.MODULE_SCOPE {
 		return
@@ -353,14 +345,12 @@ enter_scope :: proc(s: ^Func_State, scope: bind.Scope_ID, span: source.Span) {
 }
 
 // local_type is the type of what a local holds, never of its box.
-@(private)
 local_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
 	type, _ := symbol_type(s.low, s.file, symbol)
 	return type
 }
 
 // box_type is the type of a box holding a value of this type: an environment of one slot.
-@(private)
 box_type :: proc(s: ^Func_State, type: ir.Type) -> ir.Type {
 	slots := [1]abi.Slot_Kind{slot_of(type)}
 	return ir.ref(ir.environment_layout(&s.low.builder, slots[:]))
@@ -368,7 +358,6 @@ box_type :: proc(s: ^Func_State, type: ir.Type) -> ir.Type {
 
 // local_box_type is the box of a local. Where a read may come before the declaration ran and the
 // local is no reference, a second slot holds its ready flag (check_ready).
-@(private)
 local_box_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
 	type := local_type(s, symbol)
 	if !s.low.closures[s.file].checked[symbol] || holds_null(type) {
@@ -379,7 +368,6 @@ local_box_type :: proc(s: ^Func_State, symbol: bind.Symbol_ID) -> ir.Type {
 }
 
 // read_local answers NO_VALUE for a local that was refused, or that holds nothing yet.
-@(private)
 read_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -> ir.Value_ID {
 	value := local_value(s, symbol)
 	if value == ir.NO_VALUE || !s.low.closures[s.file].boxed[symbol] {
@@ -394,7 +382,6 @@ read_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) ->
 
 // write_local gives a local a new value where it already lives: into its box, which every closure
 // that shares it reads.
-@(private)
 write_local :: proc(
 	s: ^Func_State,
 	symbol: bind.Symbol_ID,
@@ -415,7 +402,6 @@ write_local :: proc(
 
 // bind_local starts a new binding of a local: a boxed one gets a box of its own, so the closures made
 // before keep the one they share.
-@(private)
 bind_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, value: ir.Value_ID, span: source.Span) {
 	if value == ir.NO_VALUE {
 		return
@@ -436,7 +422,6 @@ bind_local :: proc(s: ^Func_State, symbol: bind.Symbol_ID, value: ir.Value_ID, s
 // beside it: a global of its own for a global, the second slot of the box for a local. A local no
 // closure shares, which no box holds, is read early only by an arrow inlined before its
 // declaration, and that read always comes first.
-@(private)
 check_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 	declaration := s.bound.symbols[symbol].declaration
 	not_yet := ir.NO_VALUE
@@ -470,7 +455,6 @@ check_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 
 // mark_ready is the other half of check_ready: the declaration of a binding that a read may reach
 // early has run. A reference binding needs no mark, since the value it now holds is not null.
-@(private)
 mark_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 	if !s.low.closures[s.file].checked[symbol] || holds_null(local_type(s, symbol)) {
 		return
@@ -488,14 +472,12 @@ mark_ready :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) {
 
 // holds_null says whether a binding of this type is a present reference, which is null only before
 // anything was stored in it. For one that may hold null, null is a value.
-@(private)
 holds_null :: proc(type: ir.Type) -> bool {
 	return ir.is_reference(type) && type.nullish == .None
 }
 
 // store_slot writes a slot of a cell, through the store that ends in _Ref where the collector
 // traces what the slot holds.
-@(private)
 store_slot :: proc(
 	s: ^Func_State,
 	cell: ir.Value_ID,
@@ -526,7 +508,6 @@ store_slot :: proc(
 // so its binding starts as the null reference, which the collector skips; a read that may come
 // before a value is stored tests for it (check_ready). A reference that may hold null starts as
 // that null.
-@(private)
 zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value_ID {
 	if type.nullish != .None {
 		return ir.emit(&s.fb, type, ir.Const_Null{}, span)
@@ -552,24 +533,20 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 	return ir.NO_VALUE
 }
 
-@(private)
 here :: proc(s: ^Func_State) -> Edge {
 	return {block = s.fb.current, values = slice.clone(s.locals, context.temp_allocator)}
 }
 
 // terminated says whether a terminator closed the block, so the statements after it need one of
 // their own.
-@(private)
 terminated :: proc(s: ^Func_State) -> bool {
 	return s.fb.current == ir.NO_BLOCK
 }
 
-@(private)
 value_type :: proc(s: ^Func_State, value: ir.Value_ID) -> ir.Type {
 	return s.fb.values[value].type
 }
 
-@(private)
 tag_test :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -579,14 +556,12 @@ tag_test :: proc(
 	return ir.emit(&s.fb, ir.BOOL, ir.Tag_Test{value = value, tags = tags}, span)
 }
 
-@(private)
 null_test :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	return ir.emit(&s.fb, ir.BOOL, ir.Null_Test{value = value}, span)
 }
 
 // jump_if jumps to join where condition holds and goes on in a block of its own where it does not.
 // It answers the edge of the jump.
-@(private)
 jump_if :: proc(
 	s: ^Func_State,
 	condition: ir.Value_ID,
@@ -605,7 +580,6 @@ jump_if :: proc(
 	return jumped
 }
 
-@(private)
 fail_if :: proc(
 	s: ^Func_State,
 	condition: ir.Value_ID,
@@ -624,7 +598,6 @@ fail_if :: proc(
 	ir.use_block(&s.fb, passed)
 }
 
-@(private)
 fail_block :: proc(
 	s: ^Func_State,
 	block: ir.Block_ID,
@@ -635,7 +608,6 @@ fail_block :: proc(
 	ir.emit(&s.fb, ir.VOID, ir.Fail{site = fail_site(s.low, span, error)}, span)
 }
 
-@(private)
 negated :: proc(s: ^Func_State, test: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	return ir.emit(&s.fb, ir.BOOL, ir.Unary{op = .Not, operand = test}, span)
 }
@@ -645,7 +617,6 @@ negated :: proc(s: ^Func_State, test: ir.Value_ID, span: source.Span) -> ir.Valu
 //
 // A local one edge has no value for is left without one: it is a local of an inlined arrow, which
 // has a value only inside the loop that holds the arrow, and nothing after the join reads it.
-@(private)
 open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: source.Span) -> bool {
 	ir.use_block(&s.fb, block)
 	if len(edges) == 0 {
@@ -683,7 +654,6 @@ open_join :: proc(s: ^Func_State, block: ir.Block_ID, edges: []Edge, span: sourc
 
 // open_header cannot see its back edge yet, so it takes a phi for every local the loop assigns and
 // the phis learn their edges through patch_header.
-@(private)
 open_header :: proc(
 	s: ^Func_State,
 	block: ir.Block_ID,
@@ -712,14 +682,12 @@ open_header :: proc(
 
 // held_type is the type a phi of the local at `at` takes: the local's own where one edge brings a
 // present reference into a local that may hold null, since another edge may bring the null.
-@(private)
 held_type :: proc(s: ^Func_State, at: int, value: ir.Value_ID) -> ir.Type {
 	have := value_type(s, value)
 	declared := local_type(s, s.symbols[at])
 	return declared if ir.fits(have, declared) else have
 }
 
-@(private)
 patch_header :: proc(s: ^Func_State, phis: []ir.Value_ID, assigned: []int, back: Edge) {
 	for at, i in assigned {
 		if phis[i] != ir.NO_VALUE {
@@ -731,7 +699,6 @@ patch_header :: proc(s: ^Func_State, phis: []ir.Value_ID, assigned: []int, back:
 // assigned_locals lists the positions of the locals a subtree writes to, and of `also`, in order.
 // It is the set a loop header needs a phi for; a local it names that the loop leaves alone only
 // costs a dead phi.
-@(private)
 assigned_locals :: proc(s: ^Func_State, root: ast.Node_ID, also: []bind.Symbol_ID = nil) -> []int {
 	found := make([dynamic]int, 0, 8, context.temp_allocator)
 	for symbol in also {
@@ -767,12 +734,10 @@ assigned_locals :: proc(s: ^Func_State, root: ast.Node_ID, also: []bind.Symbol_I
 
 // break_frame and continue_frame are the innermost statement each jump leaves. A switch catches a
 // `break` and lets a `continue` through, which is why the two differ.
-@(private)
 break_frame :: proc(s: ^Func_State) -> ^Loop_Frame {
 	return &s.loops[len(s.loops) - 1] if len(s.loops) > 0 else nil
 }
 
-@(private)
 continue_frame :: proc(s: ^Func_State) -> ^Loop_Frame {
 	#reverse for &frame in s.loops {
 		if frame.latch != ir.NO_BLOCK {
@@ -782,7 +747,6 @@ continue_frame :: proc(s: ^Func_State) -> ^Loop_Frame {
 	return nil
 }
 
-@(private)
 push_frame :: proc(s: ^Func_State, latch, exit: ir.Block_ID) {
 	append(
 		&s.loops,

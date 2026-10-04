@@ -11,6 +11,8 @@ Order: init_order lists every File_ID once, each module after the modules it imp
 order the top-level code of the modules runs in, the order Node evaluates ES modules in, and the
 order lower emits the init functions in. `import type` edges are left out of it, since Node
 never loads a module imported only that way and tsnc must not run its top-level code either.
+run_order is init_order cut to the modules that load: those a value import reaches from ENTRY,
+without the lib.
 
 Cycles: when modules import each other in a ring, there is no order in which each of them runs
 after everything it imports, so they share one place in init_order and the ring goes into cycles. A
@@ -24,8 +26,8 @@ The order and the rings come out of one depth-first search rather than a library
 answer has to be the same on every run: roots are taken in File_ID order and edges in source order,
 so nothing depends on a hash or on an address in memory.
 
-Memory: everything but init_order, cycles and the diagnostics is borrowed from driver's arenas, so
-the result must not outlive them.
+Memory: everything but the two orders, cycles and the diagnostics is borrowed from driver's arenas,
+so the result must not outlive them.
 */
 package program
 
@@ -37,6 +39,9 @@ import "../source"
 // LIB is the module every program starts with: the built-in lib.d.ts, which driver puts in before
 // it reads the entry file.
 LIB :: source.File_ID(0)
+
+// ENTRY is the input file, which driver reads right after the lib.
+ENTRY :: source.File_ID(1)
 
 Import_Edge :: struct {
 	// The ast.Import_Named, ast.Import_Namespace or ast.Export_Named in the importing file; the
@@ -58,6 +63,7 @@ Program :: struct {
 	bound:      []bind.Bound_File, // indexed by File_ID
 	imports:    [][]Import_Edge, // indexed by the importing File_ID, in source order
 	init_order: []source.File_ID, // every File_ID once, each after the modules it imports
+	run_order:  []source.File_ID, // the modules that load, in init_order
 	cycles:     []Cycle, // in initialization order
 }
 
@@ -85,6 +91,7 @@ build :: proc(
 		imports = imports,
 	}
 	program.init_order, program.cycles = search_modules(bound, imports, allocator)
+	program.run_order = modules_that_run(program.init_order, imports, allocator)
 	diagnostics = report_cycles(files, program.cycles, imports, allocator)
 	return
 }
