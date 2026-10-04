@@ -580,9 +580,10 @@ Where: requirements §4.2, §6, §13; [Package boundaries: compiler](architectur
 After: none.
 Done: the measurement is recorded; if it pays, the corpora are green at both `-o` levels, under stress and ASan too, a codegen test pins the metadata of each kind of access and the attributes of one export per effect, and the three benchmarks are measured before and after.
 
-### [ ] T6.26 `arr`: one byte for an element of `boolean[]`
+### [x] T6.26 `arr`: one byte for an element of `boolean[]`
 
 What: `abi.SLOT_SIZE` gives a boolean 8 bytes, in an array's buffer too. The 2 million flags of `sieve` are 16 MB a round against 2 MB in Go, past the processor's cache: the same pushes and marks on arrays of 250 thousand run 30% faster (`sieve-small`, 94 ms against 134). The task gives the element of a `boolean[]` one byte: the element size comes from the array's table, `codegen` scales the index by it, and the runtime's `store`, `load`, `sort` and `join` and the console read a byte. A field of an object stays 8 bytes, since alignment would take the gain back, and an array a widening flow tags keeps its 16-byte slot.
+Measured (2026-10-04), the median of 11 runs before and after: `sieve` 84 and 32 ms, as fast as Go (32); `sieve-small` 65 and 54 ms, launch included.
 Where: requirements §3.6; [Package boundaries: compiler](architecture-plan-tsnc.md#package-boundaries-compiler), rows `abi`, `lower`, `codegen`; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), rows `arr` and `gc`; finding 11 of [performance-review.md](performance-review.md), probe `sieve-small`; `bench/ts/sieve/main.ts`.
 After: none.
 Done: the corpora are green in all passes, under stress and ASan too; an arr test pins the size of the element; `sieve` is measured before and after.

@@ -7,7 +7,7 @@ and String.prototype.split, which answers an array, with the semantics of ECMASc
 
 An element comes in as an abi.Tagged whatever the array holds, the way generated code boxes it for
 the runtime rows, and element_at boxes one on the way out. Inside the buffer it is the bare slot: an
-f64, a b64, a reference or a Tagged.
+f64, a b8, a reference or a Tagged.
 
 gc.alloc may collect, and so may every procedure here that allocates. Each keeps the cells it still
 needs in locals and in the arrays it works on, and an array under construction counts only the
@@ -87,7 +87,7 @@ push :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, value: abi.Tagged) -> int {
 element_at :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, index: int) -> abi.Tagged {
 	ensure(0 <= index && index < array.length, "an array index out of range")
 	kind := element_kind(heap, array)
-	return value.load(heap, slot(array, kind, index), kind)
+	return value.load_element(heap, slot(array, kind, index), kind)
 }
 
 // slice answers a new array even when it copies all of this one: an array is compared by identity.
@@ -97,7 +97,7 @@ slice :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, start, end: f64) -> ^abi.A
 	count := max(to - from, 0)
 	part := new_array(heap, array.type_table, count)
 	kind := element_kind(heap, array)
-	size := abi.SLOT_SIZE[kind]
+	size := abi.ELEMENT_SIZE[kind]
 	part.length = count
 	copy(slots(part, kind), slots(array, kind)[from * size:])
 	return part
@@ -108,7 +108,7 @@ slice :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, start, end: f64) -> ^abi.A
 index_of :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, search: abi.Tagged, from: f64) -> int {
 	kind := element_kind(heap, array)
 	for i in num.relative_index(from, array.length) ..< array.length {
-		if value.equal(value.load(heap, slot(array, kind, i), kind), search) {
+		if value.equal(value.load_element(heap, slot(array, kind, i), kind), search) {
 			return i
 		}
 	}
@@ -122,7 +122,7 @@ includes :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, search: abi.Tagged, fro
 	}
 	kind := element_kind(heap, array)
 	for i in num.relative_index(from, array.length) ..< array.length {
-		if is_nan(value.load(heap, slot(array, kind, i), kind)) {
+		if is_nan(value.load_element(heap, slot(array, kind, i), kind)) {
 			return true
 		}
 	}
@@ -165,22 +165,22 @@ element_kind :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> abi.Slot_Kind {
 // the old buffer, and so its elements, through the collection the allocation may run.
 @(private)
 grow :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind, capacity: int) {
-	size := size_of(abi.Cell_Header) + capacity * abi.SLOT_SIZE[kind]
+	size := size_of(abi.Cell_Header) + capacity * abi.ELEMENT_SIZE[kind]
 	buffer := ([^]byte)(gc.alloc(heap, BUFFER, size))
 	elements := buffer[size_of(abi.Cell_Header):]
-	copy(elements[:array.length * abi.SLOT_SIZE[kind]], slots(array, kind))
+	copy(elements[:array.length * abi.ELEMENT_SIZE[kind]], slots(array, kind))
 	array.elements = elements
 	array.capacity = capacity
 }
 
 @(private)
 slots :: proc(array: ^abi.Array_Cell, kind: abi.Slot_Kind) -> []byte {
-	return ([^]byte)(array.elements)[:array.length * abi.SLOT_SIZE[kind]]
+	return ([^]byte)(array.elements)[:array.length * abi.ELEMENT_SIZE[kind]]
 }
 
 @(private)
 slot :: proc(array: ^abi.Array_Cell, kind: abi.Slot_Kind, index: int) -> rawptr {
-	return &([^]byte)(array.elements)[index * abi.SLOT_SIZE[kind]]
+	return &([^]byte)(array.elements)[index * abi.ELEMENT_SIZE[kind]]
 }
 
 // store is inlined into push, which fills an array element by element, and into the sort.
@@ -192,7 +192,7 @@ store :: #force_inline proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 		(^f64)(slot)^ = v.payload.number
 	case .Boolean:
 		ensure(v.tag == .Boolean, "a boolean array given another value")
-		(^b64)(slot)^ = v.payload.boolean
+		(^b8)(slot)^ = b8(v.payload.boolean)
 	case .Ref, .Any_Ref:
 		ensure(
 			v.tag == .String || v.tag == .Object || v.tag == .Function,

@@ -99,7 +99,7 @@ write_elements :: proc(
 		if i > 0 {
 			append(units, ..transmute([]u16)separator)
 		}
-		element := value.load(heap, slot(array, kind, i), kind)
+		element := value.load_element(heap, slot(array, kind, i), kind)
 		if element.tag == .Undefined || element.tag == .Null {
 			continue
 		}

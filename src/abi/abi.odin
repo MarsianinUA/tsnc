@@ -11,7 +11,8 @@ Memory rules:
 - Every cell starts with a Cell_Header, whether it lives in the GC heap or in static data. A static
   cell is read-only: the GC marks and frees only cells in its own heap.
 - A reference is a plain pointer to the start of a cell. Generated code never disguises pointers.
-- A slot other than Tagged is one 8-byte word; a boolean is b64, 0 or 1.
+- A slot other than Tagged is one 8-byte word; a boolean is b64, 0 or 1. An array element is
+  the same but for a boolean, which is b8 (ELEMENT_SIZE).
 */
 package abi
 
@@ -129,7 +130,7 @@ Tagged :: struct {
 // element.
 Slot_Kind :: enum u8 {
 	Number, // f64
-	Boolean, // b64
+	Boolean, // b64 in a field, b8 in an array element
 	Ref, // ^Cell_Header, traced by the GC
 	Tagged, // Tagged, the GC traces payload.ref when the tag holds a reference
 	// ^Cell_Header or nil, which reads as null or as undefined: `Tree | null`, `string | undefined`,
@@ -150,6 +151,21 @@ Slot_Kind :: enum u8 {
 SLOT_SIZE := [Slot_Kind]int {
 	.Number               = size_of(f64),
 	.Boolean              = size_of(b64),
+	.Ref                  = size_of(rawptr),
+	.Tagged               = size_of(Tagged),
+	.Ref_Or_Null          = size_of(rawptr),
+	.Ref_Or_Undefined     = size_of(rawptr),
+	.Any_Ref              = size_of(rawptr),
+	.Any_Ref_Or_Null      = size_of(rawptr),
+	.Any_Ref_Or_Undefined = size_of(rawptr),
+}
+
+// ELEMENT_SIZE is the stride of an array's elements. A boolean element takes one byte, so a sieve's
+// flags stay in cache; a field keeps 8 bytes, since the next field's alignment would take them back.
+@(rodata)
+ELEMENT_SIZE := [Slot_Kind]int {
+	.Number               = size_of(f64),
+	.Boolean              = size_of(b8),
 	.Ref                  = size_of(rawptr),
 	.Tagged               = size_of(Tagged),
 	.Ref_Or_Null          = size_of(rawptr),

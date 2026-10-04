@@ -196,7 +196,8 @@ cell_size :: proc(p: Program_IR, func: Func, value: Value_ID) -> (size: int, ok:
 		if !fixed || n != math.trunc(n) || n < 0 || n > MAX_STACK_ELEMENTS {
 			return 0, false
 		}
-		return size_of(abi.Array_Cell) + int(n) * abi.SLOT_SIZE[p.layouts[v.layout].element], true
+		element := abi.ELEMENT_SIZE[p.layouts[v.layout].element]
+		return size_of(abi.Array_Cell) + int(n) * element, true
 	}
 	return 0, false
 }

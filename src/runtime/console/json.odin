@@ -170,8 +170,8 @@ json_next :: proc(
 			append(out, ',')
 		}
 		kind := frame.table.element
-		slot := &([^]byte)(array.elements)[frame.next * abi.SLOT_SIZE[kind]]
-		child = value.load(heap, slot, kind)
+		slot := &([^]byte)(array.elements)[frame.next * abi.ELEMENT_SIZE[kind]]
+		child = value.load_element(heap, slot, kind)
 		frame.next += 1
 		return child, true
 	}

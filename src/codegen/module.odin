@@ -155,8 +155,8 @@ value_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
 }
 
 // storage_type is how a value of the IR type sits in memory. Only a boolean differs: abi stores it
-// as b64, in a slot, in a tagged payload and in a runtime argument alike, so one rule holds
-// everywhere - i1 in a register, i64 in memory.
+// as b64, in a field, in a tagged payload and in a runtime argument alike - i1 in a register, i64 in
+// memory. An array element is the one exception, a byte (element_type).
 @(private)
 storage_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
 	if type.kind == .Bool {
