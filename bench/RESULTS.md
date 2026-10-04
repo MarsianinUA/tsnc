@@ -8,6 +8,28 @@ To run them, put Node 24 and Go on `PATH` and run [bench.sh](bench.sh), or [benc
 bench/bench.sh
 ```
 
+## After T6.27
+
+2026-10-04, Intel Core i5-13600KF, Windows 11, Node 24.13.1, Go 1.27.0, scriptc 0.2.1, Bun 1.4.2.
+
+| program    | tsnc, s | scriptc, s | Node, s | Bun, s | Go, s |
+| ---------- | ------: | ---------: | ------: | -----: | ----: |
+| mandelbrot |   0.277 |      0.277 |   0.354 |  0.303 | 0.287 |
+| collatz    |   0.765 |      2.212 |   1.007 |  0.793 | 0.185 |
+| sieve      |   0.035 |       > 30 |   0.255 |  0.131 | 0.037 |
+| chars      |   0.125 |      1.246 |   0.218 |  0.158 | 0.065 |
+| strings    |   0.111 |      0.326 |   0.130 |  0.103 | 0.076 |
+| objects    |   0.221 |      0.995 |   0.353 |  0.217 | 0.362 |
+| closures   |   0.147 |      1.602 |   0.201 |  0.133 | 0.064 |
+| trees      |   0.275 |      2.819 |   0.374 |  0.307 | 0.379 |
+| raytracer  |   0.225 |      3.492 |   0.517 |  0.517 | 0.221 |
+| integers   |   0.369 |     10.582 |   0.542 |  0.637 | 0.247 |
+| hello      |   0.006 |      0.006 |   0.057 |  0.017 | 0.007 |
+
+| hello executable | tsnc | scriptc |   Go |
+| ---------------- | ---: | ------: | ---: |
+| KB               |  327 |     885 | 2433 |
+
 ## After T6.15
 
 2026-10-03, Intel Core i5-13600KF, Windows 11, Node 24.13.1, Go 1.27.0, scriptc 0.2.1, Bun 1.4.2.
