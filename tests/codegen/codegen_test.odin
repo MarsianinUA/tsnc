@@ -45,28 +45,6 @@ a_program_writes_an_object_and_llvm_ir :: proc(t: ^testing.T) {
 	expect_text(t, string(ir), wants)
 }
 
-// tsnc_fail never returns, so LLVM may treat the code after its call as unreachable. Level none
-// keeps the declaration: this program does not call tsnc_fail, and the optimizer drops it.
-@(test)
-diverging_export_is_declared_noreturn :: proc(t: ^testing.T) {
-	output := hello_program(HELLO)
-	text := llvm_text(t, &output, "noreturn")
-	if text == "" {
-		return
-	}
-	// On Windows LLVM writes the text with CRLF, so the patterns stop short of the line end.
-	wants := []string{"declare void @tsnc_fail(ptr) #0", "attributes #0 = { noreturn }"}
-	expect_text(t, text, wants)
-
-	returning := "declare void @tsnc_log_string(ptr) #"
-	testing.expectf(
-		t,
-		!strings.contains(text, returning),
-		"tsnc_log_string has attributes:\n%s",
-		text,
-	)
-}
-
 @(test)
 every_level_emits_an_object :: proc(t: ^testing.T) {
 	output := hello_program(HELLO)

@@ -127,6 +127,14 @@ foreign lib {
 	LLVMSetGlobalConstant :: proc(GlobalVar: LLVMValueRef, IsConstant: LLVMBool) ---
 
 	LLVMAddAttributeAtIndex :: proc(F: LLVMValueRef, Idx: LLVMAttributeIndex, A: LLVMAttributeRef) ---
+
+	LLVMMDStringInContext2 :: proc(C: LLVMContextRef, Str: [^]u8, SLen: uint) -> LLVMMetadataRef ---
+	LLVMMDNodeInContext2 :: proc(C: LLVMContextRef, MDs: [^]LLVMMetadataRef, Count: uint) -> LLVMMetadataRef ---
+	LLVMValueAsMetadata :: proc(Val: LLVMValueRef) -> LLVMMetadataRef ---
+	LLVMMetadataAsValue :: proc(C: LLVMContextRef, MD: LLVMMetadataRef) -> LLVMValueRef ---
+	LLVMGetMDKindIDInContext :: proc(C: LLVMContextRef, Name: [^]u8, SLen: u32) -> u32 ---
+	LLVMSetMetadata :: proc(Val: LLVMValueRef, KindID: u32, Node: LLVMValueRef) ---
+
 	LLVMGetParam :: proc(Fn: LLVMValueRef, Index: u32) -> LLVMValueRef ---
 	LLVMSetValueName2 :: proc(Val: LLVMValueRef, Name: cstring, NameLen: uint) ---
 	LLVMAppendBasicBlockInContext :: proc(C: LLVMContextRef, Fn: LLVMValueRef, Name: cstring) -> LLVMBasicBlockRef ---

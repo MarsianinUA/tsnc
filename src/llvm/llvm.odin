@@ -75,3 +75,6 @@ LLVMBuilderRef :: ^LLVMOpaqueBuilder
 
 LLVMOpaqueAttributeRef :: struct {}
 LLVMAttributeRef :: ^LLVMOpaqueAttributeRef
+
+LLVMOpaqueMetadata :: struct {}
+LLVMMetadataRef :: ^LLVMOpaqueMetadata
