@@ -89,24 +89,29 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Field_Load:
 		address := field_address(m, body, v.cell, v.field)
-		stored := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		load := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		stored := mark(m, load, field_tag(m, body, v.cell, v.field))
 		body.values[value] = from_storage(m, stored, instruction.type)
 
 	case ir.Field_Store:
-		store(m, body, v.value, field_address(m, body, v.cell, v.field))
+		address := field_address(m, body, v.cell, v.field)
+		store(m, body, v.value, address, field_tag(m, body, v.cell, v.field))
 
 	case ir.Field_Store_Ref:
-		store(m, body, v.value, field_address(m, body, v.cell, v.field))
+		address := field_address(m, body, v.cell, v.field)
+		store(m, body, v.value, address, field_tag(m, body, v.cell, v.field))
 
 	case ir.Length:
-		body.values[value] = build_length(m, body.values[v.value], instruction.type)
+		place := length_place(body.func.values[v.value].type)
+		body.values[value] = build_length(m, body.values[v.value], place, instruction.type)
 
 	case ir.Reserve:
 		build_reserve(m, body, body.values[v.array])
 
 	case ir.Set_Length:
 		pointer := byte_offset(m, body.values[v.array], int(offset_of(abi.Array_Cell, length)))
-		llvm.LLVMBuildStore(m.builder, index_word(m, body, v.length), pointer)
+		length := index_word(m, body, v.length)
+		mark(m, llvm.LLVMBuildStore(m.builder, length, pointer), m.places[.Array_Length])
 
 	case ir.Bounds_Check:
 		if v.proved {
@@ -117,20 +122,24 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Element_Load:
 		address := element_address(m, body, v.array, v.index)
-		stored := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		load := llvm.LLVMBuildLoad2(m.builder, storage_type(m, instruction.type), address, "")
+		stored := mark(m, load, element_tag(m, body, v.array))
 		body.values[value] = from_storage(m, stored, instruction.type)
 
 	case ir.Element_Store:
-		store(m, body, v.value, element_address(m, body, v.array, v.index))
+		address := element_address(m, body, v.array, v.index)
+		store(m, body, v.value, address, element_tag(m, body, v.array))
 
 	case ir.Element_Store_Ref:
-		store(m, body, v.value, element_address(m, body, v.array, v.index))
+		address := element_address(m, body, v.array, v.index)
+		store(m, body, v.value, address, element_tag(m, body, v.array))
 
 	case ir.Unit_Load:
 		units := byte_offset(m, body.values[v.text], int(offset_of(abi.String_Cell, units)))
 		position := index_word(m, body, v.index)
 		address := llvm.LLVMBuildInBoundsGEP2(m.builder, m.types.int16, units, &position, 1, "")
-		unit := llvm.LLVMBuildLoad2(m.builder, m.types.int16, address, "")
+		load := llvm.LLVMBuildLoad2(m.builder, m.types.int16, address, "")
+		unit := mark(m, load, m.places[.String])
 		if instruction.type == ir.I32 {
 			body.values[value] = llvm.LLVMBuildZExt(m.builder, unit, m.types.int32, "")
 		} else {
@@ -179,13 +188,14 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 
 	case ir.Global_Load:
 		type := m.program.globals[v.global].type
-		stored := llvm.LLVMBuildLoad2(m.builder, storage_type(m, type), m.globals[v.global], "")
+		load := llvm.LLVMBuildLoad2(m.builder, storage_type(m, type), m.globals[v.global], "")
+		stored := mark(m, load, global_tag(m, type))
 		body.values[value] = from_storage(m, stored, type)
 
 	case ir.Global_Store:
 		type := m.program.globals[v.global].type
 		stored := to_storage(m, body.values[v.value], type)
-		llvm.LLVMBuildStore(m.builder, stored, m.globals[v.global])
+		mark(m, llvm.LLVMBuildStore(m.builder, stored, m.globals[v.global]), global_tag(m, type))
 
 	case ir.Env:
 		body.values[value] = llvm.LLVMGetParam(body.function, 0)
@@ -203,13 +213,13 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 			cell = build_alloc(m, body, closure, size_of(abi.Closure_Cell))
 		}
 		code := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, code)))
-		llvm.LLVMBuildStore(m.builder, m.funcs[v.func].function, code)
+		closure_store(m, m.funcs[v.func].function, code)
 		if v.env != ir.NO_VALUE {
 			env := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, env)))
-			llvm.LLVMBuildStore(m.builder, body.values[v.env], env)
+			closure_store(m, body.values[v.env], env)
 		}
 		info := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, info)))
-		llvm.LLVMBuildStore(m.builder, function_info(m, v.func), info)
+		closure_store(m, function_info(m, v.func), info)
 		body.values[value] = cell
 
 	case ir.Call:
@@ -226,9 +236,9 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Call_Closure:
 		cell := body.values[v.callee]
 		code_address := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, code)))
-		code := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, code_address, "")
+		code := closure_load(m, code_address)
 		env_address := byte_offset(m, cell, int(offset_of(abi.Closure_Cell, env)))
-		env := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, env_address, "")
+		env := closure_load(m, env_address)
 		params := make([]ir.Type, len(v.args), context.temp_allocator)
 		for arg, i in v.args {
 			params[i] = body.func.values[arg].type
@@ -242,7 +252,6 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Call_Runtime:
 		exports := abi.RUNTIME_EXPORTS
 		export := exports[v.export]
-		callee := m.runtime[v.export]
 		args := make([dynamic]llvm.LLVMValueRef, context.temp_allocator)
 		for param, i in export.params {
 			if param == .Rest {
@@ -253,14 +262,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 			// The verifier holds each argument to the C type of its parameter (ir.c_type_fits).
 			append_argument(m, &args, body.values[v.args[i]], body.func.values[v.args[i]].type)
 		}
-		result := llvm.LLVMBuildCall2(
-			m.builder,
-			callee.signature,
-			callee.function,
-			raw_data(args),
-			u32(len(args)),
-			"",
-		)
+		result := call_runtime(m, v.export, args[:])
 		if instruction.type != ir.VOID {
 			if export.result == .Boolean {
 				result = llvm.LLVMBuildTrunc(m.builder, result, m.types.int1, "")
@@ -362,7 +364,7 @@ call_runtime :: proc(
 	args: []llvm.LLVMValueRef,
 ) -> llvm.LLVMValueRef {
 	callee := m.runtime[export]
-	return llvm.LLVMBuildCall2(
+	call := llvm.LLVMBuildCall2(
 		m.builder,
 		callee.signature,
 		callee.function,
@@ -370,6 +372,8 @@ call_runtime :: proc(
 		u32(len(args)),
 		"",
 	)
+	exports := abi.RUNTIME_EXPORTS
+	return mark(m, call, m.places[.Collector] if exports[export].effect == .Allocates else nil)
 }
 
 // start_stack_cell fills the slot as tsnc_alloc fills a heap cell. The collector scans the slot
@@ -397,7 +401,8 @@ start_cell :: proc(
 	zero := llvm.LLVMConstInt(m.types.int8, 0, false)
 	length := llvm.LLVMConstInt(m.types.int64, u64(extent), false)
 	llvm.LLVMBuildMemSet(m.builder, cell, zero, length, align)
-	llvm.LLVMBuildStore(m.builder, llvm.LLVMConstInt(m.types.int32, u64(table), false), cell)
+	table_word := llvm.LLVMConstInt(m.types.int32, u64(table), false)
+	mark(m, llvm.LLVMBuildStore(m.builder, table_word, cell), m.places[.Header])
 }
 
 // build_alloc takes a small cell off its free list the way abi.Heap_Head describes, and calls
@@ -470,13 +475,13 @@ build_stack_array :: proc(
 	count := llvm.LLVMConstInt(m.types.int64, u64(elements), false)
 	length := byte_offset(m, cell, int(offset_of(abi.Array_Cell, length)))
 	capacity := byte_offset(m, cell, int(offset_of(abi.Array_Cell, capacity)))
-	llvm.LLVMBuildStore(m.builder, count, length)
-	llvm.LLVMBuildStore(m.builder, count, capacity)
+	mark(m, llvm.LLVMBuildStore(m.builder, count, length), m.places[.Array_Length])
+	mark(m, llvm.LLVMBuildStore(m.builder, count, capacity), m.places[.Array_Capacity])
 	if elements > 0 {
 		// Array_Cell.elements stays nil while the capacity is 0.
 		slots := byte_offset(m, cell, size_of(abi.Array_Cell))
 		address := byte_offset(m, cell, int(offset_of(abi.Array_Cell, elements)))
-		llvm.LLVMBuildStore(m.builder, slots, address)
+		mark(m, llvm.LLVMBuildStore(m.builder, slots, address), m.places[.Array_Elements])
 	}
 	return cell
 }
@@ -512,7 +517,8 @@ field_address :: proc(
 element_address :: proc(m: ^Module, body: ^Body, array, index: ir.Value_ID) -> llvm.LLVMValueRef {
 	kind := m.program.layouts[body.func.values[array].type.layout].element
 	pointer := byte_offset(m, body.values[array], int(offset_of(abi.Array_Cell, elements)))
-	elements := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, pointer, "")
+	load := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, pointer, "")
+	elements := mark(m, load, m.places[.Array_Elements])
 	position := index_word(m, body, index)
 	return llvm.LLVMBuildInBoundsGEP2(m.builder, slot_type(m, kind), elements, &position, 1, "")
 }
@@ -530,16 +536,33 @@ index_word :: proc(m: ^Module, body: ^Body, index: ir.Value_ID) -> llvm.LLVMValu
 }
 
 @(private)
-store :: proc(m: ^Module, body: ^Body, value: ir.Value_ID, address: llvm.LLVMValueRef) {
+store :: proc(m: ^Module, body: ^Body, value: ir.Value_ID, address, tag: llvm.LLVMValueRef) {
 	stored := to_storage(m, body.values[value], body.func.values[value].type)
-	llvm.LLVMBuildStore(m.builder, stored, address)
+	mark(m, llvm.LLVMBuildStore(m.builder, stored, address), tag)
 }
 
 @(private)
-build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef, type: ir.Type) -> llvm.LLVMValueRef {
+closure_load :: proc(m: ^Module, address: llvm.LLVMValueRef) -> llvm.LLVMValueRef {
+	load := llvm.LLVMBuildLoad2(m.builder, m.types.ptr, address, "")
+	return mark(m, load, m.places[.Closure])
+}
+
+@(private)
+closure_store :: proc(m: ^Module, value, address: llvm.LLVMValueRef) {
+	mark(m, llvm.LLVMBuildStore(m.builder, value, address), m.places[.Closure])
+}
+
+@(private)
+build_length :: proc(
+	m: ^Module,
+	cell: llvm.LLVMValueRef,
+	place: Place,
+	type: ir.Type,
+) -> llvm.LLVMValueRef {
 	#assert(offset_of(abi.Array_Cell, length) == offset_of(abi.String_Cell, length))
 	pointer := byte_offset(m, cell, int(offset_of(abi.String_Cell, length)))
-	length := llvm.LLVMBuildLoad2(m.builder, m.types.int64, pointer, "")
+	load := llvm.LLVMBuildLoad2(m.builder, m.types.int64, pointer, "")
+	length := mark(m, load, m.places[place])
 	if type == ir.I64 {
 		return length
 	}
@@ -552,8 +575,10 @@ build_length :: proc(m: ^Module, cell: llvm.LLVMValueRef, type: ir.Type) -> llvm
 build_reserve :: proc(m: ^Module, body: ^Body, array: llvm.LLVMValueRef) {
 	length_address := byte_offset(m, array, int(offset_of(abi.Array_Cell, length)))
 	length := llvm.LLVMBuildLoad2(m.builder, m.types.int64, length_address, "")
+	mark(m, length, m.places[.Array_Length])
 	capacity_address := byte_offset(m, array, int(offset_of(abi.Array_Cell, capacity)))
 	capacity := llvm.LLVMBuildLoad2(m.builder, m.types.int64, capacity_address, "")
+	mark(m, capacity, m.places[.Array_Capacity])
 	full := llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, length, capacity, "")
 	grow := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
 	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
@@ -574,13 +599,14 @@ build_reserve :: proc(m: ^Module, body: ^Body, array: llvm.LLVMValueRef) {
 @(private)
 build_bounds_check :: proc(m: ^Module, body: ^Body, v: ir.Bounds_Check) -> llvm.LLVMValueRef {
 	index := body.values[v.index]
+	place := length_place(body.func.values[v.array].type)
 	in_range: llvm.LLVMValueRef
 	if ir.is_integer(body.func.values[v.index].type) {
-		length := build_length(m, body.values[v.array], ir.I64)
+		length := build_length(m, body.values[v.array], place, ir.I64)
 		position := index_word(m, body, v.index)
 		in_range = llvm.LLVMBuildICmp(m.builder, .LLVMIntULT, position, length, "")
 	} else {
-		length := build_length(m, body.values[v.array], ir.F64)
+		length := build_length(m, body.values[v.array], place, ir.F64)
 		argument := [?]llvm.LLVMValueRef{index}
 		whole := build_number_call(m, .Trunc, argument[:])
 		is_integer := llvm.LLVMBuildFCmp(m.builder, .LLVMRealOEQ, index, whole, "")
@@ -616,7 +642,7 @@ build_layout_test :: proc(
 	cell: llvm.LLVMValueRef,
 	layout: ir.Layout_ID,
 ) -> llvm.LLVMValueRef {
-	header := llvm.LLVMBuildLoad2(m.builder, m.types.int32, cell, "")
+	header := mark(m, llvm.LLVMBuildLoad2(m.builder, m.types.int32, cell, ""), m.places[.Header])
 	answer := llvm.LLVMConstInt(m.types.int1, 0, false)
 	for base, row in m.program.base {
 		if base != layout {

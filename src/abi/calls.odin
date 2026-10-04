@@ -110,10 +110,27 @@ Runtime_Proc :: enum u8 {
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1
 }
 
+// Effect is what an export may do to the memory generated code reaches, which codegen hands on to
+// LLVM. A row that claims too little is a miscompile the corpora may not show, so a change to what
+// an export does checks its row.
+Effect :: enum u8 {
+	// Reads and writes whatever the program reaches, and may collect.
+	Any,
+	// Reads whatever the program reaches; writes only memory of the runtime's own, such as its
+	// scratch arena and the output streams, and never allocates in the GC heap.
+	Reads,
+	// Reads only strings and its own arguments; writes only what the collector owns (the heap head,
+	// mark flags, free lists) and the cells it makes; may collect.
+	Allocates,
+	// As Any, and may call a function of the program, as a sort calls its comparator.
+	Calls_Back,
+}
+
 Runtime_Export :: struct {
 	symbol:   string,
 	params:   []C_Type,
 	result:   C_Type,
+	effect:   Effect,
 	// The export never returns: the runtime declares it `-> !`, codegen declares it noreturn.
 	diverges: bool,
 }
@@ -128,8 +145,13 @@ MISSING_LIMIT :: 4294967295 // 2^32 - 1, split's limit
 // exports from it (`link_name`) and codegen declares them from the same rows.
 // Every symbol starts with `tsnc_` to stay clear of libc and Odin.
 RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
-	.Console_Log = {symbol = "tsnc_console_log", params = {.Boolean, .Rest}, result = .Void},
-	.Log_String = {symbol = "tsnc_log_string", params = {.Ptr}, result = .Void},
+	.Console_Log = {
+		symbol = "tsnc_console_log",
+		params = {.Boolean, .Rest},
+		result = .Void,
+		effect = .Reads,
+	},
+	.Log_String = {symbol = "tsnc_log_string", params = {.Ptr}, result = .Void, effect = .Reads},
 	.Process_Argv = {symbol = "tsnc_process_argv", params = {.Ptr}, result = .Void},
 	.Process_Exit = {
 		symbol = "tsnc_process_exit",
@@ -137,62 +159,130 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 		result = .Void,
 		diverges = true,
 	},
-	.Math_Round = {symbol = "tsnc_math_round", params = {.Number}, result = .Number},
+	.Math_Round = {
+		symbol = "tsnc_math_round",
+		params = {.Number},
+		result = .Number,
+		effect = .Reads,
+	},
 	// An argument TypeScript lets a call leave out arrives as MISSING_END for an end, MISSING_LIMIT
 	// for a limit, and 0 for a start, a position or a digit count. A separator join was not given
-	// is the string constant ",".
+	// is the string constant ",". An owned join writes the string it appends to, so its row is Any.
 	.String_Join = {symbol = "tsnc_string_join", params = {.Boolean, .Rest}, result = .Ptr},
-	.String_Equal = {symbol = "tsnc_string_equal", params = {.Ptr, .Ptr}, result = .Boolean},
-	.String_Less = {symbol = "tsnc_string_less", params = {.Ptr, .Ptr}, result = .Boolean},
-	.String_At = {symbol = "tsnc_string_at", params = {.Ptr, .Number}, result = .Ptr},
+	.String_Equal = {
+		symbol = "tsnc_string_equal",
+		params = {.Ptr, .Ptr},
+		result = .Boolean,
+		effect = .Reads,
+	},
+	.String_Less = {
+		symbol = "tsnc_string_less",
+		params = {.Ptr, .Ptr},
+		result = .Boolean,
+		effect = .Reads,
+	},
+	.String_At = {
+		symbol = "tsnc_string_at",
+		params = {.Ptr, .Number},
+		result = .Ptr,
+		effect = .Allocates,
+	},
 	.String_Code_Point_At = {
 		symbol = "tsnc_string_code_point_at",
 		params = {.Ptr, .Number},
 		result = .Ptr,
+		effect = .Allocates,
 	},
 	.String_Char_Code_At = {
 		symbol = "tsnc_string_char_code_at",
 		params = {.Ptr, .Number},
 		result = .Number,
+		effect = .Reads,
 	},
 	.String_Slice = {
 		symbol = "tsnc_string_slice",
 		params = {.Ptr, .Number, .Number},
 		result = .Ptr,
+		effect = .Allocates,
 	},
 	.String_Index_Of = {
 		symbol = "tsnc_string_index_of",
 		params = {.Ptr, .Ptr, .Number},
 		result = .Number,
+		effect = .Reads,
 	},
 	.String_Starts_With = {
 		symbol = "tsnc_string_starts_with",
 		params = {.Ptr, .Ptr, .Number},
 		result = .Boolean,
+		effect = .Reads,
 	},
 	.String_Ends_With = {
 		symbol = "tsnc_string_ends_with",
 		params = {.Ptr, .Ptr, .Number},
 		result = .Boolean,
+		effect = .Reads,
 	},
-	.String_Trim = {symbol = "tsnc_string_trim", params = {.Ptr}, result = .Ptr},
-	.String_To_Upper = {symbol = "tsnc_string_to_upper", params = {.Ptr}, result = .Ptr},
-	.String_To_Lower = {symbol = "tsnc_string_to_lower", params = {.Ptr}, result = .Ptr},
+	.String_Trim = {
+		symbol = "tsnc_string_trim",
+		params = {.Ptr},
+		result = .Ptr,
+		effect = .Allocates,
+	},
+	.String_To_Upper = {
+		symbol = "tsnc_string_to_upper",
+		params = {.Ptr},
+		result = .Ptr,
+		effect = .Allocates,
+	},
+	.String_To_Lower = {
+		symbol = "tsnc_string_to_lower",
+		params = {.Ptr},
+		result = .Ptr,
+		effect = .Allocates,
+	},
 	.String_Split = {
 		symbol = "tsnc_string_split",
 		params = {.Ptr, .Ptr, .Ptr, .Number},
 		result = .Void,
 	},
-	.Number_To_String = {symbol = "tsnc_number_to_string", params = {.Number}, result = .Ptr},
+	.Number_To_String = {
+		symbol = "tsnc_number_to_string",
+		params = {.Number},
+		result = .Ptr,
+		effect = .Allocates,
+	},
 	.Number_To_Fixed = {
 		symbol = "tsnc_number_to_fixed",
 		params = {.Number, .Number},
 		result = .Ptr,
+		effect = .Allocates,
 	},
-	.Number_Parse_Float = {symbol = "tsnc_number_parse_float", params = {.Ptr}, result = .Number},
-	.Value_Typeof = {symbol = "tsnc_value_typeof", params = {.Tagged}, result = .Ptr},
-	.Value_Equal = {symbol = "tsnc_value_equal", params = {.Tagged, .Tagged}, result = .Boolean},
-	.Value_To_Boolean = {symbol = "tsnc_value_to_boolean", params = {.Tagged}, result = .Boolean},
+	.Number_Parse_Float = {
+		symbol = "tsnc_number_parse_float",
+		params = {.Ptr},
+		result = .Number,
+		effect = .Reads,
+	},
+	.Value_Typeof = {
+		symbol = "tsnc_value_typeof",
+		params = {.Tagged},
+		result = .Ptr,
+		effect = .Reads,
+	},
+	.Value_Equal = {
+		symbol = "tsnc_value_equal",
+		params = {.Tagged, .Tagged},
+		result = .Boolean,
+		effect = .Reads,
+	},
+	.Value_To_Boolean = {
+		symbol = "tsnc_value_to_boolean",
+		params = {.Tagged},
+		result = .Boolean,
+		effect = .Reads,
+	},
+	// Both to-string rows read the elements and fields of what they convert, and allocate.
 	.Value_To_String = {symbol = "tsnc_value_to_string", params = {.Tagged}, result = .Ptr},
 	.Value_To_Primitive_String = {
 		symbol = "tsnc_value_to_primitive_string",
@@ -204,18 +294,30 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 		symbol = "tsnc_array_index_of",
 		params = {.Ptr, .Tagged, .Number},
 		result = .Number,
+		effect = .Reads,
 	},
 	.Array_Includes = {
 		symbol = "tsnc_array_includes",
 		params = {.Ptr, .Tagged, .Number},
 		result = .Boolean,
+		effect = .Reads,
 	},
 	.Array_Slice = {symbol = "tsnc_array_slice", params = {.Ptr, .Number, .Number}, result = .Ptr},
 	.Array_Join = {symbol = "tsnc_array_join", params = {.Ptr, .Ptr}, result = .Ptr},
-	.Array_Sort = {symbol = "tsnc_array_sort", params = {.Ptr, .Ptr}, result = .Ptr},
+	.Array_Sort = {
+		symbol = "tsnc_array_sort",
+		params = {.Ptr, .Ptr},
+		result = .Ptr,
+		effect = .Calls_Back,
+	},
 	.Array_Sort_Default = {symbol = "tsnc_array_sort_default", params = {.Ptr}, result = .Ptr},
-	.Alloc = {symbol = "tsnc_alloc", params = {.Table}, result = .Ptr},
-	.Array_New = {symbol = "tsnc_array_new", params = {.Table, .Number}, result = .Ptr},
+	.Alloc = {symbol = "tsnc_alloc", params = {.Table}, result = .Ptr, effect = .Allocates},
+	.Array_New = {
+		symbol = "tsnc_array_new",
+		params = {.Table, .Number},
+		result = .Ptr,
+		effect = .Allocates,
+	},
 	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 

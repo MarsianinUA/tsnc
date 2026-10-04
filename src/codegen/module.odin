@@ -71,6 +71,9 @@ Module :: struct {
 	infos:        []llvm.LLVMValueRef,
 	ascii_cells:  llvm.LLVMValueRef,
 	heap:         llvm.LLVMValueRef,
+	tbaa:         u32, // the metadata kind of an alias tag
+	places:       [Place]llvm.LLVMValueRef,
+	field_tags:   [][]llvm.LLVMValueRef, // by ir.Layout_ID and field; nil for a Tagged slot
 }
 
 @(private)
@@ -90,6 +93,7 @@ build_module :: proc(
 	}
 	defer llvm.LLVMDisposeBuilder(m.builder)
 	m.runtime = declare_runtime(ctx, module, m.types)
+	add_alias_tags(&m)
 
 	add_string_cells(&m)
 	add_fail_sites(&m)
@@ -161,8 +165,6 @@ storage_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
 	return value_type(m, type)
 }
 
-// declare_runtime marks a diverging export noreturn, so LLVM treats the code after its call as
-// unreachable.
 @(private)
 declare_runtime :: proc(
 	ctx: llvm.LLVMContextRef,
@@ -171,12 +173,6 @@ declare_runtime :: proc(
 ) -> (
 	functions: [abi.Runtime_Proc]Function,
 ) {
-	NORETURN :: "noreturn"
-	noreturn := llvm.LLVMCreateEnumAttribute(
-		ctx,
-		llvm.LLVMGetEnumAttributeKindForName(NORETURN, len(NORETURN)),
-		0,
-	)
 	exports := abi.RUNTIME_EXPORTS
 	for export, id in exports {
 		params := make([dynamic]llvm.LLVMTypeRef, context.temp_allocator)
@@ -198,12 +194,47 @@ declare_runtime :: proc(
 		)
 		symbol := strings.clone_to_cstring(export.symbol, context.temp_allocator)
 		function := llvm.LLVMAddFunction(module, symbol, signature)
-		if export.diverges {
-			llvm.LLVMAddAttributeAtIndex(function, llvm.LLVMAttributeFunctionIndex, noreturn)
-		}
+		add_effect_attributes(ctx, function, export)
 		functions[id] = {signature, function}
 	}
 	return
+}
+
+// READS_MEMORY is memory(read, inaccessiblemem: readwrite) as LLVM 20 packs it: two bits per
+// location, 1 to read and 2 to write, argument memory lowest, then memory the module cannot reach,
+// then the rest. An abi.Effect.Reads export writes only memory of the runtime's own.
+@(private)
+READS_MEMORY :: 0b01_11_01
+
+// add_effect_attributes gives an export the function attributes its row allows.
+@(private)
+add_effect_attributes :: proc(
+	ctx: llvm.LLVMContextRef,
+	function: llvm.LLVMValueRef,
+	export: abi.Runtime_Export,
+) {
+	add_attribute(ctx, function, "nounwind")
+	if export.effect != .Calls_Back {
+		add_attribute(ctx, function, "nocallback")
+	}
+	if export.effect == .Reads {
+		add_attribute(ctx, function, "memory", READS_MEMORY)
+	}
+	if export.diverges {
+		add_attribute(ctx, function, "noreturn")
+	}
+}
+
+@(private)
+add_attribute :: proc(
+	ctx: llvm.LLVMContextRef,
+	function: llvm.LLVMValueRef,
+	name: string,
+	value: u64 = 0,
+) {
+	kind := llvm.LLVMGetEnumAttributeKindForName(cstring(raw_data(name)), len(name))
+	attribute := llvm.LLVMCreateEnumAttribute(ctx, kind, value)
+	llvm.LLVMAddAttributeAtIndex(function, llvm.LLVMAttributeFunctionIndex, attribute)
 }
 
 @(private)
