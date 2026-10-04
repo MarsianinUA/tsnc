@@ -84,6 +84,41 @@ a_narrowed_object_is_checked_by_its_layout_too :: proc(t: ^testing.T) {
 }
 
 @(test)
+a_union_of_objects_is_one_pointer :: proc(t: ^testing.T) {
+	// The header of a cell names its layout, so the union carries no tag: a field read tests the
+	// layout alone, a literal passed to it is not boxed, and an array of it holds pointers.
+	result := lower_text(
+		t,
+		SHAPES +
+		`
+		function area(s: Shape): number {
+			switch (s.kind) {
+				case "circle": return s.radius;
+				case "square": return s.side;
+				case "rect": return s.width * s.height;
+			}
+		}
+		const shapes: Shape[] = [{ kind: "square", side: 2 }];
+		console.log(area({ kind: "circle", radius: 1 }), shapes);
+	`,
+	)
+	area := harness.func_named(t, result.output, "m1.area")
+	testing.expectf(t, area.params[0] == ir.ANY_REF, "%s", result.text)
+	untagged :=
+		len(instructions_of(area, ir.Tag_Test)) == 0 && len(instructions_of(area, ir.Unbox)) == 0
+	testing.expectf(t, untagged, "%s", result.text)
+	for func in result.output.funcs {
+		for box in instructions_of(func, ir.Box) {
+			_, of_literal := func.values[box.value].variant.(ir.Alloc)
+			testing.expectf(t, !of_literal, "a literal boxed in %s:\n%s", func.name, result.text)
+		}
+	}
+	shapes := harness.global_named(t, result.output, "m1.shapes")
+	element := result.output.layouts[shapes.type.layout].element
+	testing.expectf(t, element == .Any_Ref, "%v:\n%s", element, result.text)
+}
+
+@(test)
 typeof_compared_with_a_word_is_a_tag_test :: proc(t: ^testing.T) {
 	result := lower_text(
 		t,
@@ -225,10 +260,10 @@ a_tagged_name_declared_as_references_is_truthy_unless_nullish :: proc(t: ^testin
 		t,
 		SHAPES +
 		`
-		function either(v: Circle | Square | null): boolean {
+		function either(v: Circle | (() => number) | null): boolean {
 			return !v;
 		}
-		interface Holder { v: Circle | Square | null; }
+		interface Holder { v: Circle | (() => number) | null; }
 		function held(h: Holder): boolean {
 			return !h.v;
 		}

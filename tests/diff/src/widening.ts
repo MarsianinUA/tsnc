@@ -134,6 +134,17 @@ const rows: Shape[][] = grid;
 const narrowed = shapes as Disc[];
 console.log(all.map(area), all, rows[0] === discs, narrowed === discs);
 
+// A union of objects, with null too, is one pointer; the header of its cell tells the layout.
+function pick(i: number): Shape | null {
+  return i < all.length ? all[i] : null;
+}
+const picked = [pick(0), pick(9)];
+const second = pick(1);
+if (second !== null) {
+  console.log(second.kind, second === discs[0], second === all[0], area(second));
+}
+console.log(picked, picked[0] === all[0], picked[1] === null, typeof picked[1], (all[0] as Square).side);
+
 const items: Item[] = [{ v: 1 }];
 const holes: (Item | null)[] = items;
 holes.push({ v: 2 });

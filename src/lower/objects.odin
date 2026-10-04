@@ -182,6 +182,11 @@ load_field :: proc(s: ^Func_State, place: Field_Place, span: source.Span) -> ir.
 	return coerce(s, loaded, place.type, span, .Field_Holds_Other_Kind)
 }
 
+// slot_type is what a load of a slot gives where the declared type is `type`. A slot of several
+// layouts gives an object or an array as Any_Ref, which the reader checks against its own layout. A
+// string or a function there is the declared one: a slot is Any_Ref only where some member of the
+// class declares objects of several types, and check accepts no flow between them and a string or a
+// function, so such a member only shares the shallow key.
 @(private)
 slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
 	#partial switch kind {
@@ -191,6 +196,10 @@ slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
 		return ir.nullable(type, .Null)
 	case .Ref_Or_Undefined:
 		return ir.nullable(type, .Undefined)
+	case .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
+		held, _ := slot_reference(kind)
+		present := ir.ANY_REF if is_object_reference(type) else ir.non_null(type)
+		return ir.nullable(present, held.nullish)
 	}
 	return type
 }

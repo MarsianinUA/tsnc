@@ -9,7 +9,8 @@ import "../harness"
 
 @(test)
 a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
-	// A loop keeps norm a call, and a write after a read keeps box a cell rather than its fields.
+	// A loop keeps norm and size calls, and a write after a read keeps box a cell rather than its
+	// fields. A union of objects takes the literal as it is, so drawn has nothing to box.
 	result := optimize_text(
 		t,
 		`
@@ -48,10 +49,22 @@ a_cell_no_reference_leaves_goes_on_the_stack :: proc(t: ^testing.T) {
 			p.x = p.y + 1;
 			return same(p).x;
 		}
-		console.log(area(2, 3), passed(), walked(), inlined());
+		interface Disc { kind: "disc"; r: number; }
+		interface Ring { kind: "ring"; r: number; w: number; }
+		function size(s: Disc | Ring): number {
+			let sum = 0;
+			for (let i = 0; i < 2; i++) {
+				sum += s.r;
+			}
+			return sum;
+		}
+		function drawn(): number {
+			return size({ kind: "disc", r: 2 });
+		}
+		console.log(area(2, 3), passed(), walked(), inlined(), drawn());
 	`,
 	)
-	for name in ([?]string{"m1.area", "m1.passed", "m1.walked", "m1.inlined"}) {
+	for name in ([?]string{"m1.area", "m1.passed", "m1.walked", "m1.inlined", "m1.drawn"}) {
 		body := harness.func_named(t, result.output, name)
 		places := cell_places(body)
 		testing.expectf(t, places == {.Stack}, "%s: %v\n%s", name, places, result.after)

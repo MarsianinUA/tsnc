@@ -51,6 +51,8 @@ operands :: proc(variant: ^Variant, found: ^[dynamic]^Value_ID) {
 		add_operands(found, &v.value)
 	case Non_Null:
 		add_operands(found, &v.value)
+	case As_Layout:
+		add_operands(found, &v.cell)
 	case Same_Cell:
 		add_operands(found, &v.a, &v.b)
 	case Tag_Test:

@@ -136,18 +136,27 @@ Slot_Kind :: enum u8 {
 	// an optional field of a reference type (requirements 3.4). The GC traces it as a Ref.
 	Ref_Or_Null,
 	Ref_Or_Undefined,
+	// A Ref, or a Ref_Or_Null or Ref_Or_Undefined, to an object or an array of one of several
+	// layouts, which its header names: `Circle | Rect` (requirements 3.4). A read through one of the
+	// layouts tests the header first. The GC and the console read them as their Ref kinds.
+	Any_Ref,
+	Any_Ref_Or_Null,
+	Any_Ref_Or_Undefined,
 }
 
 // SLOT_SIZE is @(rodata) rather than a constant: Odin indexes a constant array only by a constant,
 // and its readers index it by the slot kind of a field.
 @(rodata)
 SLOT_SIZE := [Slot_Kind]int {
-	.Number           = size_of(f64),
-	.Boolean          = size_of(b64),
-	.Ref              = size_of(rawptr),
-	.Tagged           = size_of(Tagged),
-	.Ref_Or_Null      = size_of(rawptr),
-	.Ref_Or_Undefined = size_of(rawptr),
+	.Number               = size_of(f64),
+	.Boolean              = size_of(b64),
+	.Ref                  = size_of(rawptr),
+	.Tagged               = size_of(Tagged),
+	.Ref_Or_Null          = size_of(rawptr),
+	.Ref_Or_Undefined     = size_of(rawptr),
+	.Any_Ref              = size_of(rawptr),
+	.Any_Ref_Or_Null      = size_of(rawptr),
+	.Any_Ref_Or_Undefined = size_of(rawptr),
 }
 
 Cell_Kind :: enum u8 {

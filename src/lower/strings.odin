@@ -49,7 +49,7 @@ to_string :: proc(
 			args   = {value},
 		}
 		return ir.emit(&s.fb, ir.STR, call, span)
-	case .Ref, .Tagged:
+	case .Ref, .Any_Ref, .Tagged:
 		if primitive {
 			export = .Value_To_Primitive_String
 		}

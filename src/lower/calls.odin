@@ -527,7 +527,7 @@ runtime_argument :: proc(s: ^Func_State, arg: ast.Node_ID, param: abi.C_Type) ->
 		return coerce(s, value, ir.TAGGED, span)
 	case .Ptr:
 		#partial switch value_type(s, value).kind {
-		case .Str, .Ref, .Closure:
+		case .Str, .Ref, .Any_Ref, .Closure:
 			return value
 		case .Tagged:
 			// Every reference an argument of the lib passes here is a string: a search, a

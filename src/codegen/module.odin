@@ -138,7 +138,7 @@ value_type :: proc(m: ^Module, type: ir.Type) -> llvm.LLVMTypeRef {
 		return m.types.int1
 	case .Tagged:
 		return m.types.tagged
-	case .Str, .Closure, .Ref:
+	case .Str, .Closure, .Ref, .Any_Ref:
 		// Opaque pointers: a reference is the address of a cell, and its layout is compile time
 		// knowledge that never reaches the LLVM type.
 		return m.types.ptr
@@ -357,7 +357,7 @@ root_kind :: proc(type: ir.Type) -> (kind: abi.Slot_Kind, is_root: bool) {
 		return {}, false
 	case .Tagged:
 		return .Tagged, true
-	case .Str, .Closure, .Ref:
+	case .Str, .Closure, .Ref, .Any_Ref:
 		return .Ref, true
 	}
 	unreachable()

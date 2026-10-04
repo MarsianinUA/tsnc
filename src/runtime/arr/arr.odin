@@ -193,15 +193,16 @@ store :: #force_inline proc(slot: rawptr, kind: abi.Slot_Kind, v: abi.Tagged) {
 	case .Boolean:
 		ensure(v.tag == .Boolean, "a boolean array given another value")
 		(^b64)(slot)^ = v.payload.boolean
-	case .Ref:
+	case .Ref, .Any_Ref:
 		ensure(
 			v.tag == .String || v.tag == .Object || v.tag == .Function,
 			"a reference array given another value",
 		)
 		(^^abi.Cell_Header)(slot)^ = v.payload.ref
-	case .Ref_Or_Null, .Ref_Or_Undefined:
+	case .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		held := v.tag == .String || v.tag == .Object || v.tag == .Function
-		absent := v.tag == (.Null if kind == .Ref_Or_Null else .Undefined)
+		null := kind == .Ref_Or_Null || kind == .Any_Ref_Or_Null
+		absent := v.tag == (.Null if null else .Undefined)
 		ensure(held || absent, "a reference array given another value")
 		(^^abi.Cell_Header)(slot)^ = v.payload.ref if held else nil
 	case .Tagged:

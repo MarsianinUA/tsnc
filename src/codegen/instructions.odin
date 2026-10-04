@@ -159,6 +159,9 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Non_Null:
 		body.values[value] = body.values[v.value]
 
+	case ir.As_Layout:
+		body.values[value] = body.values[v.cell]
+
 	case ir.Same_Cell:
 		a, b := body.values[v.a], body.values[v.b]
 		body.values[value] = llvm.LLVMBuildICmp(m.builder, .LLVMIntEQ, a, b, "")
@@ -655,7 +658,7 @@ slot_type :: proc(m: ^Module, kind: abi.Slot_Kind) -> llvm.LLVMTypeRef {
 		return m.types.double
 	case .Boolean:
 		return m.types.int64
-	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		return m.types.ptr
 	case .Tagged:
 		return m.types.tagged
@@ -790,7 +793,7 @@ build_box :: proc(m: ^Module, value: llvm.LLVMValueRef, type: ir.Type) -> llvm.L
 	case .Str:
 		tag = .String
 		payload = llvm.LLVMBuildPtrToInt(m.builder, value, m.types.int64, "")
-	case .Ref:
+	case .Ref, .Any_Ref:
 		// Objects and arrays share the tag; the type table of the cell tells them apart.
 		tag = .Object
 		payload = llvm.LLVMBuildPtrToInt(m.builder, value, m.types.int64, "")
@@ -831,7 +834,7 @@ build_unbox :: proc(m: ^Module, payload: llvm.LLVMValueRef, type: ir.Type) -> ll
 		return llvm.LLVMBuildBitCast(m.builder, payload, m.types.double, "")
 	case .Bool:
 		return llvm.LLVMBuildTrunc(m.builder, payload, m.types.int1, "")
-	case .Str, .Ref, .Closure:
+	case .Str, .Ref, .Any_Ref, .Closure:
 		return llvm.LLVMBuildIntToPtr(m.builder, payload, m.types.ptr, "")
 	case .Void, .Tagged, .I32, .I64:
 		// The verifier keeps each of them out of unbox.

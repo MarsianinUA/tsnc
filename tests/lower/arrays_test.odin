@@ -76,7 +76,7 @@ push_and_pop_call_no_runtime :: proc(t: ^testing.T) {
 	testing.expectf(t, len(instructions_of(body, ir.Set_Length)) > 0, "%s", result.text)
 }
 
-// A flow of one array type into a wider one tags the slot of those two only: the class is keyed
+// A flow of one array type into a wider one changes the slot of those two only: the class is keyed
 // by the element below its slot, so the other arrays of references keep theirs.
 @(test)
 an_array_flow_widens_its_own_class_only :: proc(t: ^testing.T) {
@@ -98,7 +98,7 @@ an_array_flow_widens_its_own_class_only :: proc(t: ^testing.T) {
 		kind: abi.Slot_Kind,
 	}
 	want := [?]Slot {
-		{"m1.discs", .Tagged},
+		{"m1.discs", .Any_Ref},
 		{"m1.squares", .Ref},
 		{"m1.words", .Ref},
 		{"m1.grid", .Ref},

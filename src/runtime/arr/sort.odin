@@ -111,7 +111,7 @@ start_sort :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell) -> Sort_State {
 		at := slot(items, kind, i)
 		undefined :=
 			kind == .Tagged && (^abi.Tagged)(at).tag == .Undefined ||
-			kind == .Ref_Or_Undefined && (^rawptr)(at)^ == nil
+			(kind == .Ref_Or_Undefined || kind == .Any_Ref_Or_Undefined) && (^rawptr)(at)^ == nil
 		if !undefined {
 			append(&order, i)
 		}
@@ -239,7 +239,7 @@ less :: proc(state: ^Sort_State, a, b: int) -> bool {
 		order = Compare_Numbers(code)(env, (^f64)(x)^, (^f64)(y)^)
 	case .Boolean:
 		order = Compare_Booleans(code)(env, (^b64)(x)^, (^b64)(y)^)
-	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		order = Compare_Refs(code)(env, (^^abi.Cell_Header)(x)^, (^^abi.Cell_Header)(y)^)
 	case .Tagged:
 		v, w := (^abi.Tagged)(x)^, (^abi.Tagged)(y)^

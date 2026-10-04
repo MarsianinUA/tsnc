@@ -67,6 +67,10 @@ Type_Kind :: enum u8 {
 	Str, // a reference to an abi.String_Cell
 	Closure, // a reference to an abi.Closure_Cell: code plus environment
 	Ref, // a reference to the cell of a layout: object, array, environment
+	// A reference to an object or an array of one of several layouts, which the header of its cell
+	// names: `Circle | Rect`. It has no fields of its own; As_Layout reads it as one of the layouts
+	// once a Layout_Test proved which.
+	Any_Ref,
 	// A number opt proved an integer that fits, and never -0. Only arithmetic, comparisons, phis,
 	// indices and conversions take one: memory, calls, boxes and returns hold numbers as F64.
 	I32,
@@ -74,7 +78,7 @@ Type_Kind :: enum u8 {
 }
 
 // Type is comparable with ==: layout is NO_LAYOUT for every kind but Ref, and nullish is None for
-// every kind but Str, Closure and Ref.
+// every kind but Str, Closure, Ref and Any_Ref.
 Type :: struct {
 	kind:    Type_Kind,
 	nullish: Nullish,
@@ -105,6 +109,9 @@ STR :: Type {
 CLOSURE :: Type {
 	kind = .Closure,
 }
+ANY_REF :: Type {
+	kind = .Any_Ref,
+}
 I32 :: Type {
 	kind = .I32,
 }
@@ -126,7 +133,7 @@ ref :: proc(layout: Layout_ID) -> Type {
 }
 
 is_reference :: proc(type: Type) -> bool {
-	return type.kind == .Str || type.kind == .Ref || type.kind == .Closure
+	return type.kind == .Str || type.kind == .Ref || type.kind == .Any_Ref || type.kind == .Closure
 }
 
 nullable :: proc(type: Type, nullish: Nullish) -> Type {
@@ -139,8 +146,12 @@ non_null :: proc(type: Type) -> Type {
 }
 
 // fits says whether a value of type have may stand where want is wanted: the same type, or the
-// present reference of a type that may hold null, which it is bit for bit.
+// present reference of a type that may hold null, which it is bit for bit, or an object or an array
+// where one of several layouts is wanted.
 fits :: proc(have, want: Type) -> bool {
+	if want.kind == .Any_Ref && (have.kind == .Ref || have.kind == .Any_Ref) {
+		return have.nullish == .None || have.nullish == want.nullish
+	}
 	return have == want || want.nullish != .None && have == non_null(want)
 }
 
@@ -158,7 +169,13 @@ traced :: proc(kind: abi.Slot_Kind) -> bool {
 	switch kind {
 	case .Number, .Boolean:
 		return false
-	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Tagged:
+	case .Ref,
+	     .Ref_Or_Null,
+	     .Ref_Or_Undefined,
+	     .Any_Ref,
+	     .Any_Ref_Or_Null,
+	     .Any_Ref_Or_Undefined,
+	     .Tagged:
 		return true
 	}
 	return false

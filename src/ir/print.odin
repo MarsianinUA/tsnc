@@ -402,6 +402,10 @@ write_variant :: proc(w: io.Writer, p: Program_IR, variant: Variant) -> io.Error
 		io.write_string(w, "non_null ") or_return
 		write_value(w, v.value) or_return
 
+	case As_Layout:
+		io.write_string(w, "as_layout ") or_return
+		write_value(w, v.cell) or_return
+
 	case Same_Cell:
 		io.write_string(w, "same_cell ") or_return
 		write_value(w, v.a) or_return
@@ -700,6 +704,7 @@ TYPE_KIND_TEXT := [Type_Kind]string {
 	.Str     = "str",
 	.Closure = "closure",
 	.Ref     = "ref",
+	.Any_Ref = "any_ref",
 	.I32     = "i32",
 	.I64     = "i64",
 }
@@ -781,12 +786,15 @@ TAG_TEXT := [abi.Tag]string {
 
 @(private, rodata)
 SLOT_KIND_TEXT := [abi.Slot_Kind]string {
-	.Number           = "number",
-	.Boolean          = "boolean",
-	.Ref              = "ref",
-	.Tagged           = "tagged",
-	.Ref_Or_Null      = "ref or null",
-	.Ref_Or_Undefined = "ref or undefined",
+	.Number               = "number",
+	.Boolean              = "boolean",
+	.Ref                  = "ref",
+	.Tagged               = "tagged",
+	.Ref_Or_Null          = "ref or null",
+	.Ref_Or_Undefined     = "ref or undefined",
+	.Any_Ref              = "any ref",
+	.Any_Ref_Or_Null      = "any ref or null",
+	.Any_Ref_Or_Undefined = "any ref or undefined",
 }
 
 @(private, rodata)

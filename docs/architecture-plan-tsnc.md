@@ -338,7 +338,7 @@ May change during detailed planning:
 - (optional) The runtime object sits in `dist/` next to `tsnc.exe`; a flag can override the path.
 - (optional) An environment variable turns on GC stress mode, not a rebuild.
 - (optional) The lib file uses `declare` and generic interfaces; `parse` accepts them, `check` rejects them in user files as constructs outside the subset.
-- (settled in T5.7, amended in T6.5) Recursive object types (`interface Node { next: Node | null }`) need no declaration identity: the layout key is shallow, so a string, an object and an array are a reference slot whatever they point at. A union of one reference type with exactly one of `null` and `undefined` is a pointer slot whose 0 stands for it (`Ref_Or_Null`, `Ref_Or_Undefined`), and any other union with an object member is a tagged slot. The key of `Node` is complete before `Node` is.
+- (settled in T5.7, amended in T6.5 and T6.23) Recursive object types (`interface Node { next: Node | null }`) need no declaration identity: the layout key is shallow, so a string, an object and an array are a reference slot whatever they point at. A union of one reference type with exactly one of `null` and `undefined` is a pointer slot whose 0 stands for it (`Ref_Or_Null`, `Ref_Or_Undefined`). A union of several object and array types, with at most one of them, is a pointer slot of its own kind (`Any_Ref` and its two kinds that may hold null), since the header of the cell names the layout and the key must tell `{p: Circle}` from `{p: Circle | Rect}`. Any other union with an object member is a tagged slot. The key of `Node` is complete before `Node` is.
 
 ## Risks and open questions
 

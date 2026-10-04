@@ -189,6 +189,11 @@ coerce :: proc(
 	if have == ir.TAGGED {
 		return unbox_checked(s, value, target, mismatch, span)
 	}
+	same_nullish :=
+		have.nullish == .None || target.nullish == .None || have.nullish == target.nullish
+	if have.kind == .Any_Ref && target.kind == .Ref && same_nullish {
+		return layout_checked(s, value, target, mismatch, span)
+	}
 	if have.nullish != .None && target == ir.non_null(have) {
 		return present_checked(s, value, mismatch, span)
 	}
@@ -265,7 +270,7 @@ flow_checked :: proc(
 	into_union :=
 		wanted != check.ANY &&
 		wanted != check.UNKNOWN &&
-		(is_tagged_type(s, wanted) || is_nullable_type(s, wanted))
+		(is_tagged_type(s, wanted) || is_reference_union(s, wanted))
 	if from_any && into_union && value_type(s, value) == ir.TAGGED {
 		check_members(s, value, wanted, .Tagged_Holds_Other_Kind, span)
 	}
@@ -281,16 +286,16 @@ is_tagged_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
 }
 
 @(private)
-is_nullable_type :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
+is_reference_union :: proc(s: ^Func_State, type: check.Type_ID) -> bool {
 	v := s.types[type].(check.Union) or_return
-	_, _, _, nullable := nullable_reference(s.types, v)
-	return nullable
+	_, _, _, held := reference_union(s.types, v)
+	return held
 }
 
 @(private)
 boxable :: proc(type: ir.Type) -> bool {
 	#partial switch type.kind {
-	case .F64, .Bool, .Str, .Ref, .Closure:
+	case .F64, .Bool, .Str, .Ref, .Any_Ref, .Closure:
 		return true
 	}
 	return false
@@ -322,7 +327,7 @@ truthy :: proc(
 			return truthy_nullable_string(s, value, span)
 		}
 		return above_zero(s, ir.emit(&s.fb, ir.F64, ir.Length{value = value}, span), span)
-	case .Ref, .Closure:
+	case .Ref, .Any_Ref, .Closure:
 		if type.nullish != .None {
 			return negated(s, null_test(s, value, span), span)
 		}
@@ -468,7 +473,7 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 	if receiver == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
-	if value_type(s, receiver) == ir.TAGGED && node.name.text == "length" {
+	if is_union_value(value_type(s, receiver)) && node.name.text == "length" {
 		return union_length(s, receiver, s.typed.node_types[node.object], span)
 	}
 	strategy, found := instance_strategy(s, receiver, node.name.text)
@@ -665,8 +670,8 @@ arithmetic :: proc(
 // lower_compare lets the IR compare two numbers, two booleans or two references itself. Two strings
 // compare their contents (compare_strings). A side that is null or undefined itself, or a reference
 // that may hold null, is a test (compare_references), and any other tagged value goes to the runtime
-// (compare_tagged). Two objects check lets `===` compare share one layout, so their references
-// compare as they are.
+// (compare_tagged). Two objects check lets `===` compare share one layout, or one side is a union of
+// objects, so their references compare as they are.
 @(private)
 lower_compare :: proc(
 	s: ^Func_State,
@@ -692,14 +697,14 @@ lower_compare :: proc(
 		return compare_tagged(s, op, values, span)
 	}
 	type := value_type(s, left)
-	if type != value_type(s, right) {
+	if type != value_type(s, right) && !one_reference(type, value_type(s, right)) {
 		// check compares two values of one type, and gives two objects it lets meet one layout.
 		return later(s, span, "comparing two representations")
 	}
 	switch type.kind {
 	case .F64:
 		return ir.emit(&s.fb, ir.BOOL, ir.Compare{op = op, left = left, right = right}, span)
-	case .Bool, .Ref, .Closure:
+	case .Bool, .Ref, .Any_Ref, .Closure:
 		if !ordered {
 			return ir.emit(&s.fb, ir.BOOL, ir.Compare{op = op, left = left, right = right}, span)
 		}
@@ -1082,7 +1087,7 @@ lower_place :: proc(s: ^Func_State, target: ast.Node_ID) -> (place: Place, ok: b
 			return nil, false
 		}
 		type := s.typed.node_types[v.object]
-		if is_object_union(s.types, type) && value_type(s, cell) == ir.TAGGED {
+		if is_object_union(s.types, type) && is_union_value(value_type(s, cell)) {
 			return union_field_place(s, cell, type, v.name.text, span)
 		}
 		object, is_object := s.types[type].(check.Object)
