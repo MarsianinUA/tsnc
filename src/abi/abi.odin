@@ -21,6 +21,10 @@ Type_Table_ID :: distinct u32
 
 Cell_Flag :: enum u32 {
 	Marked,
+	// The cell is marked and a reference was stored into it since the last collection, so that
+	// collection's survivors are not all it holds; generated code asks the runtime to remember a
+	// marked cell it stores a reference into (Runtime_Proc.Remember).
+	Remembered,
 }
 Cell_Flags :: bit_set[Cell_Flag;u32]
 

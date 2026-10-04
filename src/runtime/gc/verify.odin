@@ -8,7 +8,9 @@ Heap_Problem :: enum u8 {
 	Bad_Free_List, // a free list holds something other than a free slot of its class, or loses one
 	Unknown_Table, // a cell names a table that was never registered
 	Bad_Cell, // a cell's contents contradict its table or overrun its slot
-	Stray_Mark, // a cell is marked outside a collection
+	// A remembered cell is not marked, or the mark stack holds other than the remembered cells.
+	Bad_Remembered_Set,
+	Missed_Barrier, // an old cell that is not remembered holds a young one
 	Dangling_Reference, // a reference into the heap that is not the start of a live cell
 	// A reference into the stack: opt put a cell there that a heap cell or a root still points to.
 	Stack_Reference,
@@ -21,7 +23,8 @@ PROBLEM_TEXT := [Heap_Problem]string {
 	.Bad_Free_List      = "bad free list",
 	.Unknown_Table      = "unknown type table",
 	.Bad_Cell           = "bad cell",
-	.Stray_Mark         = "stray mark",
+	.Bad_Remembered_Set = "bad remembered set",
+	.Missed_Barrier     = "missed write barrier",
 	.Dangling_Reference = "dangling reference",
 	.Stack_Reference    = "reference into the stack",
 }
@@ -65,6 +68,7 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 
 	// --- Every live cell, counting the free slots on the way.
 	free_slots: [abi.CLASS_COUNT]int
+	remembered := 0
 	for index := 0; index < heap.page_count; index += 1 {
 		page := heap.pages[index]
 		#partial switch page.kind {
@@ -77,19 +81,31 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 				} else if problem = verify_cell(heap, cell, size); problem != .None {
 					return problem, cell
 				}
+				remembered += int(.Remembered in cell.flags)
 			}
 		case .Large:
 			cell := (^abi.Cell_Header)(&heap.base[index * PAGE_SIZE])
 			if problem = verify_cell(heap, cell, int(page.run) * PAGE_SIZE); problem != .None {
 				return problem, cell
 			}
+			remembered += int(.Remembered in cell.flags)
 		}
 	}
 
 	// --- Every root: a module global holds a live cell, a static one or none.
 	for root in heap.roots {
-		if problem = verify_slot(heap, root.slot, root.kind); problem != .None {
+		if problem = verify_slot(heap, root.slot, root.kind, false); problem != .None {
 			return problem, root.slot
+		}
+	}
+
+	// --- Between collections the mark stack holds the remembered cells and nothing else.
+	if heap.marks.count != remembered {
+		return .Bad_Remembered_Set, heap.marks.cells
+	}
+	for cell in heap.marks.cells[:heap.marks.count] {
+		if owner(heap, cell) != cell || .Remembered not_in cell.flags {
+			return .Bad_Remembered_Set, cell
 		}
 	}
 
@@ -112,9 +128,11 @@ verify :: proc(heap: ^Heap) -> (problem: Heap_Problem, at: rawptr) {
 
 @(private = "file")
 verify_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header, slot_size: int) -> Heap_Problem {
-	if .Marked in cell.flags {
-		return .Stray_Mark
+	if .Remembered in cell.flags && .Marked not_in cell.flags {
+		return .Bad_Remembered_Set
 	}
+	// A minor collection scans no old cell but a remembered one, so the others hold no young cell.
+	old := cell.flags == {.Marked}
 	table, known := type_table(heap, cell.type_table)
 	if !known {
 		return .Unknown_Table
@@ -133,14 +151,15 @@ verify_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header, slot_size: int) -> Heap
 		}
 	case .Object, .Environment:
 		for field in table.fields {
-			if problem := verify_slot(heap, &bytes[field.offset], field.kind); problem != .None {
+			slot := &bytes[field.offset]
+			if problem := verify_slot(heap, slot, field.kind, old); problem != .None {
 				return problem
 			}
 		}
 	case .Closure:
-		return verify_reference(heap, (^abi.Closure_Cell)(cell).env)
+		return verify_reference(heap, (^abi.Closure_Cell)(cell).env, old)
 	case .Array:
-		return verify_elements(heap, (^abi.Array_Cell)(cell), table.element)
+		return verify_elements(heap, (^abi.Array_Cell)(cell), table.element, old)
 	case .Buffer:
 	// The array that owns it checks the elements, the only part that holds anything.
 	}
@@ -151,7 +170,12 @@ verify_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header, slot_size: int) -> Heap
 // Buffer cell of their own, right after that cell's header. The buffer is checked even when the
 // array is empty, since the next push writes into it.
 @(private = "file")
-verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind) -> Heap_Problem {
+verify_elements :: proc(
+	heap: ^Heap,
+	array: ^abi.Array_Cell,
+	kind: abi.Slot_Kind,
+	old: bool,
+) -> Heap_Problem {
 	if array.length < 0 || array.length > array.capacity {
 		return .Bad_Cell
 	}
@@ -171,6 +195,9 @@ verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind
 	if array.capacity > room / abi.ELEMENT_SIZE[kind] {
 		return .Bad_Cell
 	}
+	if old && .Marked not_in buffer.flags {
+		return .Missed_Barrier
+	}
 	slots := ([^]byte)(array.elements)
 	if kind == .Boolean {
 		for i in 0 ..< array.length {
@@ -182,7 +209,7 @@ verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind
 	}
 	for i in 0 ..< array.length {
 		slot := &slots[i * abi.ELEMENT_SIZE[kind]]
-		if problem := verify_slot(heap, slot, kind); problem != .None {
+		if problem := verify_slot(heap, slot, kind, old); problem != .None {
 			return problem
 		}
 	}
@@ -190,7 +217,7 @@ verify_elements :: proc(heap: ^Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind
 }
 
 @(private = "file")
-verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Problem {
+verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind, old: bool) -> Heap_Problem {
 	switch kind {
 	case .Number:
 	case .Boolean:
@@ -198,7 +225,7 @@ verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Prob
 			return .Bad_Cell
 		}
 	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
-		return verify_reference(heap, (^^abi.Cell_Header)(slot)^)
+		return verify_reference(heap, (^^abi.Cell_Header)(slot)^, old)
 	case .Tagged:
 		value := (^abi.Tagged)(slot)
 		switch value.tag {
@@ -208,7 +235,7 @@ verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Prob
 				return .Bad_Cell
 			}
 		case .String, .Object, .Function:
-			return verify_reference(heap, value.payload.ref)
+			return verify_reference(heap, value.payload.ref, old)
 		case:
 			return .Bad_Cell
 		}
@@ -217,9 +244,9 @@ verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Prob
 }
 
 // verify_reference takes nil, which is what a slot holds before its first store. A cell of the
-// stack goes when its frame does.
+// stack goes when its frame does. `old` is whether the slot belongs to an old cell not remembered.
 @(private = "file")
-verify_reference :: proc(heap: ^Heap, ref: ^abi.Cell_Header) -> Heap_Problem {
+verify_reference :: proc(heap: ^Heap, ref: ^abi.Cell_Header, old: bool) -> Heap_Problem {
 	if ref == nil {
 		return .None
 	}
@@ -233,6 +260,9 @@ verify_reference :: proc(heap: ^Heap, ref: ^abi.Cell_Header) -> Heap_Problem {
 	}
 	if owner(heap, ref) != ref {
 		return .Dangling_Reference
+	}
+	if old && .Marked not_in ref.flags {
+		return .Missed_Barrier
 	}
 	return .None
 }

@@ -80,6 +80,7 @@ push :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, value: abi.Tagged) -> int {
 	reserve(heap, array)
 	kind := element_kind(heap, array)
 	store(slot(array, kind, array.length), kind, value)
+	gc.write_barrier(heap, array)
 	array.length += 1
 	return array.length
 }
@@ -99,6 +100,8 @@ slice :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, start, end: f64) -> ^abi.A
 	kind := element_kind(heap, array)
 	size := abi.ELEMENT_SIZE[kind]
 	part.length = count
+	// No barrier: if allocating the buffer made `part` old, grow remembered it, and nothing collects
+	// before the copy.
 	copy(slots(part, kind), slots(array, kind)[from * size:])
 	return part
 }
@@ -150,6 +153,7 @@ split :: proc(
 	for piece in str.split_next(&walk) {
 		cell := str.from_units(heap, piece)
 		store(slot(pieces, kind, pieces.length), kind, {tag = .String, payload = {ref = cell}})
+		gc.write_barrier(heap, pieces)
 		pieces.length += 1
 	}
 }
@@ -171,6 +175,7 @@ grow :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, kind: abi.Slot_Kind, capaci
 	copy(elements[:array.length * abi.ELEMENT_SIZE[kind]], slots(array, kind))
 	array.elements = elements
 	array.capacity = capacity
+	gc.write_barrier(heap, array)
 }
 
 @(private)

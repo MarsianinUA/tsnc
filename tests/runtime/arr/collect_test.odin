@@ -10,9 +10,9 @@ import "../../../src/runtime/gc"
 import "../../../src/runtime/str"
 
 /*
-Stress mode: every allocation collects first and checks the heap after, so a cell an arr procedure
-still needs and failed to keep would be freed under it, and a reference to a freed cell ends the
-run with a heap check failure. The heap under test is a local of the test procedure and bounds the
+Stress mode: every allocation checks the heap and collects first, so a cell an arr procedure still
+needs and failed to keep would be freed under it, and a reference to a freed cell ends the run with
+a heap check failure. The heap under test is a local of the test procedure and bounds the
 stack scan, so the cells live in the procedures it calls, as in tests/runtime/gc.
 */
 
@@ -90,11 +90,12 @@ call_every_allocating_procedure :: #force_no_inline proc(t: ^testing.T, heap: ^g
 		&abi.Closure_Cell{code = rawptr(allocate_then_descend), env = environment(&allocating)},
 	)
 
-	// Generated code fills a zeroed array in place, one allocating element at a time, so every
-	// collection meanwhile meets the nil elements not stored yet.
+	// Generated code fills a zeroed array in place, one allocating element at a time and each with
+	// its write barrier, so every collection meanwhile meets the nil elements not stored yet.
 	filled := arr.new_zeroed(heap, REFS, 3)
 	for word, i in ([?]string{"x", "y", "z"}) {
 		([^]^abi.String_Cell)(filled.elements)[i] = str.from_utf8(heap, word)
+		gc.write_barrier(heap, filled)
 	}
 
 	for want, i in ([?]string{"a", "b", "fresh"}) {

@@ -23,6 +23,11 @@ Body :: struct {
 	// cells holds, by ir.Value_ID, the slot of a stack cell. Every evaluation starts it afresh: opt
 	// proved nothing still points into it by then.
 	cells:     []Stack_Cell,
+	// born holds, by ir.Value_ID, the epoch a heap Alloc or Make_Closure made its cell in. epoch grows
+	// at the start of every block and after every instruction that may collect, so a cell born in the
+	// current epoch is unmarked, and a store into it needs no barrier.
+	born:      []int,
+	epoch:     int,
 }
 
 @(private)
@@ -59,6 +64,7 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 		body.rest_slot = llvm.LLVMBuildAlloca(m.builder, values, "")
 	}
 	body.cells = make([]Stack_Cell, len(func.values), context.temp_allocator)
+	body.born = make([]int, len(func.values), context.temp_allocator)
 	for &instruction, id in func.values {
 		place := ir.cell_place(&instruction.variant)
 		if place == nil || place^ != .Stack {
@@ -75,6 +81,7 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 	phis := make([dynamic]ir.Value_ID, 0, len(func.blocks), context.temp_allocator)
 	for block in order {
 		llvm.LLVMPositionBuilderAtEnd(m.builder, body.blocks[block])
+		body.epoch += 1
 		instructions := func.blocks[block].instructions
 		// Every phi of a block stands before its other instructions, so one pass over the head of
 		// the block creates them all and anything below can already name them. Their edges wait
@@ -92,6 +99,12 @@ build_func :: proc(m: ^Module, func_id: ir.Func_ID) {
 				continue
 			}
 			build_instruction(m, &body, value)
+			if may_collect(func.values[value].variant) {
+				body.epoch += 1
+			}
+			if makes_fresh_cell(func.values[value].variant) {
+				body.born[value] = body.epoch
+			}
 		}
 		body.tails[block] = llvm.LLVMGetInsertBlock(m.builder)
 	}

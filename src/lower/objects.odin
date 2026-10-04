@@ -11,10 +11,11 @@ import "../source"
 /*
 Objects: literals, and the fields a place names.
 
-A literal allocates a cell of its type's layout and stores each property as it evaluates it, in
-source order, the order JavaScript evaluates them in. The header of the cell names a table row that
-lists the fields in the order Node prints them (print_order), so `{a, b}` and `{b, a}` are one layout
-and one IR type and still print the way each was written.
+A literal evaluates its properties in source order, the order JavaScript evaluates them in, then
+allocates a cell of its type's layout and stores them, so no collection runs between the cell and
+its stores and codegen leaves their write barrier out (build_barrier). The header of the cell names
+a table row that lists the fields in the order Node prints them (print_order), so `{a, b}` and
+`{b, a}` are one layout and one IR type and still print the way each was written.
 
 A field is read and written at its slot of the layout. A slot the widening classes made Tagged
 (types.odin) holds the value boxed. A read through a type narrower than the slot checks the tag, and
@@ -37,12 +38,18 @@ lower_object_literal :: proc(
 		return later(s, span, construct_text(s.types, declared))
 	}
 
+	values := make([]ir.Value_ID, len(node.properties), context.temp_allocator)
+	for property_id, i in node.properties {
+		property := s.tree.nodes[property_id].variant.(ast.Property)
+		values[i] = lower_expression(s, property.value)
+	}
+
 	table := ir.object_table(&s.low.builder, type.layout, print_order(s, node, object))
 	cell := ir.emit(&s.fb, type, ir.Alloc{layout = type.layout, table = table}, span)
 	complete := true
-	for property_id in node.properties {
+	for property_id, i in node.properties {
 		property := s.tree.nodes[property_id].variant.(ast.Property)
-		value := lower_expression(s, property.value)
+		value := values[i]
 		field, _ := find_field(object, property.name.text)
 		place, found := field_place(s, cell, object, property.name.text)
 		at := s.tree.nodes[property_id].span

@@ -11,12 +11,27 @@ import "../fail"
 /*
 Stop the world, mark, sweep; nothing moves (requirements 6). Only the stack and the registers
 spilled onto it are scanned conservatively: cells and module globals are read by their slot kinds.
+
+Marks stick, as in JavaScriptCore: a cell a collection kept stays marked, which makes it old, and a
+cell made since is young. A minor collection marks from the stack, the roots and the old cells the
+write barrier remembered, and stops at every marked cell, so it traces young cells only; its sweep
+skips each page the last sweep left full, since no young cell can lie there. A full collection takes
+every mark off first. One comes once minor collections have kept more than the last full one left,
+and more than MIN_TRIGGER, which gives back the old cells that died since.
 */
 
 // collect never runs inlined: between spill_registers and the scan no value of the mutator may sit
-// in a register, and inside collect none does.
-collect :: #force_no_inline proc(heap: ^Heap) {
+// in a register, and inside collect none does. Stress mode checks the heap before marking, where
+// the write barrier's invariant holds, and so after the last collection too.
+collect :: #force_no_inline proc(heap: ^Heap, full := false) {
+	if heap.mode == .Stress {
+		check(heap)
+	}
 	start := time.tick_now()
+	whole := full || heap.next_full
+	if whole {
+		unmark(heap)
+	}
 	spill_registers()
 	mark_stack(heap)
 	for root in heap.roots {
@@ -25,25 +40,66 @@ collect :: #force_no_inline proc(heap: ^Heap) {
 	drain(heap)
 	marked := time.tick_now()
 	heap.stats.allocated += heap.used - heap.stats.live
-	sweep(heap)
+	sweep(heap, whole)
 	swept := time.tick_now()
-	set_trigger(heap, max(MIN_TRIGGER, heap.used * GROWTH))
+	if whole {
+		heap.full_live = heap.used
+	}
+	// MIN_TRIGGER keeps a heap where little lives from running full collections over pages it hardly
+	// uses. Stress mode takes turns, so that both kinds run under it.
+	kept := heap.used - heap.full_live
+	heap.next_full = !whole if heap.mode == .Stress else kept > max(heap.full_live, MIN_TRIGGER)
+	set_trigger(heap, max(MIN_TRIGGER, heap.full_live * GROWTH) + kept)
 
 	stats := &heap.stats
 	stats.collections += 1
+	stats.full += int(whole)
 	stats.marking += time.tick_diff(start, marked)
 	stats.sweeping += time.tick_diff(marked, swept)
 	stats.longest = max(stats.longest, time.tick_diff(start, swept))
 	stats.live = heap.used
+}
 
-	if heap.mode == .Stress {
-		if problem, at := verify(heap); problem != .None {
-			// The address is the cell, page or free list where verify stopped, for a debugger.
-			buf: [len("0x") + 16]byte
-			copy(buf[:], "0x")
-			digits := strconv.write_uint(buf[2:], u64(uintptr(at)), 16)
-			address := string(buf[:2 + len(digits)])
-			fail.at({error = .Internal}, "heap check failed", PROBLEM_TEXT[problem], address)
+@(private = "file")
+check :: proc(heap: ^Heap) {
+	if problem, at := verify(heap); problem != .None {
+		// The address is the cell, page or free list where verify stopped, for a debugger.
+		buf: [len("0x") + 16]byte
+		copy(buf[:], "0x")
+		digits := strconv.write_uint(buf[2:], u64(uintptr(at)), 16)
+		address := string(buf[:2 + len(digits)])
+		fail.at({error = .Internal}, "heap check failed", PROBLEM_TEXT[problem], address)
+	}
+}
+
+// write_barrier is what generated code runs after it stores a reference (build_barrier in codegen),
+// for a runtime procedure that stores one into a cell that may be old.
+write_barrier :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
+	if cell.flags & {.Marked, .Remembered} == {.Marked} {
+		remember(heap, cell)
+	}
+}
+
+// unmark makes every cell young. The remembered cells leave the mark stack: marking reaches each
+// one again if it still lives.
+@(private = "file")
+unmark :: proc(heap: ^Heap) {
+	heap.marks.count = 0
+	for index in 0 ..< heap.page_count {
+		page := heap.pages[index]
+		#partial switch page.kind {
+		case .Small:
+			size := abi.CLASS_SIZE[page.class]
+			cells := heap.base[index * PAGE_SIZE:]
+			for slot in 0 ..< PAGE_SIZE / size {
+				cell := (^abi.Cell_Header)(&cells[slot * size])
+				// Free slots too: writing only a header with a flag spares their cache lines.
+				if cell.flags != {} {
+					cell.flags = {}
+				}
+			}
+		case .Large:
+			(^abi.Cell_Header)(&heap.base[index * PAGE_SIZE]).flags = {}
 		}
 	}
 }
@@ -94,13 +150,24 @@ mark_cell :: proc(heap: ^Heap, p: rawptr) {
 }
 
 
+// remember is the slow path of the write barrier (abi.Cell_Flag): the cell waits on the mark stack
+// for the next collection, which scans it as it scans a cell it marks.
+remember :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
+	cell.flags += {.Remembered}
+	gray(heap, cell)
+}
+
 @(private = "file")
 push :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 	if .Marked in cell.flags {
 		return
 	}
 	cell.flags += {.Marked}
+	gray(heap, cell)
+}
 
+@(private = "file")
+gray :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 	marks := &heap.marks
 	if marks.count == marks.committed {
 		if virtual.commit(&marks.cells[marks.count], PAGE_SIZE) != nil {
@@ -117,7 +184,9 @@ drain :: proc(heap: ^Heap) {
 	marks := &heap.marks
 	for marks.count > 0 {
 		marks.count -= 1
-		scan_cell(heap, marks.cells[marks.count])
+		cell := marks.cells[marks.count]
+		cell.flags -= {.Remembered}
+		scan_cell(heap, cell)
 	}
 }
 
@@ -162,20 +231,23 @@ scan_cell :: proc(heap: ^Heap, cell: ^abi.Cell_Header) {
 }
 
 // sweep walks pages and slots from the top down, so pushing each free slot leaves every list in
-// address order, as carve_page makes it.
+// address order, as carve_page makes it. It leaves the marks on.
 @(private = "file")
-sweep :: proc(heap: ^Heap) {
+sweep :: proc(heap: ^Heap, whole: bool) {
 	heap.free = {}
 	heap.used = 0
 	for index := heap.page_count - 1; index >= 0; index -= 1 {
 		page := heap.pages[index]
 		#partial switch page.kind {
 		case .Small:
-			sweep_page(heap, index)
+			if page.full && !whole {
+				size := abi.CLASS_SIZE[page.class]
+				heap.used += PAGE_SIZE / size * size
+			} else {
+				sweep_page(heap, index)
+			}
 		case .Large:
-			cell := (^abi.Cell_Header)(&heap.base[index * PAGE_SIZE])
-			if .Marked in cell.flags {
-				cell.flags -= {.Marked}
+			if .Marked in (^abi.Cell_Header)(&heap.base[index * PAGE_SIZE]).flags {
 				heap.used += int(page.run) * PAGE_SIZE
 			} else {
 				free_pages(heap, index, int(page.run))
@@ -191,11 +263,11 @@ sweep_page :: proc(heap: ^Heap, index: int) {
 	page := heap.base[index * PAGE_SIZE:]
 	above := heap.free[class]
 	live := 0
-	for slot := PAGE_SIZE / size - 1; slot >= 0; slot -= 1 {
+	slots := PAGE_SIZE / size
+	for slot := slots - 1; slot >= 0; slot -= 1 {
 		cell := (^abi.Cell_Header)(&page[slot * size])
 		if cell.type_table != FREE {
 			if .Marked in cell.flags {
-				cell.flags -= {.Marked}
 				live += 1
 				continue
 			}
@@ -219,6 +291,7 @@ sweep_page :: proc(heap: ^Heap, index: int) {
 		return
 	}
 	heap.used += live * size
+	heap.pages[index].full = live == slots
 }
 
 // direct: a freed page stays committed, so the process never hands memory back to the OS; a

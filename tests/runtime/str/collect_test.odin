@@ -8,9 +8,9 @@ import "../../../src/runtime/gc"
 import "../../../src/runtime/str"
 
 /*
-Stress mode: every allocation collects first and checks the heap after. The heap under test is a
-local of the test procedure and bounds the stack scan, so the cells live in the procedures it calls,
-as in tests/runtime/gc.
+Stress mode: every allocation checks the heap and collects first. The heap under test is a local
+of the test procedure and bounds the stack scan, so the cells live in the procedures it calls, as in
+tests/runtime/gc.
 */
 
 @(test)

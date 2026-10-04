@@ -33,7 +33,7 @@ fib(30) = 832040
 ## What a compiled program is
 
 - One native executable for Windows x64, Linux x64 or macOS on arm64 and x64, where x64 means a CPU from 2009 or later. It runs without Node and without a JavaScript engine.
-- tsnc's own garbage collector manages memory. It is a stop-the-world mark-sweep that never moves an object.
+- tsnc's own garbage collector manages memory. It is a stop-the-world mark-sweep with two generations that never moves an object.
 - `number` is always a 64-bit float with the JavaScript rules: `NaN`, `-0`, `%`, bitwise operators through int32. Numbers print the way Node prints them.
 - Strings are UTF-16, so `length`, `charCodeAt` and indexing agree with Node on Cyrillic and emoji. Output is UTF-8.
 - Every object type has a fixed memory layout. A field read is one load at a known offset, and an object's shape never changes after creation.
