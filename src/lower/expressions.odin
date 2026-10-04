@@ -144,6 +144,14 @@ node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
 	return type if ok else ir.VOID
 }
 
+// made_node_type is node_type for a node that makes the cell it answers: the array a map, a
+// filter or a split fills (made_type).
+@(private)
+made_node_type :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Type {
+	type, ok := made_type(s.low, s.types, s.typed.node_types[id])
+	return type if ok else ir.VOID
+}
+
 // coerce boxes a statically typed value into a tagged one, and reads one back after a check that
 // fails with mismatch: that is an `any` going into a static type, or a union of objects going into
 // one object type that covers every member, whose classes share the layout. Two objects check lets
@@ -476,7 +484,7 @@ lower_member :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.Member) -> ir.Va
 	if is_union_value(value_type(s, receiver)) && node.name.text == "length" {
 		return union_length(s, receiver, s.typed.node_types[node.object], span)
 	}
-	strategy, found := instance_strategy(s, receiver, node.name.text)
+	strategy, found := instance_strategy(s, receiver, node.object, node.name.text)
 	if !found {
 		return ir.NO_VALUE
 	}
@@ -501,7 +509,7 @@ has_fields :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 lower_process_argv :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	argv, made := s.low.argv.?
 	if !made {
-		argv = ir.add_global(&s.low.builder, "process.argv", node_type(s, id))
+		argv = ir.add_global(&s.low.builder, "process.argv", made_node_type(s, id))
 		s.low.argv = argv
 	}
 	type := s.low.builder.globals[argv].type
@@ -528,7 +536,7 @@ member_strategy :: proc(
 	if receiver == ir.NO_VALUE {
 		return Later{}, ir.NO_VALUE, false
 	}
-	strategy, found = instance_strategy(s, receiver, node.name.text)
+	strategy, found = instance_strategy(s, receiver, node.object, node.name.text)
 	return strategy, receiver, found
 }
 
@@ -538,6 +546,7 @@ member_strategy :: proc(
 instance_strategy :: proc(
 	s: ^Func_State,
 	receiver: ir.Value_ID,
+	object: ast.Node_ID, // what receiver was lowered from
 	name: string,
 ) -> (
 	Strategy,
@@ -546,6 +555,11 @@ instance_strategy :: proc(
 	type := value_type(s, receiver)
 	if owner, has_owner := instance_owner(s.low, type); has_owner {
 		return lib_strategy(.Instance, owner, name)
+	}
+	declared := s.typed.node_types[object]
+	if _, is_array := s.types[declared].(check.Array); is_array && type.kind == .Any_Ref {
+		// An array type only read through, whose cell has one of several layouts.
+		return lib_strategy(.Instance, "Array", name)
 	}
 	if type == ir.TAGGED {
 		// check calls no method of a union: it types the member as a union of signatures.
@@ -1053,10 +1067,14 @@ Field_Place :: struct {
 // it again, where it may append (arrays.odin).
 @(private)
 Element_Place :: struct {
-	array:   ir.Value_ID, // an array Ref, or a Str, which only a read may take
-	index:   ir.Value_ID,
-	checked: bool, // index is the answer of the Bounds_Check of a read
-	type:    ir.Type, // the element's declared type
+	// An array Ref, or what only a read takes: a Str, or the Any_Ref of an array type only read
+	// through.
+	array:      ir.Value_ID,
+	index:      ir.Value_ID,
+	checked:    bool, // index is the answer of the Bounds_Check of a read
+	type:       ir.Type, // the element's declared type
+	// What check has the array as, whose view tells the layouts of an array only read through.
+	array_type: check.Type_ID,
 }
 
 @(private)
@@ -1087,10 +1105,10 @@ lower_place :: proc(s: ^Func_State, target: ast.Node_ID) -> (place: Place, ok: b
 			return nil, false
 		}
 		type := s.typed.node_types[v.object]
-		if is_object_union(s.types, type) && is_union_value(value_type(s, cell)) {
+		object, is_object := s.types[type].(check.Object)
+		if (is_object_union(s.types, type) || is_object) && is_union_value(value_type(s, cell)) {
 			return union_field_place(s, cell, type, v.name.text, span)
 		}
-		object, is_object := s.types[type].(check.Object)
 		if !is_object || value_type(s, cell).kind != .Ref {
 			// check reads a field of an object or of a union of objects, and nothing else.
 			later(s, span, "a field of this value")

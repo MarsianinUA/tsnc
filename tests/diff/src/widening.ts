@@ -157,3 +157,54 @@ mixed.push(3);
 words.push("c");
 console.log(words, mixed.length, words[1].toUpperCase(), words.join("-"));
 console.log(process.argv.slice(2), typeof process.argv[0]);
+
+// A write of a field that holds an object reaches the object types that flow into the field's type:
+// the cell written here is read through the narrower type of the field afterwards.
+interface Cell2 {
+  w: number;
+}
+
+interface Box2 {
+  cell: Cell2;
+}
+
+interface BoxWide {
+  cell: { w: number | boolean };
+}
+
+function cellWidth(b: Box2): number {
+  return b.cell.w * 2;
+}
+
+const box2: Box2 = { cell: { w: 4 } };
+const wideBox: BoxWide = box2;
+wideBox.cell = { w: 7 };
+console.log(cellWidth(box2), wideBox.cell === box2.cell);
+
+// pop and sort change the array they are called on, so a wide type they go through shares the
+// layout of what flows into it, as push does.
+interface Tile {
+  t: number;
+}
+
+const tiles: Tile[] = [{ t: 3 }, { t: 1 }, { t: 2 }];
+const looseTiles: (Tile | null)[] = tiles;
+looseTiles.sort((a, b) => (a === null ? 0 : a.t) - (b === null ? 0 : b.t));
+const last = looseTiles.pop();
+console.log(tiles, last, tiles.length, tiles[0].t);
+
+// An `as` to the narrower type reads a cell that may have been made as the wider one, so it joins
+// the layouts as a write through the wider type does.
+interface Plain {
+  x: number;
+  y: number;
+}
+
+interface Mixed {
+  x: number | string;
+  y: number;
+}
+
+const mixedPoint: Mixed = { x: 1, y: 2 };
+const someNumbers: (number | boolean)[] = [1, 2];
+console.log((mixedPoint as Plain).x + 1, (someNumbers as number[]).length);

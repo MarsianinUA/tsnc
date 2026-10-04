@@ -728,9 +728,10 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 	iterable := lower_expression(s, node.iterable)
 	declaration := s.tree.nodes[node.declaration].variant.(ast.Var_Decl)
 	symbol := s.bound.node_symbols[declaration.declarators[0]]
-	element, is_array := element_type(s, s.typed.node_types[node.iterable])
+	array_type := s.typed.node_types[node.iterable]
+	element, is_array := element_type(s, array_type)
 	is_string := iterable != ir.NO_VALUE && value_type(s, iterable) == ir.STR
-	is_array &&= iterable != ir.NO_VALUE && value_type(s, iterable).kind == .Ref
+	is_array &&= iterable != ir.NO_VALUE && is_object_reference(value_type(s, iterable))
 	if iterable != ir.NO_VALUE && !is_string && !is_array {
 		// check loops over an array or a string, and nothing else.
 		later(s, span, "looping over this value")
@@ -741,6 +742,7 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 		return
 	}
 
+	whole := iterable if is_string else whole_array(s, iterable, array_type, span)
 	assigned := assigned_locals(s, id)
 	blocks := open_loop(s)
 	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
@@ -748,7 +750,7 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 	phis := enter_loop(s, id, blocks, assigned, span)
 	index := ir.phi(&s.fb, ir.F64, span)
 	ir.phi_incoming(&s.fb, index, entry, start)
-	length := ir.emit(&s.fb, ir.F64, ir.Length{value = iterable}, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = whole}, span)
 	more := ir.emit(&s.fb, ir.BOOL, ir.Compare{op = .Less, left = index, right = length}, span)
 	leaving := here(s)
 	branch := ir.Branch {
@@ -759,13 +761,13 @@ lower_for_of :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.For_Of, span: so
 	ir.emit(&s.fb, ir.VOID, branch, span)
 
 	ir.use_block(&s.fb, blocks.body)
-	checked := bounds_check(s, iterable, index, span)
+	checked := bounds_check(s, whole, index, span)
 	step, piece: ir.Value_ID
 	if is_string {
 		piece = string_piece(s, iterable, checked, .String_Code_Point_At, span)
 		step = ir.emit(&s.fb, ir.F64, ir.Length{value = piece}, span)
 	} else {
-		piece = load_checked(s, iterable, checked, element, span)
+		piece = load_checked(s, iterable, checked, element, array_type, span)
 		step = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
 	}
 	next := ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = index, right = step}, span)

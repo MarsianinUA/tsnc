@@ -34,7 +34,7 @@ lower_array_literal :: proc(
 ) -> ir.Value_ID {
 	span := s.tree.nodes[id].span
 	declared := s.typed.node_types[id]
-	type, ok := ir_type(s.low, s.types, declared)
+	type, ok := made_type(s.low, s.types, declared)
 	element, element_ok := element_type(s, declared)
 	if !ok || !element_ok {
 		return later(s, span, construct_text(s.types, declared))
@@ -75,16 +75,20 @@ element_type :: proc(s: ^Func_State, array_type: check.Type_ID) -> (type: ir.Typ
 
 @(private)
 receiver_element :: proc(s: ^Func_State, node: ast.Call) -> (ir.Type, bool) {
+	return element_type(s, receiver_type(s, node))
+}
+
+@(private)
+receiver_type :: proc(s: ^Func_State, node: ast.Call) -> check.Type_ID {
 	member := s.tree.nodes[node.callee].variant.(ast.Member)
-	return element_type(s, s.typed.node_types[member.object])
+	return s.typed.node_types[member.object]
 }
 
 // passed_types is the check type of each argument map, filter, forEach and reduce pass their
 // callback after the accumulator: the element, its index and the array.
 @(private)
 passed_types :: proc(s: ^Func_State, node: ast.Call) -> [3]check.Type_ID {
-	member := s.tree.nodes[node.callee].variant.(ast.Member)
-	array := s.typed.node_types[member.object]
+	array := receiver_type(s, node)
 	return {s.types[array].(check.Array).element, check.NUMBER, array}
 }
 
@@ -101,13 +105,18 @@ bounds_check :: proc(s: ^Func_State, array, index: ir.Value_ID, span: source.Spa
 
 // load_checked reads an element through its declared type with a check where the array's class
 // widened the slot: a write through the wider array type may have left another kind there, or null.
+// An array of a type only read through is one of the layouts of its view (load_view_element).
 @(private)
 load_checked :: proc(
 	s: ^Func_State,
 	array, checked: ir.Value_ID,
 	element: ir.Type,
+	array_type: check.Type_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
+	if value_type(s, array).kind == .Any_Ref {
+		return load_view_element(s, array, checked, element, array_type, span)
+	}
 	load := ir.Element_Load {
 		array = array,
 		index = checked,
@@ -120,8 +129,83 @@ load_checked :: proc(
 	return coerce(s, loaded, element, span, .Element_Holds_Other_Kind)
 }
 
+// load_view_element tests which layout of the view the array has, and reads the element as that
+// layout holds it, boxed into the element type where the view declares more.
+@(private)
+load_view_element :: proc(
+	s: ^Func_State,
+	array, checked: ir.Value_ID,
+	element: ir.Type,
+	array_type: check.Type_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	views, _ := array_view(s.low, s.types, s.types[array_type].(check.Array))
+	layouts, _ := view_layouts(s.low, s.types, array_type)
+	hits := make([]ir.Block_ID, len(layouts), context.temp_allocator)
+	for &hit in hits {
+		hit = ir.add_block(&s.fb)
+	}
+	failed := ir.add_block(&s.fb)
+	dispatch_layouts(s, array, layouts, hits, failed, span)
+
+	join := ir.add_block(&s.fb)
+	edges := make([dynamic]Edge, 0, len(hits), context.temp_allocator)
+	values := make([dynamic]ir.Value_ID, 0, len(hits), context.temp_allocator)
+	complete := true
+	for view, i in views {
+		ir.use_block(&s.fb, hits[i])
+		cell := as_layout(s, array, layouts[i], span)
+		held := view_slot_type(view.element, view.held, element)
+		// The caller checked the index against one layout; this states it for the arm's.
+		again := ir.Bounds_Check {
+			array  = cell,
+			index  = checked,
+			proved = true,
+		}
+		load := ir.Element_Load {
+			array = cell,
+			index = ir.emit(&s.fb, value_type(s, checked), again, span),
+		}
+		value := coerce(s, ir.emit(&s.fb, held, load, span), element, span)
+		complete &&= value != ir.NO_VALUE
+		append(&edges, here(s))
+		append(&values, value)
+		ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	}
+	fail_block(s, failed, .Tagged_Holds_Other_Kind, span)
+	merged := join_values(s, join, edges[:], values[:], element, span)
+	return merged if complete else ir.NO_VALUE
+}
+
+// whole_array types an array of a view as one of its layouts for what reads only the header and the
+// length, which every array keeps in one place: Length and Bounds_Check. Any other array is itself.
+// The cell is tested first: an `any` given to the view's type is checked only where it is used.
+@(private)
+whole_array :: proc(
+	s: ^Func_State,
+	array: ir.Value_ID,
+	array_type: check.Type_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value_type(s, array).kind != .Any_Ref {
+		return array
+	}
+	layouts, _ := view_layouts(s.low, s.types, array_type)
+	passed := ir.add_block(&s.fb)
+	failed := ir.add_block(&s.fb)
+	hits := make([]ir.Block_ID, len(layouts), context.temp_allocator)
+	for &hit in hits {
+		hit = passed
+	}
+	dispatch_layouts(s, array, layouts, hits, failed, span)
+	fail_block(s, failed, .Tagged_Holds_Other_Kind, span)
+	ir.use_block(&s.fb, passed)
+	return as_layout(s, array, layouts[0], span)
+}
+
 @(private)
 element_kind :: proc(s: ^Func_State, array: ir.Value_ID) -> abi.Slot_Kind {
+	ensure(value_type(s, array).kind == .Ref, "a write check did not record")
 	return s.low.builder.layouts[value_type(s, array).layout].element
 }
 
@@ -173,25 +257,33 @@ element_place :: proc(
 	if type == ir.STR {
 		return Element_Place{array = array, index = index, type = ir.STR}, true
 	}
-	element, is_array := element_type(s, s.typed.node_types[node.object])
-	if type.kind != .Ref || !is_array {
+	array_type := s.typed.node_types[node.object]
+	element, is_array := element_type(s, array_type)
+	if !is_object_reference(type) || !is_array {
 		// check indexes an array or a string, and nothing else.
 		later(s, span, "indexing this value")
 		return nil, false
 	}
-	return Element_Place{array = array, index = index, type = element}, true
+	place = Element_Place {
+		array      = array,
+		index      = index,
+		type       = element,
+		array_type = array_type,
+	}
+	return place, true
 }
 
 @(private)
 load_element :: proc(s: ^Func_State, place: ^Element_Place, span: source.Span) -> ir.Value_ID {
 	if !place.checked {
-		place.index = bounds_check(s, place.array, place.index, span)
+		whole := whole_array(s, place.array, place.array_type, span)
+		place.index = bounds_check(s, whole, place.index, span)
 		place.checked = true
 	}
 	if value_type(s, place.array) == ir.STR {
 		return string_piece(s, place.array, place.index, .String_At, span)
 	}
-	return load_checked(s, place.array, place.index, place.type, span)
+	return load_checked(s, place.array, place.index, place.type, place.array_type, span)
 }
 
 // store_element appends at an index equal to the length, as `a[a.length] = x` does in Node; any
@@ -433,11 +525,13 @@ lower_for_each :: proc(
 	if !ok || !element_ok {
 		return ir.NO_VALUE
 	}
-	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
+	array_type := receiver_type(s, node)
+	whole := whole_array(s, receiver, array_type, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = whole}, span)
 	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	loop := open_inline_loop(s, node.args[0], start, span)
-	leave_past_either_end(s, &loop, receiver, length, span)
-	value := begin_pass(s, &loop, receiver, element, span)
+	leave_past_either_end(s, &loop, whole, length, span)
+	value := begin_pass(s, &loop, receiver, whole, element, array_type, span)
 	given := passed_types(s, node)
 	call_callback(s, callback, {value, loop.index, receiver}, given[:], span)
 	close_inline_loop(s, &loop, ir.NO_VALUE, span)
@@ -457,16 +551,18 @@ lower_map :: proc(
 	callback, ok := callback_of(s, node.args[0])
 	element, element_ok := receiver_element(s, node)
 	produced, produced_ok := element_type(s, s.typed.node_types[id])
-	type := node_type(s, id)
+	type := made_node_type(s, id)
 	if !ok || !element_ok || !produced_ok {
 		return ir.NO_VALUE
 	}
-	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
+	array_type := receiver_type(s, node)
+	whole := whole_array(s, receiver, array_type, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = whole}, span)
 	out := ir.emit(&s.fb, type, ir.New_Array{layout = type.layout, length = length}, span)
 	start := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	loop := open_inline_loop(s, node.args[0], start, span)
 	leave_unless_before(s, &loop, length, span)
-	value := begin_pass(s, &loop, receiver, element, span)
+	value := begin_pass(s, &loop, receiver, whole, element, array_type, span)
 	given := passed_types(s, node)
 	mapped := call_callback(s, callback, {value, loop.index, receiver}, given[:], span)
 	wanted := s.types[s.typed.node_types[id]].(check.Array).element
@@ -490,16 +586,18 @@ lower_filter :: proc(
 ) -> ir.Value_ID {
 	callback, ok := callback_of(s, node.args[0])
 	element, element_ok := receiver_element(s, node)
-	type := node_type(s, id)
+	type := made_node_type(s, id)
 	if !ok || !element_ok || type.kind != .Ref {
 		return ir.NO_VALUE
 	}
 	empty := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	out := ir.emit(&s.fb, type, ir.New_Array{layout = type.layout, length = empty}, span)
-	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
+	array_type := receiver_type(s, node)
+	whole := whole_array(s, receiver, array_type, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = whole}, span)
 	loop := open_inline_loop(s, node.args[0], empty, span)
-	leave_past_either_end(s, &loop, receiver, length, span)
-	value := begin_pass(s, &loop, receiver, element, span)
+	leave_past_either_end(s, &loop, whole, length, span)
+	value := begin_pass(s, &loop, receiver, whole, element, array_type, span)
 	given := passed_types(s, node)
 	answer := call_callback(s, callback, {value, loop.index, receiver}, given[:], span)
 	keep := truthy(s, answer, span)
@@ -555,7 +653,9 @@ lower_reduce :: proc(
 		}
 		start = ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	}
-	length := ir.emit(&s.fb, ir.F64, ir.Length{value = receiver}, span)
+	array_type := receiver_type(s, node)
+	whole := whole_array(s, receiver, array_type, span)
+	length := ir.emit(&s.fb, ir.F64, ir.Length{value = whole}, span)
 	if len(node.args) == 1 {
 		zero := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 		test := ir.Compare {
@@ -580,7 +680,8 @@ lower_reduce :: proc(
 			span,
 		)
 		ir.use_block(&s.fb, started)
-		loaded := load_checked(s, receiver, bounds_check(s, receiver, zero, span), element, span)
+		checked := bounds_check(s, whole, zero, span)
+		loaded := load_checked(s, receiver, checked, element, array_type, span)
 		first = flow_into(s, loaded, passed[0], accumulated, result, span)
 		if first == ir.NO_VALUE {
 			return ir.NO_VALUE
@@ -592,8 +693,8 @@ lower_reduce :: proc(
 	// Typed by the accumulator's type: the first value may be a present reference of it.
 	loop.accumulator = ir.phi(&s.fb, result, span)
 	ir.phi_incoming(&s.fb, loop.accumulator, loop.entry, first)
-	leave_past_either_end(s, &loop, receiver, length, span)
-	value := begin_pass(s, &loop, receiver, element, span)
+	leave_past_either_end(s, &loop, whole, length, span)
+	value := begin_pass(s, &loop, receiver, whole, element, array_type, span)
 	args := [?]ir.Value_ID{loop.accumulator, value, loop.index, receiver}
 	given := [?]check.Type_ID{accumulated, passed[0], passed[1], passed[2]}
 	answer := call_callback(s, callback, args[:], given[:], span)
@@ -683,18 +784,21 @@ leave_unless_before :: proc(
 	ir.use_block(&s.fb, passing)
 }
 
-// begin_pass sets the index of the next pass and answers the element of this one.
+// begin_pass sets the index of the next pass and answers the element of this one. whole is array
+// as whole_array gave it before the loop.
 @(private)
 begin_pass :: proc(
 	s: ^Func_State,
 	loop: ^Inline_Loop,
-	array: ir.Value_ID,
+	array, whole: ir.Value_ID,
 	element: ir.Type,
+	array_type: check.Type_ID,
 	span: source.Span,
 ) -> ir.Value_ID {
 	one := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 1}, span)
 	loop.next = ir.emit(&s.fb, ir.F64, ir.Binary{op = .Add, left = loop.index, right = one}, span)
-	return load_checked(s, array, bounds_check(s, array, loop.index, span), element, span)
+	checked := bounds_check(s, whole, loop.index, span)
+	return load_checked(s, array, checked, element, array_type, span)
 }
 
 // close_inline_loop takes the back edge unless the pass cannot end, and leaves the builder in the

@@ -84,12 +84,16 @@ Lowering :: struct {
 	locals:        []File_Locals,
 	// argv holds process.argv, made the first time the program reads it and filled once by main.
 	argv:          Maybe(ir.Global_ID),
-	// The widening classes over the shallow keys of object types, the element slots of array types
+	// The widening classes over the keys of object types, the element slots of array types
 	// and the signature classes over the signatures of function types (types.odin), all built
 	// before any body.
 	objects:       Classes([]ir.Slot),
 	arrays:        Classes(abi.Slot_Kind),
 	signatures:    Classes(Signature),
+	// The layouts the places of an object or array type only read through hold, by the key of its
+	// class, where there is more than one.
+	object_views:  map[string][]Object_View,
+	array_views:   map[string][]Array_View,
 	memos:         []Type_Memo, // one per check result
 	// The comparators that adapt a closure to what the array sort calls (arrays.odin), by the class
 	// signature and the slot, and by the call for one that checks the element.
@@ -129,6 +133,8 @@ lower :: proc(
 		objects       = make_classes([]ir.Slot),
 		arrays        = make_classes(abi.Slot_Kind),
 		signatures    = make_classes(Signature),
+		object_views  = make(map[string][]Object_View, context.temp_allocator),
+		array_views   = make(map[string][]Array_View, context.temp_allocator),
 		memos         = make_memos(results),
 		sort_adapters = make(map[string]ir.Func_ID, context.temp_allocator),
 		adapters      = make(map[ir.Func_ID]ir.Func_ID, context.temp_allocator),

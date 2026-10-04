@@ -966,7 +966,8 @@ is_base :: proc(c: ^Checker, id: Layout_ID) -> bool {
 // slot_holds is what a load from a slot of this kind answers. A reference slot holds any reference:
 // abi.Field carries a slot kind and not a table of its own, so the layout behind a traced slot is
 // not knowable here. What a slot of several layouts holds is read through one of them only after a
-// Layout_Test, and what a slot of one layout holds is never one of several.
+// Layout_Test. A slot of one reference holds a cell of one of several layouts where its type is
+// only read through and other layouts flow into it.
 @(private)
 slot_holds :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	switch kind {
@@ -977,7 +978,7 @@ slot_holds :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	case .Tagged:
 		return type == TAGGED
 	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
-		return is_reference(type) && type.kind != .Any_Ref && type.nullish == slot_nullish(kind)
+		return is_reference(type) && type.nullish == slot_nullish(kind)
 	case .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		return is_reference(type) && type.kind != .Ref && type.nullish == slot_nullish(kind)
 	}

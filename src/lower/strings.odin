@@ -624,7 +624,7 @@ lower_split :: proc(
 	if separator == ir.NO_VALUE || limit == ir.NO_VALUE {
 		return ir.NO_VALUE
 	}
-	type := node_type(s, id)
+	type := made_node_type(s, id)
 	empty := ir.emit(&s.fb, ir.F64, ir.Const_Number{value = 0}, span)
 	pieces := ir.emit(&s.fb, type, ir.New_Array{layout = type.layout, length = empty}, span)
 	split := ir.Call_Runtime {
