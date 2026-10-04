@@ -11,7 +11,8 @@ import "../ir"
 The one place a TypeScript type becomes an IR type. check owns the first world and ir the second,
 and requirements 3.1 to 3.6 fix the map between them: a number is an f64, a boolean a machine
 boolean, a string a reference to a cell, an object or an array a reference to a cell of its layout,
-and anything that can hold more than one shape at run time is the two-word tagged value.
+objects and arrays of several types a reference whose cell header names the layout (Any_Ref), and
+anything else that can hold more than one shape at run time is the two-word tagged value.
 
 Two procedures, because deciding and building are two jobs. representation answers the kind alone
 and interns nothing, so the decisions ask it: the net under poison, the text of a refusal, typeof.
@@ -25,14 +26,17 @@ slot kind and whether it is optional. Shallow means a string, an object and an a
 reference slot whatever they point at, so `interface Node { next: Node | null }` has a complete key
 before Node is known, and a walk into it would never end. A reference with one of null and undefined
 is a pointer where 0 stands for it (Ref_Or_Null, Ref_Or_Undefined), and so is an optional field of a
-reference type, since a missing one reads as undefined; any other optional field is Tagged.
+reference type, since a missing one reads as undefined; any other optional field is Tagged. Objects
+and arrays of several types are a slot of their own (Any_Ref and its two kinds that may hold null),
+so the key tells `{p: Circle}` from `{p: Circle | Rect}`.
 
 Widening. A value of type A that check accepted where B was expected is the same object after the
 flow, with no copy, as in Node, so A and B need one layout. lower joins the shallow keys of every
 such pair (Check_Result.widenings) into classes before any body is built. The class of a key has
 one slot per field: the kind every member agrees on, the one that may hold null where the other
-holds a present reference, or Tagged where they differ otherwise. A read through the narrower type
-then checks the tag, or for null (objects.odin).
+holds a present reference, the one of several layouts where the other holds one, or Tagged where
+they differ otherwise. A read through the narrower type then checks the tag, the layout, or for
+null (objects.odin).
 
 Arrays. An array layout is the kind of its element slot. An array that check accepted where an
 array of a wider element was expected is the same array after the flow too, so the two types need
@@ -75,9 +79,14 @@ representation :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type
 		representation(types, v.result) or_return
 		return .Closure, true
 	case check.Union:
-		// So that the object or the array behind the pointer is looked into, as ir_type does.
-		if member, _, held := nullable_member(types, v); held {
-			representation(types, member) or_return
+		// So that the objects and the arrays behind the pointer are looked into, as ir_type does.
+		if pointer, _, _, held := reference_union(types, v);
+		   held && pointer != .Str && pointer != .Closure {
+			for member in v.members {
+				if member != check.NULL && member != check.UNDEFINED {
+					representation(types, member) or_return
+				}
+			}
 		}
 	}
 	return shallow_kind(types, id)
@@ -211,11 +220,12 @@ shallow_kind :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_K
 	case check.Union:
 		// A union whose members all live in one representation is that representation: `2 | 3` is
 		// the type of `c ? 2 : 3` and is a plain number at run time. So is a reference with one of
-		// null and undefined, where 0 stands for it: `Node | null` is one pointer. Two objects of
-		// two layouts need the tag of requirements 3.4. Unions are canonical and never nested, so
+		// null and undefined, where 0 stands for it: `Node | null` is one pointer, and so are
+		// objects and arrays of several layouts, which the header of the cell tells apart. A string
+		// and an object need the tag of requirements 3.4. Unions are canonical and never nested, so
 		// this looks one level down and no further.
-		if nullable, _, _, is_nullable := nullable_reference(types, v); is_nullable {
-			return nullable, true
+		if reference, _, _, held := reference_union(types, v); held {
+			return reference, true
 		}
 		kind = shallow_kind(types, v.members[0]) or_return
 		for member in v.members[1:] {
@@ -238,10 +248,11 @@ shallow_kind :: proc(types: []check.Type, id: check.Type_ID) -> (kind: ir.Type_K
 	return .Void, false
 }
 
-// nullable_reference says whether a union is one reference type with exactly one of null and
-// undefined: strings, functions, or one object or array type, which member names.
+// reference_union says whether one pointer holds a union: one reference type with exactly one of
+// null and undefined (strings, functions, or one object or array type, which member names), or
+// objects and arrays of several types with at most one of them, which are an Any_Ref.
 @(private)
-nullable_reference :: proc(
+reference_union :: proc(
 	types: []check.Type,
 	union_type: check.Union,
 ) -> (
@@ -259,15 +270,18 @@ nullable_reference :: proc(
 			continue
 		}
 		other := shallow_kind(types, one) or_return
-		if other != .Str && other != .Closure && other != .Ref {
+		switch {
+		case other != .Str && other != .Closure && other != .Ref:
+			return .Void, .None, check.ERROR, false
+		case kind == .Void:
+			kind, member = other, one
+		case other == .Ref && (kind == .Ref || kind == .Any_Ref):
+			kind, member = .Any_Ref, check.ERROR
+		case:
 			return .Void, .None, check.ERROR, false
 		}
-		if kind != .Void && (other != kind || other == .Ref) {
-			return .Void, .None, check.ERROR, false
-		}
-		kind, member = other, one
 	}
-	return kind, nullish, member, kind != .Void && nullish != .None
+	return kind, nullish, member, kind == .Any_Ref || kind != .Void && nullish != .None
 }
 
 // nullable_member is the object or array type of a union that holds one with null or undefined,
@@ -282,7 +296,7 @@ nullable_member :: proc(
 	ok: bool,
 ) {
 	kind: ir.Type_Kind
-	kind, nullish, member, ok = nullable_reference(types, union_type)
+	kind, nullish, member, ok = reference_union(types, union_type)
 	return member, nullish, ok && kind == .Ref
 }
 
@@ -292,7 +306,7 @@ nullable_member :: proc(
 shallow_type :: proc(types: []check.Type, id: check.Type_ID) -> (type: ir.Type, ok: bool) {
 	type.kind = shallow_kind(types, id) or_return
 	if v, is_union := types[id].(check.Union); is_union {
-		_, type.nullish, _, _ = nullable_reference(types, v)
+		_, type.nullish, _, _ = reference_union(types, v)
 	}
 	return type, true
 }
@@ -345,6 +359,15 @@ slot_of :: proc(type: ir.Type) -> abi.Slot_Kind {
 			return .Ref_Or_Null
 		case .Undefined:
 			return .Ref_Or_Undefined
+		}
+	case .Any_Ref:
+		switch type.nullish {
+		case .None:
+			return .Any_Ref
+		case .Null:
+			return .Any_Ref_Or_Null
+		case .Undefined:
+			return .Any_Ref_Or_Undefined
 		}
 	case .Tagged, .Void:
 		return .Tagged
@@ -599,18 +622,47 @@ join_slots :: proc(a, b: []ir.Slot) -> []ir.Slot {
 }
 
 // join_slot_kind keeps a kind two members agree on, a reference that may hold null where the other
-// member holds a present one, and takes Tagged where they differ otherwise.
+// member holds a present one, a reference of several layouts where the other holds one, and takes
+// Tagged where they differ otherwise.
 @(private)
 join_slot_kind :: proc(a, b: abi.Slot_Kind) -> abi.Slot_Kind {
+	x, x_reference := slot_reference(a)
+	y, y_reference := slot_reference(b)
 	switch {
 	case a == b:
 		return a
-	case a == .Ref && (b == .Ref_Or_Null || b == .Ref_Or_Undefined):
-		return b
-	case b == .Ref && (a == .Ref_Or_Null || a == .Ref_Or_Undefined):
-		return a
+	case !x_reference || !y_reference:
+		return .Tagged
+	case x.nullish != .None && y.nullish != .None && x.nullish != y.nullish:
+		return .Tagged
 	}
-	return .Tagged
+	joined := ir.Type {
+		kind    = .Any_Ref if x.kind == .Any_Ref || y.kind == .Any_Ref else .Ref,
+		nullish = max(x.nullish, y.nullish),
+	}
+	return slot_of(joined)
+}
+
+// slot_reference is the shallow type of a reference slot: Ref or Any_Ref, with its nullish.
+@(private)
+slot_reference :: proc(kind: abi.Slot_Kind) -> (type: ir.Type, ok: bool) {
+	switch kind {
+	case .Number, .Boolean, .Tagged:
+		return ir.VOID, false
+	case .Ref:
+		return {kind = .Ref}, true
+	case .Ref_Or_Null:
+		return {kind = .Ref, nullish = .Null}, true
+	case .Ref_Or_Undefined:
+		return {kind = .Ref, nullish = .Undefined}, true
+	case .Any_Ref:
+		return {kind = .Any_Ref}, true
+	case .Any_Ref_Or_Null:
+		return {kind = .Any_Ref, nullish = .Null}, true
+	case .Any_Ref_Or_Undefined:
+		return {kind = .Any_Ref, nullish = .Undefined}, true
+	}
+	return ir.VOID, false
 }
 
 // array_slot is the element slot of the array's class, or its own where it takes part in no flow.

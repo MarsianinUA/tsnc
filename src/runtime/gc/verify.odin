@@ -188,7 +188,7 @@ verify_slot :: proc(heap: ^Heap, slot: rawptr, kind: abi.Slot_Kind) -> Heap_Prob
 		if (^u64)(slot)^ > 1 {
 			return .Bad_Cell
 		}
-	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		return verify_reference(heap, (^^abi.Cell_Header)(slot)^)
 	case .Tagged:
 		value := (^abi.Tagged)(slot)

@@ -541,7 +541,7 @@ zero_value :: proc(s: ^Func_State, type: ir.Type, span: source.Span) -> ir.Value
 	case .Str:
 		text := ir.intern_string(&s.low.builder, "")
 		return ir.emit(&s.fb, ir.STR, ir.Const_String{text = text}, span)
-	case .Ref, .Closure:
+	case .Ref, .Any_Ref, .Closure:
 		return ir.emit(&s.fb, type, ir.Const_Null{}, span)
 	case .Void:
 		// A binding typed never holds nothing.

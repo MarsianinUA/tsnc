@@ -169,7 +169,7 @@ close_body :: proc(s: ^Func_State, span: source.Span) {
 		unreachable()
 	case .Tagged:
 		leave(s, ir.emit(&s.fb, ir.TAGGED, ir.Const_Undefined{}, span), span)
-	case .F64, .Bool, .Str, .Closure, .Ref:
+	case .F64, .Bool, .Str, .Closure, .Ref, .Any_Ref:
 		if s.declared.nullish == .Undefined {
 			leave(s, ir.emit(&s.fb, s.declared, ir.Const_Null{}, span), span)
 		} else {

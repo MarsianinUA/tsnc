@@ -416,7 +416,8 @@ verify_instruction :: proc(c: ^Checker) {
 
 	case Layout_Test:
 		cell, cell_known := operand(c, v.cell)
-		if cell_known && (cell.kind != .Ref || cell.nullish != .None) {
+		object := cell.kind == .Ref || cell.kind == .Any_Ref
+		if cell_known && (!object || cell.nullish != .None) {
 			report(c, .Operand_Type)
 		}
 		if _, known := layout_of(c, v.layout); !known {
@@ -438,6 +439,17 @@ verify_instruction :: proc(c: ^Checker) {
 				report(c, .Operand_Type)
 			}
 			expect_result(c, non_null(type))
+		}
+
+	case As_Layout:
+		if cell, known := operand(c, v.cell); known && cell != ANY_REF {
+			report(c, .Operand_Type)
+		}
+		type := instruction.type
+		if type.kind != .Ref || type.nullish != .None {
+			report(c, .Result_Type)
+		} else if _, known := layout_of(c, type.layout); !known {
+			report(c, .Unknown_Id)
 		}
 
 	case Same_Cell:
@@ -953,7 +965,8 @@ is_base :: proc(c: ^Checker, id: Layout_ID) -> bool {
 
 // slot_holds is what a load from a slot of this kind answers. A reference slot holds any reference:
 // abi.Field carries a slot kind and not a table of its own, so the layout behind a traced slot is
-// not knowable here.
+// not knowable here. What a slot of several layouts holds is read through one of them only after a
+// Layout_Test, and what a slot of one layout holds is never one of several.
 @(private)
 slot_holds :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 	switch kind {
@@ -961,24 +974,40 @@ slot_holds :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
 		return type == F64
 	case .Boolean:
 		return type == BOOL
-	case .Ref:
-		return is_reference(type) && type.nullish == .None
-	case .Ref_Or_Null:
-		return is_reference(type) && type.nullish == .Null
-	case .Ref_Or_Undefined:
-		return is_reference(type) && type.nullish == .Undefined
 	case .Tagged:
 		return type == TAGGED
+	case .Ref, .Ref_Or_Null, .Ref_Or_Undefined:
+		return is_reference(type) && type.kind != .Any_Ref && type.nullish == slot_nullish(kind)
+	case .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
+		return is_reference(type) && type.kind != .Ref && type.nullish == slot_nullish(kind)
 	}
 	return false
 }
 
-// slot_fits is what a store may write: what the slot holds, or a present reference into a slot that
-// may hold null.
+// slot_fits is what a store may write: what the slot holds, a present reference into a slot that
+// may hold null, or a reference of one layout into a slot of several.
 @(private)
 slot_fits :: proc(kind: abi.Slot_Kind, type: Type) -> bool {
-	nullable_slot := kind == .Ref_Or_Null || kind == .Ref_Or_Undefined
-	return slot_holds(kind, type) || nullable_slot && is_reference(type) && type.nullish == .None
+	switch kind {
+	case .Number, .Boolean, .Tagged, .Ref:
+		return slot_holds(kind, type)
+	case .Ref_Or_Null, .Ref_Or_Undefined:
+		return slot_holds(kind, type) || slot_holds(.Ref, type)
+	case .Any_Ref, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
+		return is_reference(type) && (type.nullish == .None || type.nullish == slot_nullish(kind))
+	}
+	return false
+}
+
+@(private)
+slot_nullish :: proc(kind: abi.Slot_Kind) -> Nullish {
+	#partial switch kind {
+	case .Ref_Or_Null, .Any_Ref_Or_Null:
+		return .Null
+	case .Ref_Or_Undefined, .Any_Ref_Or_Undefined:
+		return .Undefined
+	}
+	return .None
 }
 
 // c_type_fits lets a Ptr take any present reference, because an export names no layout of its own
@@ -1012,7 +1041,12 @@ comparable :: proc(left, right: Type) -> bool {
 	if is_number(left) || left == BOOL {
 		return left == right
 	}
-	if left.kind != .Ref && left.kind != .Closure || non_null(left) != non_null(right) {
+	same := non_null(left) == non_null(right)
+	if left.kind == .Any_Ref || right.kind == .Any_Ref {
+		// One of several layouts may be the other side's layout.
+		same = fits(non_null(left), right) || fits(non_null(right), left)
+	}
+	if left.kind != .Ref && left.kind != .Any_Ref && left.kind != .Closure || !same {
 		return false
 	}
 	return left.nullish == right.nullish || left.nullish == .None || right.nullish == .None

@@ -15,7 +15,9 @@ Unions and `any`: the tagged value. A value whose type can hold more than one ki
 tag and the payload of requirements 3.4, and every move out of it into a static type is a check that
 fails the program rather than read it wrong (requirements 3.8). A reference with one of null and
 undefined is a pointer instead (types.odin), read as present after a test for null (present_checked)
-the way a tagged value is unboxed after a test of its tag, and boxed wherever a tag is wanted.
+the way a tagged value is unboxed after a test of its tag, and boxed wherever a tag is wanted. So
+are objects and arrays of several types, which the header of the cell tells apart: read as one of
+them after a test of the layout (layout_checked), and dispatched on it for a field.
 
 A tagged value becomes static in one way only. A read check narrowed (a narrowed name, `x!`, an
 `any` narrowed by `typeof`) is unboxed where lower_expression hands it over, since the node holds
@@ -129,6 +131,76 @@ present :: proc(s: ^Func_State, value: ir.Value_ID, span: source.Span) -> ir.Val
 	return ir.emit(&s.fb, type, ir.Non_Null{value = value}, span)
 }
 
+// layout_checked reads a reference of several layouts as the one want names, after a Layout_Test
+// that fails with `error` where the cell has another. A null passes as want's null where want may
+// hold one, and fails where it may not.
+@(private)
+layout_checked :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	want: ir.Type,
+	error: abi.Runtime_Error,
+	span: source.Span,
+) -> ir.Value_ID {
+	value := value
+	if want.nullish == .None {
+		value = present_checked(s, value, error, span)
+	}
+	cell := value
+	join := ir.NO_BLOCK
+	edges := make([dynamic]Edge, 0, 2, context.temp_allocator)
+	values := make([dynamic]ir.Value_ID, 0, 2, context.temp_allocator)
+	if value_type(s, value).nullish != .None {
+		null := null_test(s, value, span)
+		append(&values, ir.emit(&s.fb, want, ir.Const_Null{}, span))
+		append(&edges, here(s))
+		join = ir.add_block(&s.fb)
+		held := ir.add_block(&s.fb)
+		ir.emit(
+			&s.fb,
+			ir.VOID,
+			ir.Branch{condition = null, then_block = join, else_block = held},
+			span,
+		)
+		ir.use_block(&s.fb, held)
+		cell = present(s, value, span)
+	}
+	test := ir.emit(&s.fb, ir.BOOL, ir.Layout_Test{cell = cell, layout = want.layout}, span)
+	checked := ir.add_block(&s.fb)
+	failed := ir.add_block(&s.fb)
+	ir.emit(
+		&s.fb,
+		ir.VOID,
+		ir.Branch{condition = test, then_block = checked, else_block = failed},
+		span,
+	)
+	fail_block(s, failed, error, span)
+	ir.use_block(&s.fb, checked)
+	result := ir.emit(&s.fb, ir.non_null(want), ir.As_Layout{cell = cell}, span)
+	if join == ir.NO_BLOCK {
+		return result
+	}
+	append(&values, result)
+	append(&edges, here(s))
+	ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)
+	return join_values(s, join, edges[:], values[:], want, span)
+}
+
+// as_layout types the object a dispatch on layouts found: the unbox of a tagged value, or a
+// reference of several layouts as the one the dispatch tested.
+@(private)
+as_layout :: proc(
+	s: ^Func_State,
+	value: ir.Value_ID,
+	layout: ir.Layout_ID,
+	span: source.Span,
+) -> ir.Value_ID {
+	if value_type(s, value) == ir.TAGGED {
+		return ir.emit(&s.fb, ir.ref(layout), ir.Unbox{value = value}, span)
+	}
+	return ir.emit(&s.fb, ir.ref(layout), ir.As_Layout{cell = present(s, value, span)}, span)
+}
+
 @(private)
 nullish_tag :: proc(type: ir.Type) -> abi.Tag {
 	return .Null if type.nullish == .Null else .Undefined
@@ -168,7 +240,7 @@ tag_of :: proc(type: ir.Type) -> (abi.Tag, bool) {
 		return .Boolean, true
 	case .Str:
 		return .String, true
-	case .Ref:
+	case .Ref, .Any_Ref:
 		return .Object, true
 	case .Closure:
 		return .Function, true
@@ -195,7 +267,7 @@ narrowed :: proc(
 		return value
 	}
 	have := value_type(s, value)
-	if !may_be_nullish(have) {
+	if !may_be_nullish(have) && have.kind != .Any_Ref {
 		return value
 	}
 	kind, ok := representation(s.types, s.typed.node_types[id])
@@ -203,7 +275,8 @@ narrowed :: proc(
 		return value
 	}
 	want := node_type(s, id)
-	if have.nullish != .None && want != ir.non_null(have) {
+	one_layout := have.kind == .Any_Ref && want.kind == .Ref
+	if !one_layout && want != ir.non_null(have) && have.nullish != .None || want == have {
 		return value
 	}
 	return coerce(s, value, want, span)
@@ -353,7 +426,7 @@ typeof_word :: proc(s: ^Func_State, operand: ast.Node_ID) -> string {
 		return "boolean"
 	case .Str:
 		return "string"
-	case .Ref:
+	case .Ref, .Any_Ref:
 		return "object"
 	case .Closure:
 		return "function" // a union of function types
@@ -571,7 +644,7 @@ compare_references :: proc(
 	if a.nullish == .None && b.nullish == .None {
 		return ir.NO_VALUE, false
 	}
-	if !ir.is_reference(a) || ir.non_null(a) != ir.non_null(b) {
+	if !ir.is_reference(a) || !one_reference(a, b) {
 		return compare_tagged(s, .Equal, values, span), true
 	}
 	same_null := a.nullish == b.nullish || a.nullish == .None || b.nullish == .None
@@ -584,6 +657,14 @@ compare_references :: proc(
 		return ir.emit(&s.fb, ir.BOOL, compare, span), true
 	}
 	return compare_nullable(s, values, span), true
+}
+
+// one_reference says whether two references compare by address, null aside: one type, or an
+// object or an array against a reference of several layouts that may be it.
+@(private)
+one_reference :: proc(a, b: ir.Type) -> bool {
+	x, y := ir.non_null(a), ir.non_null(b)
+	return x == y || ir.fits(x, y) || ir.fits(y, x)
 }
 
 // compare_nullable is `===` of two references of one type, either of which may hold null: a null
@@ -717,6 +798,9 @@ lower_as :: proc(s: ^Func_State, id: ast.Node_ID, node: ast.As) -> ir.Value_ID {
 		return ir.NO_VALUE
 	}
 	target := node_type(s, id)
+	if value != ir.NO_VALUE && value_type(s, value).kind == .Any_Ref && target.kind == .Any_Ref {
+		check_members(s, value, to, .Type_Assertion, span)
+	}
 	if value == ir.NO_VALUE || value_type(s, value) != ir.TAGGED || target == ir.VOID {
 		return coerce(s, value, target, span, .Type_Assertion)
 	}
@@ -774,7 +858,8 @@ check_members :: proc(
 		if len(layouts) > 0 {
 			objects = ir.add_block(&s.fb)
 		}
-		fits := tag_test(s, value, tags, span)
+		fits :=
+			nullish_test(s, value, tags, span) if is_object_reference(value_type(s, value)) else tag_test(s, value, tags, span)
 		branch := ir.Branch {
 			condition  = fits,
 			then_block = passed,
@@ -805,17 +890,20 @@ dispatch_layouts :: proc(
 	failed: ir.Block_ID,
 	span: source.Span,
 ) {
-	is_object := tag_test(s, value, {.Object}, span)
-	chain := ir.add_block(&s.fb)
-	ir.emit(
-		&s.fb,
-		ir.VOID,
-		ir.Branch{condition = is_object, then_block = chain, else_block = failed},
-		span,
-	)
-	ir.use_block(&s.fb, chain)
-	// Any of the layouts types the reference well enough for a test that reads only its header.
-	cell := ir.emit(&s.fb, ir.ref(layouts[0]), ir.Unbox{value = value}, span)
+	cell := present(s, value, span)
+	if value_type(s, value) == ir.TAGGED {
+		is_object := tag_test(s, value, {.Object}, span)
+		chain := ir.add_block(&s.fb)
+		ir.emit(
+			&s.fb,
+			ir.VOID,
+			ir.Branch{condition = is_object, then_block = chain, else_block = failed},
+			span,
+		)
+		ir.use_block(&s.fb, chain)
+		// Any of the layouts types the reference well enough for a test that reads only its header.
+		cell = ir.emit(&s.fb, ir.ref(layouts[0]), ir.Unbox{value = value}, span)
+	}
 	for layout, i in layouts {
 		next := failed
 		if i + 1 < len(layouts) {
@@ -967,6 +1055,18 @@ Union_Field_Place :: struct {
 	type:    ir.Type,
 }
 
+// is_union_value says whether a value of a union type is held as one: tagged, or a reference of
+// several layouts.
+@(private)
+is_union_value :: proc(type: ir.Type) -> bool {
+	return type == ir.TAGGED || type.kind == .Any_Ref
+}
+
+@(private)
+is_object_reference :: proc(type: ir.Type) -> bool {
+	return type.kind == .Ref || type.kind == .Any_Ref
+}
+
 @(private)
 is_object_union :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 	union_type, is_union := types[id].(check.Union)
@@ -1048,9 +1148,9 @@ union_field_place :: proc(
 		if group.type == member.type {
 			continue
 		}
-		// Two objects or arrays in a reference slot are read as the first member's type and boxed,
-		// and the box is an object either way. A reference and one that may be null, which widening
-		// put in one slot, are read and written as the latter.
+		// Two objects or arrays in a reference slot are read as the first member's type, or in a slot
+		// of several layouts as that, and boxed: the box is an object either way. A reference and one
+		// that may be null, which widening put in one slot, are read and written as the latter.
 		slot := s.low.builder.layouts[group.layout].fields[group.field].kind
 		switch {
 		case slot == .Tagged:
@@ -1059,11 +1159,14 @@ union_field_place :: proc(
 		case ir.fits(group.type, member.type):
 			group.type = member.type
 		case ir.fits(member.type, group.type):
-		case group.type.kind != .Ref || member.type.kind != .Ref:
+		case !is_object_reference(group.type) || !is_object_reference(member.type):
 			later(s, span, "a field whose representation differs across the members of a union")
 			return nil, false
 		case:
 			group.mixed = true
+			if held, _ := slot_reference(slot); held.kind == .Any_Ref {
+				group.type = slot_type(slot, ir.ANY_REF)
+			}
 		}
 	}
 	out.members = groups[:]
@@ -1083,7 +1186,7 @@ load_union_field :: proc(
 	complete := true
 	for member, i in place.members {
 		ir.use_block(&s.fb, hits[i])
-		cell := ir.emit(&s.fb, ir.ref(member.layout), ir.Unbox{value = place.value}, span)
+		cell := as_layout(s, place.value, member.layout, span)
 		field := Field_Place {
 			cell  = cell,
 			field = member.field,
@@ -1122,7 +1225,7 @@ store_union_field :: proc(
 	stored := true
 	for member, i in place.members {
 		ir.use_block(&s.fb, hits[i])
-		cell := ir.emit(&s.fb, ir.ref(member.layout), ir.Unbox{value = place.value}, span)
+		cell := as_layout(s, place.value, member.layout, span)
 		field := Field_Place {
 			cell  = cell,
 			field = member.field,
@@ -1221,7 +1324,7 @@ union_length :: proc(
 		slice.fill(hits, array_block)
 		dispatch_layouts(s, value, layouts[:], hits, failed, span)
 		ir.use_block(&s.fb, array_block)
-		array := ir.emit(&s.fb, ir.ref(layouts[0]), ir.Unbox{value = value}, span)
+		array := as_layout(s, value, layouts[0], span)
 		append(&lengths, ir.emit(&s.fb, ir.F64, ir.Length{value = array}, span))
 		append(&edges, here(s))
 		ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)

@@ -146,13 +146,15 @@ load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
 		return {tag = .Number, payload = {number = (^f64)(slot)^}}
 	case .Boolean:
 		return {tag = .Boolean, payload = {boolean = (^b64)(slot)^}}
-	case .Ref:
+	case .Ref, .Any_Ref:
 		cell := (^^abi.Cell_Header)(slot)^
 		return {tag = tag_of(heap, cell), payload = {ref = cell}}
-	case .Ref_Or_Null, .Ref_Or_Undefined:
+	case .Ref_Or_Null, .Ref_Or_Undefined, .Any_Ref_Or_Null, .Any_Ref_Or_Undefined:
 		cell := (^^abi.Cell_Header)(slot)^
 		if cell == nil {
-			return {tag = .Null if kind == .Ref_Or_Null else .Undefined}
+			return {
+				tag = .Null if kind == .Ref_Or_Null || kind == .Any_Ref_Or_Null else .Undefined,
+			}
 		}
 		return {tag = tag_of(heap, cell), payload = {ref = cell}}
 	case .Tagged:

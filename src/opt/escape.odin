@@ -114,7 +114,7 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func, shape: Shape) -> Frame {
 			site.pseudo = .Env
 		case ir.Param:
 			kind := instruction.type.kind
-			if kind != .Ref && kind != .Closure {
+			if kind != .Ref && kind != .Any_Ref && kind != .Closure {
 				continue
 			}
 			site.pseudo, site.param = .Param, v.index
@@ -138,6 +138,8 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func, shape: Shape) -> Frame {
 			#partial switch v in instruction.variant {
 			case ir.Non_Null:
 				grew |= add_points(&frame.points[id], frame.points[v.value][:])
+			case ir.As_Layout:
+				grew |= add_points(&frame.points[id], frame.points[v.cell][:])
 			case ir.Phi:
 				for edge in v.incoming {
 					grew |= add_points(&frame.points[id], frame.points[edge.value][:])
@@ -151,7 +153,8 @@ prepare_frame :: proc(p: ir.Program_IR, func: ^ir.Func, shape: Shape) -> Frame {
 					grew |= add_points(&frame.points[id], stored[site][:])
 					// The caller may have stored its own cell there, which goes where this goes.
 					kind := instruction.type.kind
-					if frame.sites[site].pseudo != .None && (kind == .Ref || kind == .Closure) {
+					if frame.sites[site].pseudo != .None &&
+					   (kind == .Ref || kind == .Any_Ref || kind == .Closure) {
 						grew |= add_point(&frame.points[id], site)
 					}
 				}
@@ -277,7 +280,7 @@ kept :: proc(
 		return true
 	case ir.Length, ir.Set_Length, ir.Bounds_Check, ir.Layout_Test, ir.Null_Test, ir.Same_Cell:
 		return true
-	case ir.Compare, ir.Non_Null:
+	case ir.Compare, ir.Non_Null, ir.As_Layout:
 		return true
 	case ir.Field_Store_Ref:
 		return field == &v.cell || held_here(frame, v.cell, field^)

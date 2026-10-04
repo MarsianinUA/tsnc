@@ -58,6 +58,7 @@ Variant :: union #no_nil {
 	Layout_Test,
 	Null_Test,
 	Non_Null,
+	As_Layout,
 	Same_Cell,
 
 	// Tagged values.
@@ -315,6 +316,12 @@ Non_Null :: struct {
 	value: Value_ID,
 }
 
+// As_Layout answers an Any_Ref as a reference of the layout its type names, once a Layout_Test before
+// it proved the cell has that layout.
+As_Layout :: struct {
+	cell: Value_ID,
+}
+
 // Same_Cell answers Bool: whether two Str are one cell. Two cells may hold the same units, so only
 // a test in front of the comparison of contents may use it.
 Same_Cell :: struct {
@@ -441,7 +448,7 @@ terminates :: proc(variant: Variant) -> bool {
 		return false
 	case Bounds_Check, Element_Load, Element_Store, Element_Store_Ref, Layout_Test, Null_Test:
 		return false
-	case Unit_Load, Ascii_Cell, Same_Cell, Non_Null:
+	case Unit_Load, Ascii_Cell, Same_Cell, Non_Null, As_Layout:
 		return false
 	case Tag_Test, Box, Unbox, Global_Load, Global_Store:
 		return false
