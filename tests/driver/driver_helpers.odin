@@ -45,9 +45,8 @@ RUNTIME_BUILD :: "odin build src/runtime -build-mode:obj -use-single-module -o:s
 // check_project leaves the result to the caller, who must call driver.destroy on its report.
 check_project :: proc(project, entry: string, jobs := 1) -> Checked {
 	options := driver.Options {
-		command = .check,
-		input   = fmt.tprintf("%s%s/%s", PROJECTS, project, entry),
-		jobs    = jobs,
+		input = fmt.tprintf("%s%s/%s", PROJECTS, project, entry),
+		jobs  = jobs,
 	}
 	report, err := driver.check_only(options)
 	return {report = report, err = err, errors = errors_of(report)}
@@ -67,7 +66,6 @@ out_path :: proc(name: string) -> string {
 // that wants another artifact or another target sets the field afterwards.
 build_options :: proc(project, entry, output: string) -> driver.Options {
 	return {
-		command = .build,
 		input = fmt.tprintf("%s%s/%s", PROJECTS, project, entry),
 		output = out_path(output),
 		target = target.HOST,

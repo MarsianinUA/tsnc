@@ -157,6 +157,38 @@ close_component :: proc(s: ^Search, root: source.File_ID) {
 	resize(&s.pending, first)
 }
 
+// modules_that_run walks the value edges from ENTRY and keeps init_order to what it reaches, the
+// lib left out: it declares and runs nothing.
+modules_that_run :: proc(
+	init_order: []source.File_ID,
+	imports: [][]Import_Edge,
+	allocator: runtime.Allocator,
+) -> []source.File_ID {
+	if len(imports) <= int(ENTRY) {
+		return nil
+	}
+	reached := make([]bool, len(imports), context.temp_allocator)
+	queue := make([dynamic]source.File_ID, 0, len(imports), context.temp_allocator)
+	append(&queue, ENTRY)
+	reached[ENTRY] = true
+	for i := 0; i < len(queue); i += 1 {
+		for edge in imports[queue[i]] {
+			if !edge.type_only && !reached[edge.module] {
+				reached[edge.module] = true
+				append(&queue, edge.module)
+			}
+		}
+	}
+
+	order := make([dynamic]source.File_ID, 0, len(queue), allocator)
+	for module in init_order {
+		if module != LIB && reached[module] {
+			append(&order, module)
+		}
+	}
+	return order[:]
+}
+
 // report_cycles treats one ring as one mistake, so a ring of five modules is one message and not
 // five. The message stands on the import that closes the ring, which closing_span finds.
 report_cycles :: proc(

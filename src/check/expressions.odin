@@ -62,7 +62,7 @@ check_expression :: proc(c: ^Checker, id: ast.Node_ID, expected := ERROR) -> Typ
 	case ast.Non_Null:
 		return set_type(c, id, check_non_null(c, id, v))
 	case ast.As:
-		return set_type(c, id, check_as(c, v))
+		return set_type(c, id, check_as(c, id, v))
 
 	case ast.Array_Literal:
 		return set_type(c, id, check_array_literal(c, id, v, expected))
@@ -548,10 +548,7 @@ check_object_literal :: proc(
 		value := check_expression(c, property.value, declared)
 		set_type(c, property_id, value)
 
-		as_declared := known && fits(c, value, declared)
-		if known && !as_declared {
-			report_assign_failure(c, span_of(c, property.value), value, declared)
-		}
+		as_declared := known && flow(c, value, declared, span_of(c, property.value))
 		kept := declared if as_declared else widen(&c.table, value)
 		add_field(c, &fields, {name = property.name.text, type = kept}, property.name)
 	}
@@ -618,9 +615,7 @@ check_array_literal :: proc(
 	if target, is_array := c.table.types[wanted].(Array); is_array {
 		for element in node.elements {
 			value := check_expression(c, element, target.element)
-			if !fits(c, value, target.element) {
-				report_assign_failure(c, span_of(c, element), value, target.element)
-			}
+			flow(c, value, target.element, span_of(c, element))
 		}
 		return wanted
 	}
@@ -739,7 +734,7 @@ check_non_null :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Non_Null) -> Type
 // reports anything, the attempt is undone, the flows and writes it recorded too, and the operand
 // is checked on its own, which leaves a mismatch to T3020.
 @(private)
-check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
+check_as :: proc(c: ^Checker, id: ast.Node_ID, node: ast.As) -> Type_ID {
 	target := resolve_type(c, node.type)
 	reported, widened, written := len(c.diagnostics), len(c.widenings), len(c.writes)
 	value := check_expression(c, node.expr, target)
@@ -752,6 +747,10 @@ check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 
 	if target == ANY || target == UNKNOWN {
 		report(c, .Unsafe_Assertion, span_of(c, node.type), text_of(c, target))
+		return ERROR
+	}
+	if found := any_to_function(c.table.types[:], value, target); found != ERROR {
+		report(c, .Any_Operation, span_of(c, id), "become a function", text_of(c, found))
 		return ERROR
 	}
 	// One of the two conversions has to be the whole of it, and nothing in between. That is
@@ -811,9 +810,7 @@ check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	// A binding that cannot take another value has been reported already. Measuring the value
 	// against the one type that binding will ever have would only say the same thing twice.
 	if writable && !check_union_field_write(c, node.target, result, span_of(c, node.value)) {
-		if !fits(c, result, declared) {
-			report_assign_failure(c, span_of(c, node.value), result, declared)
-		}
+		flow(c, result, declared, span_of(c, node.value))
 	}
 	return result
 }
@@ -839,8 +836,7 @@ check_union_field_write :: proc(
 	}
 	for one in union_members(c, object) {
 		field, found := field_of(c, one, member.name.text)
-		if found && !fits(c, value, field_read_type(c, field)) {
-			report_assign_failure(c, span, value, field_read_type(c, field))
+		if found && !flow(c, value, field_read_type(c, field), span) {
 			break
 		}
 	}
@@ -951,7 +947,6 @@ check_call :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Call) -> Type_ID {
 		if arity_fits(c.table.types[signature].(Function), len(node.args)) {
 			result := check_signature_call(c, id, node, signature)
 			check_string_call(c, node)
-			note_array_write(c, node.callee)
 			return result
 		}
 	}

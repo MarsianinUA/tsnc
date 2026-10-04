@@ -10,8 +10,9 @@ malformed `// expect:` line: skipping either would leave a test that proves noth
 
 The mode runs `tsnc build` with the compiler the build left in dist/, instead of calling driver in
 process, so that the rendered message, the code number, the choice of stderr and the exit code are
-covered as well as the diagnostics themselves. Of the -j:1 and -j:8 builds, which must print the
-same bytes, the header is compared with the first.
+covered as well as the diagnostics themselves. `tsnc check -j:8` must print the same bytes as
+`tsnc build -j:1`: check lists everything build refuses (requirements 2.3), and one checker over
+the program and one per partition find the same mistakes. The header is compared with the build.
 */
 package main
 
@@ -102,16 +103,22 @@ negative_program :: proc(job: Job, path: string) -> (printed: int, ok: bool) {
 	}
 	out := fmt.tprintf("-out:%s", output)
 	one := []string{job.compiler, "build", path, out, "-j:1"}
-	eight := []string{job.compiler, "build", path, out, "-j:8"}
+	eight := []string{job.compiler, "check", path, "-j:8"}
 	built := execute(job, path, "tsnc build", one) or_return
-	split := execute(job, path, "tsnc build", eight) or_return
+	checked := execute(job, path, "tsnc check", eight) or_return
 	got, got_ok := diagnostics_of(job, path, built.stderr)
 
 	ok = want_ok && got_ok
-	if split.stderr != built.stderr || split.stdout != built.stdout || split.code != built.code {
-		fmt.sbprintfln(job.report, "negative: %s: -j:8 prints otherwise than -j:1", path)
-		fmt.sbprintfln(job.report, "-j:1 answered %d:\n%s", built.code, built.stderr)
-		fmt.sbprintfln(job.report, "-j:8 answered %d:\n%s", split.code, split.stderr)
+	if checked.stderr != built.stderr ||
+	   checked.stdout != built.stdout ||
+	   checked.code != built.code {
+		fmt.sbprintfln(
+			job.report,
+			"negative: %s: check -j:8 prints otherwise than build -j:1",
+			path,
+		)
+		fmt.sbprintfln(job.report, "build -j:1 answered %d:\n%s", built.code, built.stderr)
+		fmt.sbprintfln(job.report, "check -j:8 answered %d:\n%s", checked.code, checked.stderr)
 		ok = false
 	}
 	if built.code != 1 {

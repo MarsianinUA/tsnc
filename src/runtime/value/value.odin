@@ -172,6 +172,7 @@ load :: proc(heap: ^gc.Heap, slot: rawptr, kind: abi.Slot_Kind) -> abi.Tagged {
 }
 
 // tag_of is the tag a reference takes in a tagged value. An array is an object there, as in typeof.
+@(private)
 tag_of :: proc(heap: ^gc.Heap, cell: ^abi.Cell_Header) -> abi.Tag {
 	switch gc.table_of(heap, cell).kind {
 	case .String:

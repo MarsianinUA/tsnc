@@ -17,9 +17,8 @@ Shape of the output:
 - tsnc_main calls the module init functions in turn and returns. First it fills the global
   process.argv, which exists only in a program that reads it.
 
-Which modules run. Program.init_order lists every file once, the lib among them, and a module that
-only an `import type` reaches: Node never loads such a module, so its top-level code must not run
-either. lower walks the value edges from the entry file itself and keeps the order to those.
+Which modules run. lower emits an init function for each module of Program.run_order, in that
+order; the top-level code of no other module runs.
 
 Zero before use. Each module init opens by storing the zero of its type into every global of the
 module, and each function opens by giving every local of its body the zero of its type. The data
@@ -53,10 +52,8 @@ import "../ir"
 import "../program"
 import "../source"
 
-// ENTRY is the file the program starts from: driver puts the lib in first, then the input file.
-ENTRY :: source.File_ID(1)
-
 // Decl_Key carries the file because an ast.Node_ID is dense only within its file.
+@(private)
 Decl_Key :: struct {
 	file: source.File_ID,
 	node: ast.Node_ID,
@@ -64,15 +61,16 @@ Decl_Key :: struct {
 
 // Facts has both fields nil for the lib, which no partition contains, and for a file no checker
 // typed.
+@(private)
 Facts :: struct {
 	result: ^check.Check_Result,
 	typed:  ^check.Typed_File,
 }
 
+@(private)
 Lowering :: struct {
 	prog:          ^program.Program,
 	facts:         []Facts, // indexed by source.File_ID
-	reachable:     []bool, // indexed by source.File_ID: reached from ENTRY over value imports
 	builder:       ir.Program_Builder,
 	funcs:         map[Decl_Key]ir.Func_ID, // by ast.Function_Decl, or ast.Arrow not inlined
 	globals:       map[Decl_Key]ir.Global_ID, // by ast.Declarator
@@ -116,14 +114,13 @@ lower :: proc(
 	out: ir.Program_IR,
 	diagnostics: []diag.Diagnostic,
 ) {
-	ensure(len(prog.files) > int(ENTRY), "lower needs an entry file after the lib")
+	ensure(len(prog.files) > int(program.ENTRY), "lower needs an entry file after the lib")
 
 	// Only the builder and the diagnostics outlive the call; the tables that answer "where does
 	// this name live" are scratch, and ir.finish copies the initialization order it is given.
 	low := Lowering {
 		prog          = prog,
 		facts         = make([]Facts, len(prog.files), context.temp_allocator),
-		reachable     = make([]bool, len(prog.files), context.temp_allocator),
 		builder       = ir.make_builder(allocator),
 		funcs         = make(map[Decl_Key]ir.Func_ID, context.temp_allocator),
 		globals       = make(map[Decl_Key]ir.Global_ID, context.temp_allocator),
@@ -145,8 +142,7 @@ lower :: proc(
 	// Every layout an object type ends up in is known before the first one is interned, and every
 	// signature a function type ends up with before the first function is declared.
 	build_classes(&low, results)
-	mark_reachable(&low)
-	order := module_order(&low)
+	order := prog.run_order
 	for file in order {
 		ensure(low.facts[file].typed != nil, "a module that runs was never typed by any checker")
 		low.closures[file] = analyze_closures(&low, file)
@@ -167,7 +163,13 @@ lower :: proc(
 	for file in order {
 		declare_globals(&low, file)
 	}
-	main := ir.declare_func(&low.builder, abi.MAIN_SYMBOL, nil, ir.VOID, module_span(&low, ENTRY))
+	main := ir.declare_func(
+		&low.builder,
+		abi.MAIN_SYMBOL,
+		nil,
+		ir.VOID,
+		module_span(&low, program.ENTRY),
+	)
 
 	for file, i in order {
 		build_module_init(&low, file, inits[i])
@@ -182,6 +184,7 @@ lower :: proc(
 
 // report is called once for a construct the slice does not build yet, where it stands; what depends
 // on it answers a poison value and says nothing more.
+@(private)
 report :: proc(low: ^Lowering, code: diag.Code, span: source.Span, args: ..string) {
 	d := diag.Diagnostic {
 		code = code,
@@ -220,37 +223,6 @@ index_facts :: proc(low: ^Lowering, results: []check.Check_Result) {
 			}
 		}
 	}
-}
-
-// mark_reachable skips an `import type` edge: it is erased before the program runs, so a module
-// only it reaches never loads and never initializes.
-@(private)
-mark_reachable :: proc(low: ^Lowering) {
-	queue := make([dynamic]source.File_ID, 0, len(low.prog.files), context.temp_allocator)
-	append(&queue, ENTRY)
-	low.reachable[ENTRY] = true
-	for i := 0; i < len(queue); i += 1 {
-		for edge in low.prog.imports[queue[i]] {
-			if edge.type_only || low.reachable[edge.module] {
-				continue
-			}
-			low.reachable[edge.module] = true
-			append(&queue, edge.module)
-		}
-	}
-}
-
-// module_order is the initialization order with the modules that never load left out: the lib,
-// which declares and runs nothing, and whatever no value import reaches.
-@(private)
-module_order :: proc(low: ^Lowering) -> []source.File_ID {
-	order := make([dynamic]source.File_ID, 0, len(low.prog.files), context.temp_allocator)
-	for file in low.prog.init_order {
-		if file != program.LIB && low.reachable[file] {
-			append(&order, file)
-		}
-	}
-	return order[:]
 }
 
 @(private)
@@ -448,7 +420,7 @@ declare_globals :: proc(low: ^Lowering, file: source.File_ID) {
 
 @(private)
 build_main :: proc(low: ^Lowering, main: ir.Func_ID, inits: []ir.Func_ID) {
-	span := module_span(low, ENTRY)
+	span := module_span(low, program.ENTRY)
 	f := ir.begin_func(&low.builder, main)
 	// Before any module runs, since any of them may read it.
 	if argv, used := low.argv.?; used {

@@ -36,6 +36,7 @@ COLORS_256 :: 8
 @(private)
 COLORS_16M :: 24
 
+@(private)
 should_colorize :: proc(stream: Stream) -> bool {
 	colors := false
 	force, forced := os.lookup_env("FORCE_COLOR", context.allocator)

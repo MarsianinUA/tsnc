@@ -3,10 +3,10 @@ The compiler's one imperative layer, by rules 1, 4 and 5 of
 docs/architecture-plan-tsnc.md#philosophy-a-pipeline-of-frozen-layers.
 
 check_only is the `tsnc check` stage: the import closure from the entry file, parse and bind of
-every file in it, the module graph, and the types of every source file, a checker per partition
-(checking.odin). build carries on through lower, codegen and link, and run starts what build wrote;
-both live in build.odin. has_errors is the policy between the stages. driver never prints and never
-sets the exit code; main does both.
+every file in it, the module graph, the types of every source file, a checker per partition
+(checking.odin), and lower. build carries on through codegen and link, and run starts what build
+wrote; both live in build.odin. has_errors is the policy between the stages. driver never prints
+and never sets the exit code; main does both.
 
 File_ID order. The lib file is 0, the entry file is 1, and an imported file takes the next number
 as the breadth-first walk first reaches it, as the "Determinism" paragraph of
@@ -36,7 +36,9 @@ import "../bind"
 import "../check"
 import "../codegen"
 import "../diag"
+import "../ir"
 import "../link"
+import "../lower"
 import "../program"
 import "../source"
 import "../target"
@@ -44,7 +46,7 @@ import "../target"
 // LLVM's backend registration and command line options are process-global, so they are set once,
 // before anything can reach codegen. An @(init) procedure runs before main, and in a test binary
 // before the test pool starts, which is how tests/link and tests/codegen already do it.
-@(init)
+@(init, private)
 init_llvm :: proc "contextless" () {
 	codegen.init_global_options()
 }
@@ -57,31 +59,19 @@ LIB_TEXT :: #load("../lib/lib.d.ts", string)
 // would lead a reader anywhere.
 LIB_PATH :: "lib.d.ts"
 
-// Command values are lowercase because core:flags matches them against the command line by exact
-// name: `tsnc build`. codegen.Optimization and target.Target follow the same rule for `-o:` and
-// `-target:`.
-Command :: enum {
-	build,
-	run,
-	check,
-}
-
-// Options is what main parses the command line into and the only thing driver takes from it.
+// Options is what main makes of a command line it has already checked.
 Options :: struct {
-	command:      Command `args:"pos=0,required" usage:"build, run or check"`,
-	input:        string `args:"pos=1,required" usage:"entry .ts file"`,
-	output:       string `args:"name=out" usage:"output path"`,
-	optimization: codegen.Optimization `args:"name=o" usage:"optimization level (default: speed)"`,
-	emit_llvm:    bool `usage:"write textual LLVM IR instead of an executable"`,
-	emit_ir:      bool `usage:"write the tsnc IR dump instead of an executable"`,
-	target:       target.Target `usage:"target platform, for example linux_amd64 (default: host)"`,
-	jobs:         int `args:"name=j" usage:"worker threads (default: number of cores)"`,
-	sanitize:     link.Sanitizer `usage:"link the runtime built with -sanitize:address (default: none)"`,
+	input:        string,
+	output:       string, // empty names the output after input
+	artifact:     Artifact,
+	optimization: codegen.Optimization,
+	target:       target.Target,
+	jobs:         int,
+	sanitize:     link.Sanitizer,
 }
 
-// Artifact is what a build produces. The command line spells it as two flags, because
-// requirements 9 fixes -emit-llvm and -emit-ir; inside driver it is one enum, the way the
-// architecture plan asks for an artifact kind, so that every stage switches on one value.
+// Artifact is what a build produces, one enum where the command line has the two flags
+// requirements 9 fixes, -emit-llvm and -emit-ir.
 Artifact :: enum u8 {
 	Executable, // codegen writes an object file, link makes the program out of it
 	LLVM_IR, // -emit-llvm: textual LLVM IR from codegen, after the passes of -o:
@@ -93,8 +83,6 @@ Error_Kind :: enum u8 {
 	Entry_Unreadable, // detail: the path, then why it could not be read
 	Entry_Too_Large, // detail: the path
 	Out_Of_Memory, // detail: empty
-	Two_Artifacts, // detail: empty
-	Nothing_To_Run, // detail: empty
 	Cross_Link, // detail: empty
 	Output_Unnamable, // detail: the entry file, whose name cannot become the output's
 	Output_Is_Source, // detail: the source file the output would have replaced
@@ -130,9 +118,8 @@ Check_Report :: struct {
 // Build_Report holds a Check_Report rather than replacing it, so that destroy keeps owning every
 // arena in one place and main renders the diagnostics of all three commands the same way.
 Build_Report :: struct {
-	check:    Check_Report,
-	artifact: Artifact,
-	output:   string, // empty when the build stopped before it wrote anything
+	check:  Check_Report,
+	output: string, // empty when the build stopped before it wrote anything
 }
 
 // Build_Memory is touched by driver alone; a caller passes it back to destroy. An arena must not
@@ -141,14 +128,13 @@ Build_Report :: struct {
 // every Check_Task are heap-allocated, and tasks and checks hold pointers.
 Build_Memory :: struct {
 	arena:     virtual.Arena, // the file table, the paths, the file texts, the merged diagnostics
-	lowering:  virtual.Arena, // the IR and lower's diagnostics; empty until build reaches lower
+	lowering:  virtual.Arena, // the IR and lower's diagnostics; empty until lower runs
 	tasks:     [dynamic]^File_Task, // one per File_ID, each owning its own arena
 	checks:    [dynamic]^Check_Task, // one per partition, each owning its own arena
 	allocator: runtime.Allocator, // where the struct above came from, for destroy
 }
 
-// check_only reports every error it can rather than stopping at the first: a file that fails to
-// parse still gets bound, and a module that cannot be found does not end the walk.
+// check_only answers every diagnostic build would, without generating code.
 @(require_results)
 check_only :: proc(
 	options: Options,
@@ -157,13 +143,30 @@ check_only :: proc(
 	report: Check_Report,
 	err: Driver_Error,
 ) {
+	report, _, err = check_and_lower(options, allocator)
+	return
+}
+
+// check_and_lower reports every error it can rather than stopping at the first: a file that fails
+// to parse still gets bound, and a module that cannot be found does not end the walk. lower runs
+// only on a program the front end found nothing in, and what it cannot compile yet is reported
+// there alone, so `tsnc check` needs it as much as build does.
+@(private)
+check_and_lower :: proc(
+	options: Options,
+	allocator: runtime.Allocator,
+) -> (
+	report: Check_Report,
+	program_ir: ir.Program_IR,
+	err: Driver_Error,
+) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
 
 	memory := new(Build_Memory, allocator)
 	memory.allocator = allocator
 	if virtual.arena_init_growing(&memory.arena) != nil {
 		free(memory, allocator)
-		return {}, {kind = .Out_Of_Memory}
+		return {}, {}, {kind = .Out_Of_Memory}
 	}
 	memory.tasks = make([dynamic]^File_Task, allocator)
 	memory.checks = make([dynamic]^Check_Task, allocator)
@@ -186,7 +189,7 @@ check_only :: proc(
 	// The memory goes back with the report even though there is nothing to report: err.detail
 	// lives in that arena, so freeing it here would hand the caller a dangling string.
 	if err = add_entry(&c, options.input); err.kind != .None {
-		return {memory = memory}, err
+		return {memory = memory}, {}, err
 	}
 
 	jobs := max(options.jobs, 1)
@@ -204,7 +207,7 @@ check_only :: proc(
 	for first := 0; first < len(c.files); {
 		last := len(c.files)
 		if parse_wave(&pool, c.memory.tasks[first:last]) != nil {
-			return {memory = memory}, {kind = .Out_Of_Memory}
+			return {memory = memory}, {}, {kind = .Out_Of_Memory}
 		}
 		for id in first ..< last {
 			append(&c.diagnostics, ..c.memory.tasks[id].diagnostics)
@@ -229,18 +232,35 @@ check_only :: proc(
 	// check reports in the order it reads declarations, which is not print order.
 	results, check_err := run_checkers(&c, &built, &pool, jobs)
 	if check_err != nil {
-		return {memory = memory}, {kind = .Out_Of_Memory}
+		return {memory = memory}, {}, {kind = .Out_Of_Memory}
 	}
 
 	diagnostics := c.diagnostics[:]
 	diag.sort(diagnostics)
+	report = {
+		program     = built,
+		results     = results,
+		diagnostics = diagnostics,
+		memory      = memory,
+	}
+	if has_errors(report) {
+		return report, {}, {}
+	}
 
-	return {program = built, results = results, diagnostics = diagnostics, memory = memory}, {}
+	// Into the phase arena that holds the IR for the rest of a build.
+	if virtual.arena_init_growing(&memory.lowering) != nil {
+		return report, {}, {kind = .Out_Of_Memory}
+	}
+	lowering := virtual.arena_allocator(&memory.lowering)
+	program_ir, report.diagnostics = lower.lower(&report.program, results, lowering)
+	// The gate above left the list empty, so sorting lower's own is the whole of print order.
+	diag.sort(report.diagnostics)
+	return report, program_ir, {}
 }
 
 // has_errors needs only one diagnostic, because every diagnostic tsnc makes is an error. This is
-// the "go to lower only without errors" policy: build asks it between check and lower, and main
-// turns the same answer into the exit code.
+// the "go to lower only without errors" policy: check_and_lower asks it between check and lower,
+// build before codegen, and main turns the same answer into the exit code.
 has_errors :: proc(report: Check_Report) -> bool {
 	return len(report.diagnostics) > 0
 }

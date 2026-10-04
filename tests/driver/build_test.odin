@@ -24,14 +24,13 @@ corpus of T4.7, and not here.
 @(test)
 the_ir_dump_is_written :: proc(t: ^testing.T) {
 	options := build_options("loops", "main.ts", "driver-loops.ir")
-	options.emit_ir = true
+	options.artifact = .IR_Dump
 	built := build_project(options)
 	defer driver.destroy(&built.report.check)
 	if !expect_built(t, built) {
 		return
 	}
 
-	testing.expect_value(t, built.report.artifact, driver.Artifact.IR_Dump)
 	text := read_artifact(t, built.report.output)
 	testing.expectf(t, strings.has_prefix(text, "; tsnc ir"), "the dump opens with %.20q", text)
 	testing.expect(t, strings.contains(text, "tsnc_main"), "the dump has no entry point")
@@ -41,14 +40,13 @@ the_ir_dump_is_written :: proc(t: ^testing.T) {
 @(test)
 textual_llvm_ir_is_written :: proc(t: ^testing.T) {
 	options := build_options("loops", "main.ts", "driver-loops.ll")
-	options.emit_llvm = true
+	options.artifact = .LLVM_IR
 	built := build_project(options)
 	defer driver.destroy(&built.report.check)
 	if !expect_built(t, built) {
 		return
 	}
 
-	testing.expect_value(t, built.report.artifact, driver.Artifact.LLVM_IR)
 	text := read_artifact(t, built.report.output)
 	testing.expect(t, strings.contains(text, "define"), "the module defines no function")
 	triple := string(target.SPECS[target.HOST].triple)
@@ -67,7 +65,6 @@ an_executable_is_built_and_runs :: proc(t: ^testing.T) {
 		return
 	}
 
-	testing.expect_value(t, built.report.artifact, driver.Artifact.Executable)
 	expect_no_leftovers(t, built.report.output)
 
 	state, stdout, stderr, run_err := os.process_exec(
@@ -97,10 +94,9 @@ a_path_that_is_not_ascii_builds_and_runs :: proc(t: ^testing.T) {
 	}
 	suffix := target.SPECS[target.HOST].executable_suffix
 	options := driver.Options {
-		command = .build,
-		input   = fmt.tprintf("%s/main.ts", directory),
-		output  = fmt.tprintf("%s/main%s", directory, suffix),
-		target  = target.HOST,
+		input  = fmt.tprintf("%s/main.ts", directory),
+		output = fmt.tprintf("%s/main%s", directory, suffix),
+		target = target.HOST,
 	}
 	built := build_project(options)
 	defer driver.destroy(&built.report.check)
@@ -151,23 +147,21 @@ two_builds_of_one_program_are_identical :: proc(t: ^testing.T) {
 @(test)
 the_thread_count_changes_no_byte_of_any_artifact :: proc(t: ^testing.T) {
 	Artifact :: struct {
-		name:      string,
-		emit_ir:   bool,
-		emit_llvm: bool,
+		name: string,
+		kind: driver.Artifact,
 	}
 	artifacts := [?]Artifact {
-		{name = "driver-split.ir", emit_ir = true},
-		{name = "driver-split.ll", emit_llvm = true},
+		{name = "driver-split.ir", kind = .IR_Dump},
+		{name = "driver-split.ll", kind = .LLVM_IR},
 		{name = "driver-split.exe"},
 	}
 	for artifact in artifacts {
 		bytes: [2]string
 		for jobs, i in ([2]int{1, 8}) {
 			options := build_options("split", "main.ts", artifact.name)
-			options.emit_ir = artifact.emit_ir
-			options.emit_llvm = artifact.emit_llvm
+			options.artifact = artifact.kind
 			options.jobs = jobs
-			if artifact.emit_ir {
+			if artifact.kind == .IR_Dump {
 				// opt runs from -o:speed on; a dump shows its result without the time LLVM takes.
 				options.optimization = .speed
 			}
@@ -271,7 +265,6 @@ a_one_unit_piece_takes_no_cell :: proc(t: ^testing.T) {
 @(test)
 run_passes_on_the_exit_code :: proc(t: ^testing.T) {
 	options := build_options("exit", "main.ts", "driver-exit.exe")
-	options.command = .run
 	built := build_project(options)
 	defer driver.destroy(&built.report.check)
 	if !expect_built(t, built) {
@@ -322,25 +315,6 @@ a_program_with_errors_never_reaches_lower :: proc(t: ^testing.T) {
 	testing.expectf(t, !os.exists(options.output), "%s was written", options.output)
 }
 
-// The command line is read before any file is: the entry file here does not exist, and the answer
-// is still about the flags.
-@(test)
-a_contradictory_command_line_is_refused_first :: proc(t: ^testing.T) {
-	// -out: names one file, and these ask for two.
-	two := build_options("nowhere", "not-here.ts", "driver-refused")
-	two.emit_llvm, two.emit_ir = true, true
-	built_two := build_project(two)
-	defer driver.destroy(&built_two.report.check)
-	testing.expect_value(t, built_two.err.kind, driver.Error_Kind.Two_Artifacts)
-
-	// A dump is not a program, so there is nothing for `tsnc run` to start.
-	nothing := build_options("nowhere", "not-here.ts", "driver-refused")
-	nothing.command, nothing.emit_ir = .run, true
-	built_nothing := build_project(nothing)
-	defer driver.destroy(&built_nothing.report.check)
-	testing.expect_value(t, built_nothing.err.kind, driver.Error_Kind.Nothing_To_Run)
-}
-
 // v1 links for the host alone, and that is decided before the program is read. The same target
 // still writes an IR dump, which needs no linker and no LLVM back end for it.
 @(test)
@@ -358,7 +332,7 @@ only_the_host_target_builds_a_program :: proc(t: ^testing.T) {
 
 		options = build_options("loops", "main.ts", "driver-cross.ir")
 		options.target = id
-		options.emit_ir = true
+		options.artifact = .IR_Dump
 		built := build_project(options)
 		defer driver.destroy(&built.report.check)
 		testing.expectf(t, built.err.kind == .None, "%v: %v", id, built.err.kind)
@@ -402,10 +376,9 @@ the_output_is_never_the_entry_file :: proc(t: ^testing.T) {
 	before := read_artifact(t, entry)
 	for output in spellings {
 		options := driver.Options {
-			command = .build,
-			input   = entry,
-			output  = output,
-			target  = target.HOST,
+			input  = entry,
+			output = output,
+			target = target.HOST,
 		}
 		built := build_project(options)
 		defer driver.destroy(&built.report.check)
@@ -431,10 +404,9 @@ the_output_is_never_an_imported_file :: proc(t: ^testing.T) {
 	before := read_artifact(t, imported)
 
 	options := driver.Options {
-		command = .build,
-		input   = fmt.tprintf("%s/main.ts", directory),
-		output  = imported,
-		target  = target.HOST,
+		input  = fmt.tprintf("%s/main.ts", directory),
+		output = imported,
+		target = target.HOST,
 	}
 	built := build_project(options)
 	defer driver.destroy(&built.report.check)
@@ -450,19 +422,18 @@ the_output_is_never_an_imported_file :: proc(t: ^testing.T) {
 @(test)
 the_default_output_is_named_after_the_entry_file :: proc(t: ^testing.T) {
 	Case :: struct {
-		emit_llvm: bool,
-		emit_ir:   bool,
-		suffix:    string,
+		kind:   driver.Artifact,
+		suffix: string,
 	}
 	cases := [?]Case {
 		{suffix = target.SPECS[target.HOST].executable_suffix},
-		{emit_llvm = true, suffix = ".ll"},
-		{emit_ir = true, suffix = ".ir"},
+		{kind = .LLVM_IR, suffix = ".ll"},
+		{kind = .IR_Dump, suffix = ".ir"},
 	}
 	for c in cases {
 		options := build_options("default-name", "driver-default.ts", "")
 		options.output = ""
-		options.emit_llvm, options.emit_ir = c.emit_llvm, c.emit_ir
+		options.artifact = c.kind
 		built := build_project(options)
 		defer driver.destroy(&built.report.check)
 		if !expect_built(t, built) {

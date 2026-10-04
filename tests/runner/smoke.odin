@@ -26,9 +26,9 @@ smoke :: proc() -> (passed: bool) {
 	output := hello_program()
 	object := "dist/smoke-hello.obj"
 	if err := codegen.emit(&output, output.units[0], target.HOST, .speed, .Object, object);
-	   err != .None {
+	   err.kind != .None {
 		fmt.eprintfln("smoke: codegen %s: %v", object, err)
-		if err == .Write_Failed {
+		if err.kind == .Write_Failed {
 			fmt.eprintln("run the runner from the repository root; create dist/ once: mkdir dist")
 		}
 		return false

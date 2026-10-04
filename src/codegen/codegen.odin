@@ -18,12 +18,11 @@ share nothing.
 Memory: emit owns nothing that outlives the call. Scratch goes to context.temp_allocator behind a
 temp guard, and the LLVM handles are disposed on the way out.
 
-Errors: when LLVM explains a failure, emit logs the text at error level through context.logger.
+Errors: emit returns an Error, which driver translates as it does link's.
 */
 package codegen
 
 import "base:runtime"
-import "core:log"
 import "core:strings"
 
 import "../ir"
@@ -43,12 +42,17 @@ Artifact :: enum u8 {
 	LLVM_IR, // textual LLVM IR, for -emit-llvm
 }
 
-Error :: enum u8 {
+Error_Kind :: enum u8 {
 	None,
 	Unsupported_Target, // no target.SPECS row, or LLVM has no backend for the triple
 	Invalid_Module, // the LLVM verifier rejected the module: a codegen bug
 	Passes_Failed, // LLVMRunPasses rejected the pipeline: a codegen bug
 	Write_Failed, // the artifact could not be written to the path
+}
+
+Error :: struct {
+	kind:   Error_Kind,
+	detail: string, // LLVM's message, allocated with emit's allocator; empty when LLVM gave none
 }
 
 // init_global_options passes -disable-lsr to turn off loop strength reduction, which creates
@@ -79,10 +83,11 @@ emit :: proc(
 	level: Optimization,
 	artifact: Artifact,
 	path: string,
+	allocator := context.allocator,
 ) -> Error {
-	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore = allocator == context.temp_allocator)
 	if !target.supported(build_target) {
-		return .Unsupported_Target
+		return {kind = .Unsupported_Target}
 	}
 	triple := target.SPECS[build_target].triple
 
@@ -92,8 +97,8 @@ emit :: proc(
 	lookup_failed := bool(llvm.LLVMGetTargetFromTriple(triple, &backend, &lookup_message))
 	defer llvm.LLVMDisposeMessage(lookup_message)
 	if lookup_failed {
-		log.errorf("codegen: no LLVM backend for %s: %s", triple, lookup_message)
-		return .Unsupported_Target
+		detail := strings.concatenate({string(triple), ": ", string(lookup_message)}, allocator)
+		return {.Unsupported_Target, detail}
 	}
 	machine := llvm.LLVMCreateTargetMachine(
 		backend,
@@ -115,18 +120,14 @@ emit :: proc(
 	data_layout := llvm.LLVMCreateTargetDataLayout(machine)
 	llvm.LLVMSetModuleDataLayout(module, data_layout)
 	llvm.LLVMDisposeTargetData(data_layout)
-	// Before the verifier: a module abandoned halfway is not worth a verifier report.
-	if build_error := build_module(ctx, module, program, unit); build_error != .None {
-		return build_error
-	}
+	build_module(ctx, module, program, unit)
 
 	// --- Verify before the passes, so a codegen bug is reported against the module it made.
 	verify_message: cstring
 	broken := bool(llvm.LLVMVerifyModule(module, .LLVMReturnStatusAction, &verify_message))
 	defer llvm.LLVMDisposeMessage(verify_message)
 	if broken {
-		log.errorf("codegen: the LLVM verifier rejected the module:\n%s", verify_message)
-		return .Invalid_Module
+		return {.Invalid_Module, strings.clone_from_cstring(verify_message, allocator)}
 	}
 
 	// --- Pass pipeline of the level.
@@ -136,8 +137,9 @@ emit :: proc(
 	   pass_error != nil {
 		pass_message := llvm.LLVMGetErrorMessage(pass_error)
 		defer llvm.LLVMDisposeErrorMessage(pass_message)
-		log.errorf("codegen: pipeline %s: %s", PIPELINES[level], pass_message)
-		return .Passes_Failed
+		pipeline := string(PIPELINES[level])
+		detail := strings.concatenate({pipeline, ": ", string(pass_message)}, allocator)
+		return {.Passes_Failed, detail}
 	}
 
 	// --- Write the artifact.
@@ -160,10 +162,9 @@ emit :: proc(
 	}
 	defer llvm.LLVMDisposeMessage(write_message)
 	if write_failed {
-		log.errorf("codegen: cannot write %s: %s", path, write_message)
-		return .Write_Failed
+		return {.Write_Failed, strings.clone_from_cstring(write_message, allocator)}
 	}
-	return .None
+	return {}
 }
 
 // Clang uses the same pipelines and machine code levels for -O0, -O2 and -O3.

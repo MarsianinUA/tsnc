@@ -49,7 +49,7 @@ llvm_text :: proc(
 ) -> string {
 	path := fmt.tprintf("dist/codegen-%s.ll", name)
 	err := codegen.emit(output, output.units[0], target.HOST, level, .LLVM_IR, path)
-	if !testing.expectf(t, err == .None, "emit %s: %v", path, err, loc = loc) {
+	if !testing.expectf(t, err.kind == .None, "emit %s: %v", path, err, loc = loc) {
 		return ""
 	}
 	text, read_err := os.read_entire_file(path, context.temp_allocator)

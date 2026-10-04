@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "core:slice"
@@ -25,7 +26,6 @@ refused by both; check reports one whose type says it is a function (T2028).
 // to_string answers the string ToString makes of a value; a string is its own. primitive asks for
 // ToString(ToPrimitive(value)) instead, what `+` joins, which differs only where the value may be
 // an object.
-@(private)
 to_string :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -67,14 +67,12 @@ to_string :: proc(
 }
 
 // lower_concat is a `+=` to a target not typed string, such as `any` or a union, that meets one.
-@(private)
 lower_concat :: proc(s: ^Func_State, left, right: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	first := piece(s, left, span, primitive = true)
 	second := piece(s, right, span, primitive = true)
 	return emit_join(s, {first, second}, span)
 }
 
-@(private)
 lower_string_join :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 	pieces := make([dynamic]ir.Value_ID, 0, 4, context.temp_allocator)
 	join_pieces(s, id, &pieces)
@@ -83,7 +81,6 @@ lower_string_join :: proc(s: ^Func_State, id: ast.Node_ID) -> ir.Value_ID {
 
 // join_length is `.length` of a join, the sum of the lengths of its pieces, as V8 answers it: no cell
 // for the join, only the text of a number in it. It fails where the join would.
-@(private)
 join_length :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	pieces := make([dynamic]ir.Value_ID, 0, 4, context.temp_allocator)
 	join_pieces(s, id, &pieces)
@@ -107,7 +104,6 @@ join_length :: proc(s: ^Func_State, id: ast.Node_ID, span: source.Span) -> ir.Va
 	return total
 }
 
-@(private)
 is_join :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 	#partial switch v in s.tree.nodes[id].variant {
 	case ast.Binary:
@@ -121,7 +117,6 @@ is_join :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 // join_pieces appends the pieces of a join, left to right, the pieces of a join inside it too. An
 // operand of `+` that is not a join is a piece once both sides were evaluated, which is when `+`
 // asks for ToPrimitive; an empty part of a template adds nothing.
-@(private)
 join_pieces :: proc(s: ^Func_State, id: ast.Node_ID, pieces: ^[dynamic]ir.Value_ID) {
 	span := s.tree.nodes[id].span
 	#partial switch v in s.tree.nodes[id].variant {
@@ -158,7 +153,6 @@ join_pieces :: proc(s: ^Func_State, id: ast.Node_ID, pieces: ^[dynamic]ir.Value_
 
 // join_operand appends the pieces of a join, or the operand's value for the caller to make a piece
 // of.
-@(private)
 join_operand :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,
@@ -178,7 +172,6 @@ join_operand :: proc(
 
 // piece is what String_Join takes of a value: a string or a number as it is, anything else as the
 // string to_string makes of it.
-@(private)
 piece :: proc(
 	s: ^Func_State,
 	value: ir.Value_ID,
@@ -193,7 +186,6 @@ piece :: proc(
 
 // emit_join answers the string of the pieces, or NO_VALUE when one is missing. A `+=` to a variable
 // a loop owns passes the value it held when the loop was entered (owned_entry).
-@(private)
 emit_join :: proc(
 	s: ^Func_State,
 	pieces: []ir.Value_ID,
@@ -234,7 +226,6 @@ emit_join :: proc(
 	return ir.emit(&s.fb, ir.STR, call, span)
 }
 
-@(private)
 Owned_String :: struct {
 	symbol: bind.Symbol_ID,
 	loop:   source.Span,
@@ -246,7 +237,6 @@ Owned_String :: struct {
 // reads, and which each use inside the loop keeps no reference of: the target of a `+=` statement,
 // `.length`, an index, an operand of a comparison. The first append of each pass through the loop
 // still copies, as the value held on entry may be anywhere (str.join).
-@(private)
 own_strings :: proc(s: ^Func_State, loop: ast.Node_ID, span: source.Span) {
 	area := s.tree.nodes[loop].span
 	safe := make(map[ast.Node_ID]bool, context.temp_allocator)
@@ -301,7 +291,6 @@ own_strings :: proc(s: ^Func_State, loop: ast.Node_ID, span: source.Span) {
 }
 
 // may_own checks the variable own_strings found in the loop outside it.
-@(private)
 may_own :: proc(s: ^Func_State, symbol: bind.Symbol_ID, area: source.Span) -> bool {
 	if symbol == bind.NO_SYMBOL || owned_entry(s, symbol, area) != ir.NO_VALUE {
 		return false
@@ -327,7 +316,6 @@ may_own :: proc(s: ^Func_State, symbol: bind.Symbol_ID, area: source.Span) -> bo
 
 // read_in_functions marks the symbols a function of the file reads, which bind leaves unmarked for
 // a module global. Only top-level code asks, so the file is walked once.
-@(private)
 read_in_functions :: proc(s: ^Func_State) -> []bool {
 	if s.read_in_functions != nil {
 		return s.read_in_functions
@@ -344,7 +332,6 @@ read_in_functions :: proc(s: ^Func_State) -> []bool {
 
 // owned_entry is what the variable held when the loop around span that owns it was entered, or
 // NO_VALUE when no loop does.
-@(private)
 owned_entry :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -> ir.Value_ID {
 	for owned in s.owned {
 		if owned.symbol == symbol && within(span, owned.loop) {
@@ -354,18 +341,15 @@ owned_entry :: proc(s: ^Func_State, symbol: bind.Symbol_ID, span: source.Span) -
 	return ir.NO_VALUE
 }
 
-@(private)
 is_name :: proc(s: ^Func_State, id: ast.Node_ID) -> bool {
 	_, is_ident := s.tree.nodes[id].variant.(ast.Ident)
 	return is_ident
 }
 
-@(private)
 within :: proc(inner, outer: source.Span) -> bool {
 	return outer.start <= inner.start && inner.end <= outer.end
 }
 
-@(private)
 string_constant :: proc(s: ^Func_State, text: string, span: source.Span) -> ir.Value_ID {
 	id := ir.intern_string(&s.low.builder, text)
 	return ir.emit(&s.fb, ir.STR, ir.Const_String{text = id}, span)
@@ -373,7 +357,6 @@ string_constant :: proc(s: ^Func_State, text: string, span: source.Span) -> ir.V
 
 // compare_strings orders by the runtime's `<`: `a > b` is `b < a`, and `<=` and `>=` are the
 // negation of the strict order the other way round.
-@(private)
 compare_strings :: proc(
 	s: ^Func_State,
 	op: ir.Compare_Op,
@@ -408,7 +391,6 @@ compare_strings :: proc(
 
 // strings_equal is `===`. A literal of at most one unit on either side is a length and a unit;
 // anything else reaches the runtime only past the identity and length tests.
-@(private)
 strings_equal :: proc(s: ^Func_State, left, right: ir.Value_ID, span: source.Span) -> ir.Value_ID {
 	if units, short := short_literal(s, right); short {
 		return equals_literal(s, left, units, span)
@@ -463,7 +445,6 @@ strings_equal :: proc(s: ^Func_State, left, right: ir.Value_ID, span: source.Spa
 
 // short_literal reads the value, not its type: a literal type may hold another string that came
 // through `any`.
-@(private)
 short_literal :: proc(s: ^Func_State, value: ir.Value_ID) -> (units: []u16, short: bool) {
 	constant, is_constant := s.fb.values[value].variant.(ir.Const_String)
 	if !is_constant {
@@ -473,7 +454,6 @@ short_literal :: proc(s: ^Func_State, value: ir.Value_ID) -> (units: []u16, shor
 	return units, len(units) <= 1
 }
 
-@(private)
 equals_literal :: proc(
 	s: ^Func_State,
 	text: ir.Value_ID,
@@ -518,7 +498,6 @@ equals_literal :: proc(
 
 // string_piece is what a read at a checked index answers: a static cell for a unit below
 // ir.ASCII_LIMIT, the answer of the export for anything else.
-@(private)
 string_piece :: proc(
 	s: ^Func_State,
 	text, checked: ir.Value_ID,
@@ -557,7 +536,6 @@ string_piece :: proc(
 }
 
 // lower_string_of is String(x), which answers the empty string for no argument at all.
-@(private)
 lower_string_of :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir.Value_ID {
 	if len(node.args) == 0 {
 		return string_constant(s, "", span)
@@ -567,7 +545,6 @@ lower_string_of :: proc(s: ^Func_State, node: ast.Call, span: source.Span) -> ir
 
 // lower_string_includes is `indexOf(search, position) !== -1`, which is includes in every corner,
 // an empty search past the end included.
-@(private)
 lower_string_includes :: proc(
 	s: ^Func_State,
 	node: ast.Call,
@@ -603,7 +580,6 @@ lower_string_includes :: proc(
 
 // lower_split makes the array the runtime fills, of the layout of the call's type: a string[] holds
 // its strings tagged where it flows into a wider array type (types.odin).
-@(private)
 lower_split :: proc(
 	s: ^Func_State,
 	id: ast.Node_ID,

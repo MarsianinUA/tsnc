@@ -52,6 +52,7 @@ log :: proc(heap: ^gc.Heap, stream: Stream, args: []abi.Tagged) {
 // zero keeps its sign. Node prints 0 for `${-0}` and -0 for console.log(-0), because a bare value
 // goes through util.inspect and not through String. The rule is the console's, so num.to_string
 // stays the conversion requirements 3.1 describes.
+@(private)
 number_text :: proc(buf: []byte, value: f64) -> string {
 	if value == 0 && math.sign_bit(value) {
 		return string(buf[:copy(buf, "-0")])
@@ -60,6 +61,7 @@ number_text :: proc(buf: []byte, value: f64) -> string {
 }
 
 // write_line backs the Log_String row, which only the hand-built IR programs of the tests call.
+@(private)
 write_line :: proc(w: io.Writer, text: ^abi.String_Cell) -> io.Error {
 	io.write_string16(w, str.units(text)) or_return
 	return io.write_byte(w, '\n')

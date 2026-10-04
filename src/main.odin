@@ -2,45 +2,64 @@ package main
 
 import "core:flags"
 import "core:fmt"
-import "core:log"
 import "core:os"
 
+import "codegen"
 import "driver"
+import "link"
 import "target"
 
 // Each job is a thread, and a count past the cores of any machine is a typo.
 MAX_JOBS :: 256
 
+// Command values are lowercase because core:flags matches them against the command line by exact
+// name: `tsnc build`. codegen.Optimization, link.Sanitizer and target.Target follow the same rule
+// for `-o:`, `-sanitize:` and `-target:`.
+Command :: enum {
+	build,
+	run,
+	check,
+}
+
+Flags :: struct {
+	command:      Command `args:"pos=0,required" usage:"build, run or check"`,
+	input:        string `args:"pos=1,required" usage:"entry .ts file"`,
+	output:       string `args:"name=out" usage:"output path"`,
+	optimization: codegen.Optimization `args:"name=o" usage:"optimization level (default: speed)"`,
+	emit_llvm:    bool `usage:"write textual LLVM IR instead of an executable"`,
+	emit_ir:      bool `usage:"write the tsnc IR dump instead of an executable"`,
+	target:       target.Target `usage:"target platform, for example linux_amd64 (default: host)"`,
+	jobs:         int `args:"name=j" usage:"worker threads (default: number of cores)"`,
+	sanitize:     link.Sanitizer `usage:"link the runtime built with -sanitize:address (default: none)"`,
+}
+
 main :: proc() {
-	options := driver.Options {
+	given := Flags {
 		optimization = .speed,
 		target       = target.HOST,
 		jobs         = clamp(os.get_processor_core_count(), 1, MAX_JOBS),
 	}
-	flags.parse_or_exit(&options, command_line(), .Odin)
-
-	// codegen explains an LLVM failure through context.logger, and the default logger drops it. A
-	// file logger on stderr rather than a console logger: the console logger sends anything below
-	// Error to stdout, and stdout belongs to the program under `tsnc run`. It is never destroyed,
-	// because destroy_file_logger closes the handle it was given and that handle is stderr. The
-	// empty options leave out the level banner and the timestamp, so a message arrives as the
-	// sentence codegen already wrote.
-	context.logger = log.create_file_logger(os.stderr, opt = log.Options{})
+	flags.parse_or_exit(&given, command_line(), .Odin)
 
 	// core:flags accepts every Target value, and a declared target may have no SPECS row yet.
-	if !target.supported(options.target) {
-		fmt.eprintfln("target %v is not supported yet", options.target)
+	if !target.supported(given.target) {
+		fmt.eprintfln("target %v is not supported yet", given.target)
 		os.exit(1)
 	}
-	if options.jobs < 1 || options.jobs > MAX_JOBS {
-		fmt.eprintfln("-j:%d is not a thread count\n  hint: pass 1 to %d", options.jobs, MAX_JOBS)
+	if given.jobs < 1 || given.jobs > MAX_JOBS {
+		fmt.eprintfln("-j:%d is not a thread count\n  hint: pass 1 to %d", given.jobs, MAX_JOBS)
+		os.exit(1)
+	}
+	options, refusal := options_of(given)
+	if refusal != "" {
+		fmt.eprintfln("tsnc: %s", refusal)
 		os.exit(1)
 	}
 
 	// One file per command: check.odin, build.odin and run.odin, with report.odin holding what all
 	// three print. No default case, so a command added later fails the build here until it is
 	// handled.
-	switch options.command {
+	switch given.command {
 	case .check:
 		os.exit(check(options))
 	case .build:
@@ -49,6 +68,37 @@ main :: proc() {
 		os.exit(run(options))
 	}
 }
+
+// options_of refuses a command line that contradicts itself, with a message and a hint the way
+// error_text words a failure of driver.
+@(private = "file")
+options_of :: proc(given: Flags) -> (options: driver.Options, refusal: string) {
+	options = {
+		input        = given.input,
+		output       = given.output,
+		optimization = given.optimization,
+		target       = given.target,
+		jobs         = given.jobs,
+		sanitize     = given.sanitize,
+	}
+	switch {
+	case given.emit_llvm && given.emit_ir:
+		return {}, "-emit-llvm and -emit-ir name two different files\n  hint: pass one of them"
+	case given.emit_llvm:
+		options.artifact = .LLVM_IR
+	case given.emit_ir:
+		options.artifact = .IR_Dump
+	case:
+		options.artifact = .Executable
+	}
+	if given.command == .run && options.artifact != .Executable {
+		return {}, NOTHING_TO_RUN
+	}
+	return options, ""
+}
+
+@(private = "file")
+NOTHING_TO_RUN :: "tsnc run builds a program and runs it, while -emit-llvm and -emit-ir write a file\n  hint: `tsnc build` writes those"
 
 // command_line is the arguments tsnc was started with, in UTF-8. os.args is the narrow argv of the C
 // runtime, which Windows fills in the ANSI code page, so a path with Cyrillic letters in it named no

@@ -202,8 +202,11 @@ LIB_STRATEGIES := []Lib_Entry {
 
 // The two values a program can name without writing digits. ECMAScript leaves the payload of NaN
 // free; this is the quiet NaN every engine produces.
+@(private)
 NAN :: f64(0h7FF8_0000_0000_0000)
+@(private)
 INFINITY :: f64(0h7FF0_0000_0000_0000)
+@(private)
 NEG_INFINITY :: f64(0hFFF0_0000_0000_0000)
 
 lib_strategy :: proc(owner: Owner, root, member: string) -> (Strategy, bool) {
@@ -215,8 +218,33 @@ lib_strategy :: proc(owner: Owner, root, member: string) -> (Strategy, bool) {
 	return Later{""}, false
 }
 
+// array_write says what a call of an Array method stores into its array: nothing, nothing new (pop,
+// sort), or an element (push). A strategy not listed counts as storing an element, since a store
+// missed here crashes lower on the first view of the array (classes.odin).
+@(private)
+array_write :: proc(strategy: Strategy) -> (writes: bool, element: bool) {
+	#partial switch s in strategy {
+	case Builtin:
+		#partial switch s {
+		case .Array_Push:
+			return true, true
+		case .Array_Pop, .Array_Sort:
+			return true, false
+		case .Array_Join, .Array_Map, .Array_Filter, .Array_For_Each, .Array_Reduce:
+			return false, false
+		}
+	case Method:
+		#partial switch s.export {
+		case .Array_Index_Of, .Array_Includes, .Array_Slice:
+			return false, false
+		}
+	}
+	return true, true
+}
+
 // instance_owner is the interface whose methods a value of this IR type has. Only a primitive and
 // an array have one, which is what makes the table's Instance half small.
+@(private)
 instance_owner :: proc(low: ^Lowering, type: ir.Type) -> (string, bool) {
 	#partial switch type.kind {
 	case .F64:
@@ -233,6 +261,7 @@ instance_owner :: proc(low: ^Lowering, type: ir.Type) -> (string, bool) {
 
 // construct_of names a strategy for the Not_Lowered message: what the row itself says, or the
 // member, for a strategy that turned out not to fit where it was used.
+@(private)
 construct_of :: proc(strategy: Strategy, name: string) -> string {
 	if later, is_later := strategy.(Later); is_later {
 		return later.construct

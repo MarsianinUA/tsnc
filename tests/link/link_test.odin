@@ -162,7 +162,7 @@ build_and_run :: proc(
 ) {
 	object := fmt.tprintf("dist/%s.obj", name)
 	emit_err := codegen.emit(output, output.units[0], target.HOST, .speed, .Object, object)
-	if !testing.expect_value(t, emit_err, codegen.Error.None, loc = loc) {
+	if !testing.expect_value(t, emit_err.kind, codegen.Error_Kind.None, loc = loc) {
 		return
 	}
 

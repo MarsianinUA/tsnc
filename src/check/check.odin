@@ -100,9 +100,10 @@ Widening :: struct {
 	target: Type_ID,
 }
 
-// Write is a store into a cell through the type `through`: `o.f = v`, `o.f++`, `a[i] = v`, push,
-// pop and sort, and an `as` that narrows, which needs the layouts joined as a store does. slot is
-// the declared type of what is stored, VOID where nothing new is (pop, sort).
+// Write is a store into a cell through the type `through`: `o.f = v`, `o.f++`, `a[i] = v`, and an
+// `as` that narrows, which needs the layouts joined as a store does. slot is the declared type of
+// what is stored. The methods of the lib that store into an array are left to lower, whose table
+// says what each one compiles to.
 Write :: struct {
 	through: Type_ID,
 	slot:    Type_ID,
@@ -420,6 +421,22 @@ fits :: proc(c: ^Checker, source, target: Type_ID, functions := true) -> bool {
 	return true
 }
 
+// flow measures a value that moves into a place of type target, where fits only answers a question:
+// a mismatch is reported, and so is an `any` or an `unknown` that would reach a function
+// (any_to_function).
+@(private)
+flow :: proc(c: ^Checker, value, target: Type_ID, span: source.Span, functions := true) -> bool {
+	if !fits(c, value, target, functions) {
+		report_assign_failure(c, span, value, target)
+		return false
+	}
+	if found := any_to_function(c.table.types[:], value, target); found != ERROR {
+		report(c, .Any_Operation, span, "become a function", text_of(c, found))
+		return false
+	}
+	return true
+}
+
 // note_write records a store into a field or an element; an assignment to a variable stores into no
 // cell. The list repeats freely, since freeze drops the repeats once.
 @(private)
@@ -432,30 +449,6 @@ note_write :: proc(c: ^Checker, target: ast.Node_ID, slot: Type_ID) {
 		append(&c.writes, Write{through = c.at.node_types[v.object], slot = slot})
 	case ast.Index:
 		append(&c.writes, Write{through = c.at.node_types[v.object], slot = slot})
-	}
-}
-
-// note_array_write records a call of a method of the lib that may change its array: no write for
-// one that only reads, a write of nothing new for pop and sort, of an element for any other, push
-// among them. So a method added to the lib counts as a write until it is listed as a reader, since
-// a write check missed crashes lower on the first view of the array.
-@(private)
-note_array_write :: proc(c: ^Checker, callee: ast.Node_ID) {
-	member, is_member := c.at.tree.nodes[callee].variant.(ast.Member)
-	if !is_member || c.at.node_types == nil {
-		return
-	}
-	through := c.at.node_types[member.object]
-	array, is_array := c.table.types[through].(Array)
-	if !is_array {
-		return
-	}
-	switch member.name.text {
-	case "indexOf", "includes", "slice", "join", "map", "filter", "forEach", "reduce":
-	case "pop", "sort":
-		append(&c.writes, Write{through = through, slot = VOID})
-	case:
-		append(&c.writes, Write{through = through, slot = array.element})
 	}
 }
 

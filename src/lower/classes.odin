@@ -1,9 +1,11 @@
+#+private
 package lower
 
 import "core:slice"
 import "core:strings"
 
 import "../abi"
+import "../ast"
 import "../check"
 import "../ir"
 
@@ -56,7 +58,6 @@ Classes :: struct($V: typeid) {
 	joined: bool, // join_classes ran, so what class_value answers is final
 }
 
-@(private)
 make_classes :: proc($V: typeid) -> Classes(V) {
 	return {
 		nodes = make(map[string]int, context.temp_allocator),
@@ -67,7 +68,6 @@ make_classes :: proc($V: typeid) -> Classes(V) {
 }
 
 // class_node answers the node of a key, making one that holds value for a key seen first.
-@(private)
 class_node :: proc(classes: ^Classes($V), key: string, value: V) -> int {
 	if node, known := classes.nodes[key]; known {
 		return node
@@ -80,13 +80,11 @@ class_node :: proc(classes: ^Classes($V), key: string, value: V) -> int {
 	return node
 }
 
-@(private)
 class_union :: proc(classes: ^Classes($V), a, b: int) {
 	classes.links[class_root(classes, a)] = class_root(classes, b)
 }
 
 // class_root halves the path as it walks, so a long chain of joins stays cheap to climb.
-@(private)
 class_root :: proc(classes: ^Classes($V), node: int) -> int {
 	node := node
 	for classes.links[node] != node {
@@ -96,7 +94,6 @@ class_root :: proc(classes: ^Classes($V), node: int) -> int {
 	return node
 }
 
-@(private)
 join_classes :: proc(classes: ^Classes($V), join: proc(a, b: V) -> V) {
 	for node in 0 ..< len(classes.links) {
 		root := class_root(classes, node)
@@ -108,7 +105,6 @@ join_classes :: proc(classes: ^Classes($V), join: proc(a, b: V) -> V) {
 }
 
 // class_value answers false for a key that takes part in no class.
-@(private)
 class_value :: proc(classes: ^Classes($V), key: string) -> (value: V, found: bool) {
 	node := classes.nodes[key] or_return
 	return classes.values[class_root(classes, node)], true
@@ -118,9 +114,8 @@ class_value :: proc(classes: ^Classes($V), key: string) -> (value: V, found: boo
 // the signatures of every pair of function types a flow recorded. The key of an array names the
 // class fields of an object element, and the key of a signature the full IR types, layouts
 // included, so each pass comes after the classes it reads are final.
-@(private)
 build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
-	written := written_types(results)
+	written := written_types(low, results)
 	objects := object_flows(low, results)
 	for result, i in results {
 		for id in written[i] {
@@ -162,7 +157,6 @@ build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
 }
 
 // union_widenings joins the two nodes of every widening that names a type of the classes' kind.
-@(private)
 union_widenings :: proc(
 	low: ^Lowering,
 	results: []check.Check_Result,
@@ -182,9 +176,9 @@ union_widenings :: proc(
 
 // written_types answers, for each check result, the types a write stores into: the one written
 // through, and every object and array type the stored value may hold, however deep, since `o.p = x`
-// through `{p: X}` puts an X where a `{p: Y}` that flowed in reads a Y unchecked.
-@(private)
-written_types :: proc(results: []check.Check_Result) -> [][]check.Type_ID {
+// through `{p: X}` puts an X where a `{p: Y}` that flowed in reads a Y unchecked. check records the
+// stores the syntax shows; a call of an Array method that stores is found here, by the lib table.
+written_types :: proc(low: ^Lowering, results: []check.Check_Result) -> [][]check.Type_ID {
 	written := make([][]check.Type_ID, len(results), context.temp_allocator)
 	for result, i in results {
 		found := make([dynamic]check.Type_ID, context.temp_allocator)
@@ -193,8 +187,24 @@ written_types :: proc(results: []check.Check_Result) -> [][]check.Type_ID {
 			for member in members_of(result.types, write.through) {
 				append(&found, member)
 			}
-			if write.slot != check.VOID {
-				reach_stored(result.types, write.slot, &found, &seen)
+			reach_stored(result.types, write.slot, &found, &seen)
+		}
+		for typed in result.files {
+			nodes := low.prog.trees[typed.file].nodes
+			for node in nodes {
+				call := node.variant.(ast.Call) or_continue
+				member := nodes[call.callee].variant.(ast.Member) or_continue
+				through := typed.node_types[member.object]
+				array := result.types[through].(check.Array) or_continue
+				strategy, _ := lib_strategy(.Instance, "Array", member.name.text)
+				writes, element := array_write(strategy)
+				if !writes {
+					continue
+				}
+				append(&found, through)
+				if element {
+					reach_stored(result.types, array.element, &found, &seen)
+				}
 			}
 		}
 		written[i] = found[:]
@@ -202,7 +212,6 @@ written_types :: proc(results: []check.Check_Result) -> [][]check.Type_ID {
 	return written
 }
 
-@(private)
 reach_stored :: proc(
 	types: []check.Type,
 	id: check.Type_ID,
@@ -231,14 +240,12 @@ reach_stored :: proc(
 
 // Flows is the graph of the widenings between the nodes of one kind of class, with what the own
 // type of each node declares its slots hold. An exposed node is one a write may reach a cell of.
-@(private)
 Flows :: struct($H: typeid) {
 	into:    map[int][dynamic]int, // by node, the other nodes that flow into it, each once
 	held:    map[int]H,
 	exposed: map[int]bool,
 }
 
-@(private)
 object_flows :: proc(low: ^Lowering, results: []check.Check_Result) -> Flows([]ir.Type) {
 	flows := make_flows([]ir.Type)
 	for result in results {
@@ -253,7 +260,6 @@ object_flows :: proc(low: ^Lowering, results: []check.Check_Result) -> Flows([]i
 	return flows
 }
 
-@(private)
 array_flows :: proc(low: ^Lowering, results: []check.Check_Result) -> Flows(ir.Type) {
 	flows := make_flows(ir.Type)
 	for result in results {
@@ -268,7 +274,6 @@ array_flows :: proc(low: ^Lowering, results: []check.Check_Result) -> Flows(ir.T
 	return flows
 }
 
-@(private)
 make_flows :: proc($H: typeid) -> Flows(H) {
 	return {
 		into = make(map[int][dynamic]int, context.temp_allocator),
@@ -277,7 +282,6 @@ make_flows :: proc($H: typeid) -> Flows(H) {
 	}
 }
 
-@(private)
 add_flow :: proc(flows: ^Flows($H), source, target: int) {
 	if source == target {
 		return
@@ -291,7 +295,6 @@ add_flow :: proc(flows: ^Flows($H), source, target: int) {
 
 // expose marks a node and every node that flows into it, through any number of flows: a cell of
 // any of them may sit in a place of the node's type.
-@(private)
 expose :: proc(flows: ^Flows($H), node: int) {
 	if flows.exposed[node] {
 		return
@@ -306,7 +309,6 @@ expose :: proc(flows: ^Flows($H), node: int) {
 
 // join_exposed joins the two ends of every flow into an exposed node, as every flow was joined
 // before writes were told apart from reads. Called again after more are exposed, it only adds.
-@(private)
 join_exposed :: proc(classes: ^Classes($V), flows: ^Flows($H), join: proc(a, b: V) -> V) {
 	for target, sources in flows.into {
 		if flows.exposed[target] {
@@ -320,7 +322,6 @@ join_exposed :: proc(classes: ^Classes($V), flows: ^Flows($H), join: proc(a, b: 
 
 // viewed answers the nodes other nodes flow into and that no write reaches, each with itself and
 // the nodes that flow into it, through any number of flows.
-@(private)
 viewed :: proc(flows: ^Flows($H)) -> map[int][dynamic]int {
 	out := make(map[int][dynamic]int, context.temp_allocator)
 	for node in flows.into {
@@ -355,7 +356,6 @@ Object_View :: struct {
 // object_views gives each object key only read through, which others flow into, the layouts its
 // places hold, its own first. Two that differ only in what a reference slot holds, which a test
 // of the header cannot tell apart, expose the key instead, and false joins the classes again.
-@(private)
 object_views :: proc(low: ^Lowering, flows: ^Flows([]ir.Type)) -> (settled: bool) {
 	clear(&low.object_views)
 	settled = true
@@ -385,7 +385,6 @@ object_views :: proc(low: ^Lowering, flows: ^Flows([]ir.Type)) -> (settled: bool
 
 // add_object_view answers false where the views already hold the layout with another kind of
 // reference in one of its slots.
-@(private)
 add_object_view :: proc(views: ^[dynamic]Object_View, view: Object_View) -> bool {
 	for one in views {
 		if !slice.equal(one.slots, view.slots) {
@@ -412,7 +411,6 @@ Array_View :: struct {
 }
 
 // array_views is object_views for arrays.
-@(private)
 array_views :: proc(low: ^Lowering, flows: ^Flows(ir.Type)) -> (settled: bool) {
 	clear(&low.array_views)
 	settled = true
@@ -439,7 +437,6 @@ array_views :: proc(low: ^Lowering, flows: ^Flows(ir.Type)) -> (settled: bool) {
 	return settled
 }
 
-@(private)
 add_array_view :: proc(views: ^[dynamic]Array_View, view: Array_View) -> bool {
 	for one in views {
 		if one.element != view.element {
@@ -454,7 +451,6 @@ add_array_view :: proc(views: ^[dynamic]Array_View, view: Array_View) -> bool {
 
 // intern_signature_layouts interns the layouts of the signature pass in key order. That pass meets
 // them in the order of the results and their Type_IDs, which differs between -j:1 and -j:8.
-@(private)
 intern_signature_layouts :: proc(low: ^Lowering, results: []check.Check_Result) {
 	wanted := Signature_Layouts {
 		objects = make([dynamic]Object_Shape, context.temp_allocator),
@@ -477,20 +473,17 @@ intern_signature_layouts :: proc(low: ^Lowering, results: []check.Check_Result) 
 	}
 }
 
-@(private)
 Signature_Layouts :: struct {
 	arrays:  bit_set[abi.Slot_Kind],
 	objects: [dynamic]Object_Shape,
 }
 
-@(private)
 Object_Shape :: struct {
 	key:   string,
 	slots: []ir.Slot,
 }
 
 // collect_signature and collect_layout mirror own_signature and map_type, early exits included.
-@(private)
 collect_signature :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -509,7 +502,6 @@ collect_signature :: proc(
 	collect_layout(low, types, function.result, wanted)
 }
 
-@(private)
 collect_layout :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -537,7 +529,6 @@ collect_layout :: proc(
 
 // object_node answers the node of an object type's key, and notes what its fields hold. A type with
 // no representation takes part in nothing: it is reported where it is used.
-@(private)
 object_node :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -556,7 +547,6 @@ object_node :: proc(
 
 // join_slots joins each field. Every member of a class has the same fields, since check widens only
 // between two types of one field set.
-@(private)
 join_slots :: proc(a, b: []ir.Slot) -> []ir.Slot {
 	joined := make([]ir.Slot, len(a), context.temp_allocator)
 	for slot, i in a {
@@ -569,7 +559,6 @@ join_slots :: proc(a, b: []ir.Slot) -> []ir.Slot {
 // join_slot_kind keeps a kind two members agree on, a reference that may hold null where the other
 // member holds a present one, a reference of several layouts where the other holds one, and takes
 // Tagged where they differ otherwise.
-@(private)
 join_slot_kind :: proc(a, b: abi.Slot_Kind) -> abi.Slot_Kind {
 	x, x_reference := slot_reference(a)
 	y, y_reference := slot_reference(b)
@@ -589,7 +578,6 @@ join_slot_kind :: proc(a, b: abi.Slot_Kind) -> abi.Slot_Kind {
 }
 
 // slot_reference is the shallow type of a reference slot: Ref or Any_Ref, with its nullish.
-@(private)
 slot_reference :: proc(kind: abi.Slot_Kind) -> (type: ir.Type, ok: bool) {
 	switch kind {
 	case .Number, .Boolean, .Tagged:
@@ -611,7 +599,6 @@ slot_reference :: proc(kind: abi.Slot_Kind) -> (type: ir.Type, ok: bool) {
 }
 
 // array_slot is the element slot of the array's class, or its own where it takes part in no flow.
-@(private)
 array_slot :: proc(low: ^Lowering, types: []check.Type, array: check.Array) -> abi.Slot_Kind {
 	if joined, found := class_value(&low.arrays, element_key(low, types, array.element)); found {
 		return joined
@@ -620,7 +607,6 @@ array_slot :: proc(low: ^Lowering, types: []check.Type, array: check.Array) -> a
 	return own
 }
 
-@(private)
 array_node :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -637,14 +623,12 @@ array_node :: proc(
 	return node, true
 }
 
-@(private)
 element_key :: proc(low: ^Lowering, types: []check.Type, element: check.Type_ID) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	write_element_key(&b, low, types, element)
 	return strings.to_string(b)
 }
 
-@(private)
 write_element_key :: proc(
 	b: ^strings.Builder,
 	low: ^Lowering,
@@ -672,7 +656,6 @@ write_element_key :: proc(
 }
 
 // slots_key quotes each name, so no name can spell the separators.
-@(private)
 slots_key :: proc(slots: []ir.Slot) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	for slot in slots {
@@ -736,7 +719,6 @@ signature_of :: proc(
 	return memo.signature, memo.ok
 }
 
-@(private)
 class_signature :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -757,7 +739,6 @@ signature_equal :: proc(a, b: Signature) -> bool {
 	return a.result == b.result && slice.equal(a.params, b.params)
 }
 
-@(private)
 signature_node :: proc(
 	low: ^Lowering,
 	types: []check.Type,
@@ -775,7 +756,6 @@ signature_node :: proc(
 // hold null where the other member takes or gives a present one. A result of void joined with
 // another is tagged like any two results that differ otherwise: a call through the class may print
 // what it gets back, which is undefined from a member that returns nothing (handed_on).
-@(private)
 join_signatures :: proc(a, b: Signature) -> Signature {
 	join :: proc(x, y: ir.Type) -> ir.Type {
 		switch {
@@ -800,7 +780,6 @@ join_signatures :: proc(a, b: Signature) -> Signature {
 	return {params = params, result = join(a.result, b.result)}
 }
 
-@(private)
 signature_key :: proc(signature: Signature) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	for param in signature.params {
@@ -812,7 +791,6 @@ signature_key :: proc(signature: Signature) -> string {
 	return strings.to_string(b)
 }
 
-@(private)
 write_type_key :: proc(b: ^strings.Builder, type: ir.Type) {
 	strings.write_int(b, int(type.kind))
 	strings.write_byte(b, ':')

@@ -1,3 +1,4 @@
+#+private
 package lower
 
 import "../ast"
@@ -48,7 +49,6 @@ File_Closures :: struct {
 }
 
 // analyze_closures reads the file's check facts, so it runs on a file that runs.
-@(private)
 analyze_closures :: proc(low: ^Lowering, file: source.File_ID) -> File_Closures {
 	tree := &low.prog.trees[file]
 	bound := &low.prog.bound[file]
@@ -128,7 +128,6 @@ analyze_closures :: proc(low: ^Lowering, file: source.File_ID) -> File_Closures 
 // find_uses marks the inlined arrows, names the arrows Node names, and finds the nested
 // declarations read as a value: named anywhere but where a call names what it calls, in front of
 // an inlined method (which calls it directly), or under `typeof`.
-@(private)
 find_uses :: proc(low: ^Lowering, file: source.File_ID, out: ^File_Closures) {
 	tree := &low.prog.trees[file]
 	bound := &low.prog.bound[file]
@@ -182,7 +181,6 @@ find_uses :: proc(low: ^Lowering, file: source.File_ID, out: ^File_Closures) {
 
 // is_inlined_call is the condition lower_strategy reaches map, filter, forEach and reduce by: a
 // method of the lib named on an array, whose row is one of the four loops lower builds.
-@(private)
 is_inlined_call :: proc(low: ^Lowering, file: source.File_ID, call: ast.Call) -> bool {
 	tree := &low.prog.trees[file]
 	typed := low.facts[file].typed
@@ -208,7 +206,6 @@ is_inlined_call :: proc(low: ^Lowering, file: source.File_ID, call: ast.Call) ->
 
 // name_arrow gives an arrow the name ECMAScript's NamedEvaluation gives it: that of the binding,
 // the variable or the property it is directly the value of, `as` and `!` apart.
-@(private)
 name_arrow :: proc(tree: ^ast.File_AST, out: ^File_Closures, value: ast.Node_ID, name: string) {
 	value := value
 	for value != ast.NO_NODE {
@@ -226,14 +223,12 @@ name_arrow :: proc(tree: ^ast.File_AST, out: ^File_Closures, value: ast.Node_ID,
 	}
 }
 
-@(private)
 captures_of :: proc(bound: ^bind.Bound_File, function: ast.Node_ID) -> []bind.Symbol_ID {
 	return bound.scopes[bound.node_scopes[function]].captures
 }
 
 // called_directly says whether a capture is a nested declaration every use calls by name: then it
 // takes no slot of an environment.
-@(private)
 called_directly :: proc(
 	bound: ^bind.Bound_File,
 	out: ^File_Closures,
@@ -246,7 +241,6 @@ called_directly :: proc(
 // needs_box says whether a copy of the variable, taken when the closure is made, could differ from
 // the variable when the closure reads it. A parameter and a for...of variable have their value
 // before any closure inside them is made, so only an assignment can change them.
-@(private)
 needs_box :: proc(
 	tree: ^ast.File_AST,
 	bound: ^bind.Bound_File,
@@ -274,7 +268,6 @@ needs_box :: proc(
 // in a function (bind's node_deferred) made before the declaration ends, which a call may run at
 // any time after, or in a later case of the switch that declares it (case_skipped). One that runs
 // where it stands check reports instead (Used_Before_Declaration).
-@(private)
 early_use :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_ID) -> bool {
 	if case_skipped(tree, bound, id) {
 		return true
@@ -297,7 +290,6 @@ early_use :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_ID)
 // declaration, which Node answers with a ReferenceError at the use:
 //
 //	switch (n) { case 0: let y = 1; case 1: console.log(y); } // throws for n === 1
-@(private)
 case_skipped :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_ID) -> bool {
 	symbol := bound.node_symbols[id]
 	if symbol == bind.NO_SYMBOL {
@@ -328,7 +320,6 @@ case_skipped :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, id: ast.Node_
 //
 // That class may answer the calls another void function hands on, so it runs to a fixpoint. It
 // runs before signature_of answers anything, whose memo would keep the old result.
-@(private)
 widen_void_results :: proc(low: ^Lowering, order: []source.File_ID) {
 	for changed := true; changed; {
 		changed = false
@@ -358,7 +349,6 @@ widen_void_results :: proc(low: ^Lowering, order: []source.File_ID) {
 // hands_on_value says whether a function typed void may give back a value all the same: an `any`,
 // or what a call answered through a class whose result is not VOID. A ternary of two such calls
 // joins no value (lower_effect) and does not count.
-@(private)
 hands_on_value :: proc(low: ^Lowering, file: source.File_ID, function: ast.Node_ID) -> bool {
 	tree := &low.prog.trees[file]
 	typed := low.facts[file].typed
@@ -381,7 +371,6 @@ hands_on_value :: proc(low: ^Lowering, file: source.File_ID, function: ast.Node_
 
 // handed_back lists what a function gives back: its expression body, or the value of every
 // `return` in its body outside the functions nested there.
-@(private)
 handed_back :: proc(tree: ^ast.File_AST, function: ast.Node_ID) -> []ast.Node_ID {
 	body := ast.NO_NODE
 	#partial switch v in tree.nodes[function].variant {
@@ -418,7 +407,6 @@ handed_back :: proc(tree: ^ast.File_AST, function: ast.Node_ID) -> []ast.Node_ID
 
 // creation_point is where a closure is made: an arrow where it stands, a declaration where the
 // block that holds it opens, since it is hoisted.
-@(private)
 creation_point :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, closure: ast.Node_ID) -> i32 {
 	if _, is_arrow := tree.nodes[closure].variant.(ast.Arrow); is_arrow {
 		return tree.nodes[closure].span.start
@@ -430,7 +418,6 @@ creation_point :: proc(tree: ^ast.File_AST, bound: ^bind.Bound_File, closure: as
 // make_closure makes a new closure of a function this file declares: its environment first, a
 // copy of each value it captures or the box that value lives in, then the cell. A capture with no
 // value was refused where it is declared, and the closure is poison without another word.
-@(private)
 make_closure :: proc(s: ^Func_State, node: ast.Node_ID, span: source.Span) -> ir.Value_ID {
 	func, declared := s.low.funcs[{s.file, node}]
 	if !declared {
@@ -457,7 +444,6 @@ make_closure :: proc(s: ^Func_State, node: ast.Node_ID, span: source.Span) -> ir
 // closure_func is the function a closure of node runs: func itself, or, where func keeps its own
 // signature and its class has another (declare_functions), the adapter that gives it the class's
 // (class_adapter).
-@(private)
 closure_func :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
@@ -481,7 +467,6 @@ closure_func :: proc(
 // describe_closure records what the console prints of the function as a value: the name Node gives
 // it, how many parameters it declares, and whether it has a prototype, which a declaration has and
 // an arrow does not.
-@(private)
 describe_closure :: proc(
 	low: ^Lowering,
 	file: source.File_ID,
