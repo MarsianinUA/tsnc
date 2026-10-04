@@ -58,6 +58,8 @@ The compiler calls LLVM 20 through its C API (package `src/llvm`).
 
 On Linux and macOS the bindings link `LLVM-20` by name, so a machine without LLVM 20 fails at link time instead of picking up another version. Linking programs there goes through the system C compiler (`cc`), which Odin needs anyway.
 
+Moving to another LLVM version means recomputing `READS_MEMORY` in `src/codegen/module.odin`: it packs a memory effect the way LLVM 20 does, and LLVM 21 adds a location to that encoding. The codegen test `each_effect_gives_its_attributes` fails first when the meaning changes.
+
 ## Linking
 
 On Windows tsnc runs `bin/lld-link.exe` from the Odin that built it and needs what Odin needs: Visual Studio or Build Tools with the C++ x64 tools, and the Windows 10 or 11 SDK. It finds them the way Odin does, so the Developer Command Prompt is not required: the SDK through the registry, Visual Studio through `vswhere.exe`. On Linux and macOS it runs `cc`.

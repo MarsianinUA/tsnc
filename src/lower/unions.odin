@@ -886,7 +886,8 @@ check_members :: proc(
 }
 
 // dispatch_layouts ends the current block with a branch on the object a tagged value holds: to
-// hits[i] where it has layouts[i], and to failed where it is no object or has none of them.
+// hits[i] where it has layouts[i], and to failed where it is no object or has none of them. It
+// answers the cell it tested, which the hits may read the length of where every layout is an array.
 @(private)
 dispatch_layouts :: proc(
 	s: ^Func_State,
@@ -895,8 +896,10 @@ dispatch_layouts :: proc(
 	hits: []ir.Block_ID,
 	failed: ir.Block_ID,
 	span: source.Span,
+) -> (
+	cell: ir.Value_ID,
 ) {
-	cell := present(s, value, span)
+	cell = present(s, value, span)
 	if value_type(s, value) == ir.TAGGED {
 		is_object := tag_test(s, value, {.Object}, span)
 		chain := ir.add_block(&s.fb)
@@ -907,8 +910,7 @@ dispatch_layouts :: proc(
 			span,
 		)
 		ir.use_block(&s.fb, chain)
-		// Any of the layouts types the reference well enough for a test that reads only its header.
-		cell = ir.emit(&s.fb, ir.ref(layouts[0]), ir.Unbox{value = value}, span)
+		cell = ir.emit(&s.fb, ir.ANY_REF, ir.Unbox{value = value}, span)
 	}
 	for layout, i in layouts {
 		next := failed
@@ -926,6 +928,7 @@ dispatch_layouts :: proc(
 			ir.use_block(&s.fb, next)
 		}
 	}
+	return
 }
 
 // any_to_function answers ANY or UNKNOWN where a flow of given into wanted brings a value of that
@@ -1350,9 +1353,8 @@ union_length :: proc(
 		array_block := ir.add_block(&s.fb)
 		hits := make([]ir.Block_ID, len(layouts), context.temp_allocator)
 		slice.fill(hits, array_block)
-		dispatch_layouts(s, value, layouts[:], hits, failed, span)
+		array := dispatch_layouts(s, value, layouts[:], hits, failed, span)
 		ir.use_block(&s.fb, array_block)
-		array := as_layout(s, value, layouts[0], span)
 		append(&lengths, ir.emit(&s.fb, ir.F64, ir.Length{value = array}, span))
 		append(&edges, here(s))
 		ir.emit(&s.fb, ir.VOID, ir.Jump{target = join}, span)

@@ -435,7 +435,10 @@ note_write :: proc(c: ^Checker, target: ast.Node_ID, slot: Type_ID) {
 	}
 }
 
-// note_array_write records push, pop and sort, the methods of the lib that change their array.
+// note_array_write records a call of a method of the lib that may change its array: no write for
+// one that only reads, a write of nothing new for pop and sort, of an element for any other, push
+// among them. So a method added to the lib counts as a write until it is listed as a reader, since
+// a write check missed crashes lower on the first view of the array.
 @(private)
 note_array_write :: proc(c: ^Checker, callee: ast.Node_ID) {
 	member, is_member := c.at.tree.nodes[callee].variant.(ast.Member)
@@ -448,10 +451,11 @@ note_array_write :: proc(c: ^Checker, callee: ast.Node_ID) {
 		return
 	}
 	switch member.name.text {
-	case "push":
-		append(&c.writes, Write{through = through, slot = array.element})
+	case "indexOf", "includes", "slice", "join", "map", "filter", "forEach", "reduce":
 	case "pop", "sort":
 		append(&c.writes, Write{through = through, slot = VOID})
+	case:
+		append(&c.writes, Write{through = through, slot = array.element})
 	}
 }
 

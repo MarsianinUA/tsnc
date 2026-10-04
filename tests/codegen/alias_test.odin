@@ -48,9 +48,10 @@ run({ x: 1, y: 2, next: null, label: 3 }, "abc", (n) => n + 1);
 console.log(area({ kind: "circle", r: 2 }), total);
 `
 
-// Each access carries the tag of its kind of place; two fields of one layout get two tags, and a
-// Tagged slot gets none, since the collector reads its tag word. The call of an Allocates export
-// carries the collector's tag; that of an Any export carries none.
+// Each access carries the tag of its kind of place; two fields of one layout get two tags, a
+// reference field's is under the collector's, and a Tagged slot gets none, since the collector
+// reads its tag word. The call of an Allocates export carries the collector's tag; that of an Any
+// export carries none.
 @(test)
 each_kind_of_place_has_its_alias_tag :: proc(t: ^testing.T) {
 	output := compile_text(t, ALIAS_PROGRAM)
@@ -89,12 +90,29 @@ each_kind_of_place_has_its_alias_tag :: proc(t: ^testing.T) {
 	}
 
 	fields := make(map[string]bool, context.temp_allocator)
+	references := 0
 	for access in accesses {
-		if strings.has_prefix(access.place, "field ") && strings.contains(access.line, "double") {
+		if !strings.has_prefix(access.place, "field ") {
+			continue
+		}
+		if strings.contains(access.line, "double") {
 			fields[access.place] = true
 		}
+		reference :=
+			strings.contains(access.line, "load ptr") || strings.contains(access.line, "store ptr")
+		references += int(reference)
+		parent := "collector" if reference else "tsnc"
+		testing.expectf(
+			t,
+			parents[access.place] == parent,
+			"%q is under %q: %s",
+			access.place,
+			parents[access.place],
+			access.line,
+		)
 	}
 	testing.expectf(t, len(fields) >= 2, "x and y of Point share a tag: %v\n%s", fields, text)
+	testing.expectf(t, references > 0, "no reference field is read or written:\n%s", text)
 
 	collected := [?]string {
 		"header",
