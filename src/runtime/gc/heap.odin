@@ -42,9 +42,10 @@ PAGE_SIZE :: 64 * 1024
 #assert(abi.MAX_SMALL == PAGE_SIZE / 2)
 // DEFAULT_RESERVE is address space, not memory: only the pages handed out are committed.
 DEFAULT_RESERVE :: 64 << 30
-// A collection marks every live cell, so the heap may grow to GROWTH times what one leaves before
-// the next: V8's growing factor reaches 4 where memory allows, Go's GOGC=100 is 2. MIN_TRIGGER is
-// Go's 4 MB minimum heap, which keeps a program with few live cells inside the cache.
+// A full collection marks every live cell, so the heap may grow to GROWTH times what the last one
+// left, plus what minor collections kept since, before the next collection: V8's growing factor
+// reaches 4 where memory allows, Go's GOGC=100 is 2. MIN_TRIGGER is Go's 4 MB minimum heap, which
+// keeps a program with few live cells inside the cache.
 MIN_TRIGGER :: 4 << 20
 GROWTH :: 4
 
@@ -58,6 +59,9 @@ Page_Kind :: enum u8 {
 Page :: struct {
 	kind:  Page_Kind,
 	class: u8, // Small: index into abi.CLASS_SIZE
+	// Small: the last sweep left no slot free, so no cell made since lies here and a minor
+	// collection skips the page (collect.odin)
+	full:  bool,
 	run:   u32, // Large: pages in the cell; Large_Tail: pages back to its Large page
 }
 
@@ -74,6 +78,8 @@ Heap :: struct {
 	first_free: int, // no page below it is Free
 	marks:      Mark_Stack,
 	trigger:    int,
+	full_live:  int, // used after the last full collection
+	next_full:  bool,
 	stats:      Stats,
 	// The program's one-unit strings, borrowed for str, which gc never reads: they lie outside the
 	// pages. nil in a heap of the tests.
@@ -84,6 +90,7 @@ Heap :: struct {
 // (docs/development.md#gc-statistics).
 Stats :: struct {
 	collections: int,
+	full:        int, // collections that took every mark off first
 	marking:     time.Duration,
 	sweeping:    time.Duration,
 	longest:     time.Duration, // one collection, marking and sweeping
@@ -95,12 +102,12 @@ Stats :: struct {
 
 Heap_Mode :: enum u8 {
 	Normal,
-	Stress, // collect before every allocation and check the heap after every collection
+	Stress, // collect before every allocation, minor and full in turn, checking the heap first
 }
 
 // Mark_Stack never overflows, so a collection needs no fallback for that: its reservation has room
-// for every cell the heap can hold, a cell is pushed once, when it is marked, and takes 16 bytes
-// at least.
+// for every cell the heap can hold, a cell is pushed at most once until the next collection, when it
+// is marked or, marked already, when the write barrier remembers it, and takes 16 bytes at least.
 Mark_Stack :: struct {
 	cells:     [^]^abi.Cell_Header,
 	count:     int,
@@ -176,6 +183,7 @@ heap_init :: proc(
 		pages = ([^]Page)(raw_data(rows)),
 		page_limit = page_limit,
 		marks = {cells = ([^]^abi.Cell_Header)(raw_data(marks))},
+		next_full = true, // the first collection sets full_live
 	}
 	set_trigger(heap, MIN_TRIGGER)
 	return .None
@@ -245,12 +253,12 @@ alloc :: proc(heap: ^Heap, table: abi.Type_Table_ID, size: int) -> ^abi.Cell_Hea
 		collect(heap)
 	}
 
-	// Below the trigger the garbage of the heap is still in it, so out of room a collection comes
-	// first and then the whole search again, as V8's CollectAllAvailableGarbage does before it
-	// reports out of memory.
+	// Below the trigger the garbage of the heap is still in it, so out of room a full collection
+	// comes first and then the whole search again, as V8's CollectAllAvailableGarbage does before
+	// it reports out of memory.
 	cell, found := take_cell(heap, class, count)
 	if !found {
-		collect(heap)
+		collect(heap, full = true)
 		cell, found = take_cell(heap, class, count)
 		if !found {
 			out_of_memory()

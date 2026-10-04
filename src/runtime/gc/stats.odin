@@ -10,6 +10,7 @@ write_stats :: proc(w: io.Writer, heap: ^Heap) -> io.Error {
 	stats := heap.stats
 	io.write_string(w, "gc: ") or_return
 	write_count(w, stats.collections, " collections, ") or_return
+	write_count(w, stats.full, " full, ") or_return
 	write_milliseconds(w, stats.marking, " ms marking, ") or_return
 	write_milliseconds(w, stats.sweeping, " ms sweeping, ") or_return
 	write_milliseconds(w, stats.longest, " ms longest pause, ") or_return

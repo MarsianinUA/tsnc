@@ -100,6 +100,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Field_Store_Ref:
 		address := field_address(m, body, v.cell, v.field)
 		store(m, body, v.value, address, field_tag(m, body, v.cell, v.field))
+		build_barrier(m, body, v.cell, v.value)
 
 	case ir.Length:
 		place := length_place(body.func.values[v.value].type)
@@ -137,6 +138,7 @@ build_instruction :: proc(m: ^Module, body: ^Body, value: ir.Value_ID) {
 	case ir.Element_Store_Ref:
 		address := element_address(m, body, v.array, v.index)
 		store(m, body, v.value, address, element_tag(m, body, v.array))
+		build_barrier(m, body, v.array, v.value)
 
 	case ir.Unit_Load:
 		units := byte_offset(m, body.values[v.text], int(offset_of(abi.String_Cell, units)))
@@ -601,6 +603,95 @@ build_reserve :: proc(m: ^Module, body: ^Body, array: llvm.LLVMValueRef) {
 	llvm.LLVMBuildBr(m.builder, join)
 
 	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
+}
+
+// build_barrier calls the runtime when the cell a reference was just stored into is marked and not
+// yet remembered (abi.Cell_Flag). It leaves out a cell on the stack, whose header is never marked, a
+// cell made since the last collection, and a value that names no cell of the heap. Like a bounds
+// check it splits the block and leaves the builder in the last part.
+@(private)
+build_barrier :: proc(m: ^Module, body: ^Body, cell, value: ir.Value_ID) {
+	if body.cells[cell].slot != nil || body.born[cell] == body.epoch {
+		return
+	}
+	#partial switch _ in body.func.values[value].variant {
+	case ir.Const_Number, ir.Const_Bool, ir.Const_Undefined, ir.Const_Null, ir.Const_String:
+		return
+	case ir.Ascii_Cell:
+		return
+	}
+	target := body.values[cell]
+	address := byte_offset(m, target, int(offset_of(abi.Cell_Header, flags)))
+	flags := mark(m, llvm.LLVMBuildLoad2(m.builder, m.types.int32, address, ""), m.places[.Header])
+	both := u64(transmute(u32)abi.Cell_Flags{.Marked, .Remembered})
+	marked := u64(transmute(u32)abi.Cell_Flags{.Marked})
+	state := llvm.LLVMBuildAnd(m.builder, flags, llvm.LLVMConstInt(m.types.int32, both, false), "")
+	unremembered := llvm.LLVMBuildICmp(
+		m.builder,
+		.LLVMIntEQ,
+		state,
+		llvm.LLVMConstInt(m.types.int32, marked, false),
+		"",
+	)
+	remember := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	join := llvm.LLVMAppendBasicBlockInContext(m.ctx, body.function, "")
+	llvm.LLVMBuildCondBr(m.builder, unremembered, remember, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, remember)
+	args := [?]llvm.LLVMValueRef{target}
+	call_runtime(m, .Remember, args[:])
+	llvm.LLVMBuildBr(m.builder, join)
+
+	llvm.LLVMPositionBuilderAtEnd(m.builder, join)
+}
+
+// may_collect is whether an instruction may run a collection, after which every cell it kept is
+// marked. A case per instruction, so a new one has to answer.
+@(private)
+may_collect :: proc(variant: ir.Variant) -> bool {
+	switch v in variant {
+	case ir.Alloc:
+		return v.place == .Heap
+	case ir.New_Array:
+		return v.place == .Heap
+	case ir.Make_Closure:
+		return v.place == .Heap
+	case ir.Call_Runtime:
+		exports := abi.RUNTIME_EXPORTS
+		return exports[v.export].effect != .Reads
+	case ir.Reserve, ir.Call, ir.Call_Closure:
+		return true
+	case ir.Jump, ir.Branch, ir.Return, ir.Fail, ir.Unreachable:
+		return false
+	case ir.Param, ir.Const_Number, ir.Const_Bool, ir.Const_Undefined, ir.Const_Null:
+		return false
+	case ir.Const_String, ir.Binary, ir.Unary, ir.Compare, ir.Phi, ir.Convert:
+		return false
+	case ir.Field_Load, ir.Field_Store, ir.Field_Store_Ref, ir.Length, ir.Set_Length:
+		return false
+	case ir.Bounds_Check, ir.Element_Load, ir.Element_Store, ir.Element_Store_Ref:
+		return false
+	case ir.Layout_Test, ir.Null_Test, ir.Unit_Load, ir.Ascii_Cell, ir.Same_Cell:
+		return false
+	case ir.Non_Null, ir.As_Layout, ir.Tag_Test, ir.Box, ir.Unbox, ir.Global_Load:
+		return false
+	case ir.Global_Store, ir.Env, ir.Func_Ref, ir.Intrinsic:
+		return false
+	}
+	return false
+}
+
+// makes_fresh_cell is whether an instruction answers one cell of the heap, zero filled, that no
+// collection ran after; Array_New does not, since it allocates the array before its buffer.
+@(private)
+makes_fresh_cell :: proc(variant: ir.Variant) -> bool {
+	#partial switch v in variant {
+	case ir.Alloc:
+		return v.place == .Heap
+	case ir.Make_Closure:
+		return v.place == .Heap
+	}
+	return false
 }
 
 // build_bounds_check splits the block: each failure gets a block of its own, and the code after

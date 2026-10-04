@@ -58,6 +58,7 @@ the_stats_line_reads_in_milliseconds_and_megabytes :: proc(t: ^testing.T) {
 		page_count = 373,
 		stats = {
 			collections = 109,
+			full = 12,
 			marking = 293_549 * time.Microsecond,
 			sweeping = 190 * time.Microsecond,
 			longest = 5_400 * time.Microsecond,
@@ -71,7 +72,7 @@ the_stats_line_reads_in_milliseconds_and_megabytes :: proc(t: ^testing.T) {
 	testing.expect_value(
 		t,
 		strings.to_string(b),
-		"gc: 109 collections, 293.5 ms marking, 0.1 ms sweeping, 5.4 ms longest pause, " +
+		"gc: 109 collections, 12 full, 293.5 ms marking, 0.1 ms sweeping, 5.4 ms longest pause, " +
 		"29447519 cells, 898.6 MB allocated, 10.6 MB live, 23.3 MB heap\n",
 	)
 }

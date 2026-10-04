@@ -56,6 +56,8 @@ stress_mode_collects_before_every_allocation :: proc(t: ^testing.T) {
 	testing.expectf(t, heap.used < 512 * 1024, "%d bytes in use", heap.used)
 	// Even where a free list holds the slot, and generated code takes none.
 	testing.expect_value(t, heap.stats.collections, heap.cells)
+	// Minor and full collections take turns, from a full one.
+	testing.expect_value(t, heap.stats.full, (heap.stats.collections + 1) / 2)
 	testing.expect_value(t, heap.limit, 0)
 }
 
@@ -121,6 +123,24 @@ module_value: abi.Tagged
 module_roots_are_read_by_their_kind :: proc(t: ^testing.T) {
 	roots := []abi.Root{{slot = &module_ref, kind = .Ref}, {slot = &module_value, kind = .Tagged}}
 	on_a_clean_stack(t, collect_module_roots, roots)
+}
+
+// A minor collection traces young cells only: one an old cell took through the write barrier stays,
+// young garbage goes, and old garbage waits for a full collection.
+@(test)
+a_minor_collection_traces_young_cells_alone :: proc(t: ^testing.T) {
+	on_a_clean_stack(t, collect_minor_then_full)
+}
+
+@(test)
+the_barrier_remembers_an_old_cell_once :: proc(t: ^testing.T) {
+	on_a_clean_stack(t, remember_once)
+}
+
+// No slot of a page the last sweep left full took a cell since, so a minor collection skips it.
+@(test)
+a_minor_collection_skips_a_full_page :: proc(t: ^testing.T) {
+	on_a_clean_stack(t, fill_a_page)
 }
 
 // Eight pages of address space and fifty cells of a page each, none of them kept: far below the
@@ -217,6 +237,7 @@ keep_live_set_through_garbage :: proc(t: ^testing.T, heap: ^gc.Heap, garbage: in
 			tag = .String,
 			payload = {ref = make_text(heap, i)},
 		}
+		gc.write_barrier(heap, point)
 	}
 	live := make_live(heap)
 
@@ -289,6 +310,8 @@ keep_a_wide_array :: proc(t: ^testing.T, heap: ^gc.Heap) {
 	}
 
 	gc.collect(heap)
+	// Read through the array, which nothing else keeps: the buffer alone traces no element.
+	testing.expect_value(t, array.length, WIDE)
 	for i in 0 ..< WIDE {
 		point := elements[i]
 		if point.type_table != POINT || point.x != f64(i) {
@@ -414,13 +437,119 @@ collect_around_a_large_cell :: proc(t: ^testing.T, heap: ^gc.Heap) {
 	testing.expect_value(t, heap.used, 0)
 	testing.expect_value(t, heap.trigger, gc.MIN_TRIGGER)
 
-	// Over a GROWTH-th of MIN_TRIGGER, so GROWTH and not MIN_TRIGGER sets the next trigger.
+	// A minor collection raises the trigger the last full one set by what it kept, here less than
+	// MIN_TRIGGER, so the next collection is minor too.
 	large := gc.alloc(heap, BLOB, 3 * gc.MIN_TRIGGER / 4)
 	gc.collect(heap)
+	testing.expect_value(t, heap.used, 3 * gc.MIN_TRIGGER / 4)
+	testing.expect_value(t, heap.trigger, gc.MIN_TRIGGER + 3 * gc.MIN_TRIGGER / 4)
+	testing.expect(t, !heap.next_full)
+	expect_limit(t, heap)
+
+	// Over a GROWTH-th of MIN_TRIGGER, so GROWTH and not MIN_TRIGGER sets the next trigger.
+	gc.collect(heap, full = true)
 	testing.expect_value(t, heap.used, 3 * gc.MIN_TRIGGER / 4)
 	testing.expect_value(t, heap.trigger, 3 * gc.MIN_TRIGGER / 4 * gc.GROWTH)
 	expect_limit(t, heap)
 	testing.expect_value(t, large.type_table, BLOB)
+}
+
+collect_minor_then_full :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	holder, old_garbage := make_old(heap)
+	given, young_garbage := give_young(heap, holder)
+	scrub_stack()
+	gc.collect(heap)
+	testing.expect_value(t, heap.stats.full, 1)
+	testing.expect(t, gc.owner(heap, unhide(given)) != nil)
+	testing.expect(t, gc.owner(heap, unhide(young_garbage)) == nil)
+	testing.expect(t, is_kept(heap, old_garbage))
+	expect_problem(t, heap, .None, nil)
+
+	scrub_stack()
+	gc.collect(heap, full = true)
+	testing.expect(t, gc.owner(heap, unhide(old_garbage)) == nil)
+	testing.expect_value(t, holder.next, (^abi.Cell_Header)(unhide(given)))
+	expect_problem(t, heap, .None, nil)
+}
+
+@(private = "file")
+make_old :: #force_no_inline proc(heap: ^gc.Heap) -> (holder: ^Point, garbage: uintptr) {
+	holder = (^Point)(gc.alloc(heap, POINT, POINT_SIZE))
+	cell := gc.alloc(heap, POINT, POINT_SIZE)
+	holder.next = cell
+	gc.collect(heap)
+	holder.next = nil
+	return holder, hide(cell)
+}
+
+// The holder is old, so only the barrier makes the next minor collection see `given`.
+@(private = "file")
+give_young :: #force_no_inline proc(
+	heap: ^gc.Heap,
+	holder: ^Point,
+) -> (
+	given: uintptr,
+	garbage: uintptr,
+) {
+	cell := gc.alloc(heap, POINT, POINT_SIZE)
+	holder.next = cell
+	gc.write_barrier(heap, holder)
+	return hide(cell), hide(gc.alloc(heap, POINT, POINT_SIZE))
+}
+
+remember_once :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	cell := gc.alloc(heap, POINT, POINT_SIZE)
+	gc.write_barrier(heap, cell)
+	testing.expect_value(t, cell.flags, abi.Cell_Flags{})
+
+	gc.collect(heap)
+	testing.expect_value(t, cell.flags, abi.Cell_Flags{.Marked})
+	gc.write_barrier(heap, cell)
+	gc.write_barrier(heap, cell)
+	testing.expect_value(t, cell.flags, abi.Cell_Flags{.Marked, .Remembered})
+	testing.expect_value(t, heap.marks.count, 1)
+	expect_problem(t, heap, .None, nil)
+
+	gc.collect(heap)
+	testing.expect_value(t, cell.flags, abi.Cell_Flags{.Marked})
+	testing.expect_value(t, heap.marks.count, 0)
+}
+
+fill_a_page :: proc(t: ^testing.T, heap: ^gc.Heap) {
+	count := gc.PAGE_SIZE / abi.CLASS_SIZE[POINT_CLASS]
+	buffer := gc.alloc(heap, BLOB, size_of(abi.Cell_Header) + count * size_of(rawptr))
+	array := (^abi.Array_Cell)(gc.alloc(heap, ARRAY, size_of(abi.Array_Cell)))
+	array.capacity = count
+	array.elements = &([^]byte)(buffer)[size_of(abi.Cell_Header)]
+	points := ([^]^abi.Cell_Header)(array.elements)
+	for i in 0 ..< count {
+		points[i] = gc.alloc(heap, POINT, POINT_SIZE)
+		array.length = i + 1
+	}
+	page := page_index(heap, points[0])
+	gc.collect(heap)
+	testing.expect(t, heap.pages[page].full)
+	used := heap.used
+
+	gc.collect(heap)
+	testing.expect_value(t, heap.stats.full, 1)
+	testing.expect(t, heap.pages[page].full)
+	testing.expect_value(t, heap.used, used)
+	expect_problem(t, heap, .None, nil)
+
+	// A full collection sweeps the page, whose cells the array no longer holds.
+	array.length = 0
+	scrub_stack()
+	gc.collect(heap, full = true)
+	testing.expect(t, !heap.pages[page].full)
+	testing.expectf(t, used - heap.used > gc.PAGE_SIZE / 2, "%d bytes in use", heap.used)
+}
+
+// is_kept keeps the address it unhides in a frame of its own, which the caller's next scrub_stack
+// clears.
+@(private = "file")
+is_kept :: #force_no_inline proc(heap: ^gc.Heap, hidden: uintptr) -> bool {
+	return gc.owner(heap, unhide(hidden)) != nil
 }
 
 // Under ASan alloc unpoisons every cell it hands out, so generated code takes none.

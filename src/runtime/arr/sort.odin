@@ -278,6 +278,7 @@ write_back :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, state: ^Sort_State) {
 put :: proc(heap: ^gc.Heap, array: ^abi.Array_Cell, state: ^Sort_State, at: int, v: abi.Tagged) {
 	if at < array.length {
 		store(slot(array, state.kind, at), state.kind, v)
+		gc.write_barrier(heap, array)
 	} else {
 		push(heap, array, v)
 	}

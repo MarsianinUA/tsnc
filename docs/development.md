@@ -154,7 +154,7 @@ Node never runs these programs, but their prose says what Node does instead, and
 
 ## GC stress mode
 
-A compiled program runs its collector in stress mode when the environment variable `TSNC_GC_STRESS` is `1`, with no rebuild. It then collects before every allocation and checks the whole heap after every collection. A broken heap ends the program with exit code 1 and the address of the cell, page or free list where the check stopped:
+A compiled program runs its collector in stress mode when the environment variable `TSNC_GC_STRESS` is `1`, with no rebuild. It then collects before every allocation, a minor and a full collection in turn, and checks the whole heap before each one, where a missed write barrier shows as an old cell that holds a young one it never remembered. A broken heap ends the program with exit code 1 and the address of the cell, page or free list where the check stopped:
 
 ```
 error: internal error: heap check failed: dangling reference: 0x1f2c0010040
@@ -171,12 +171,13 @@ Three programs of the corpus exist for the collector: `gc-objects.ts`, `gc-closu
 A compiled program prints the collector's counts to stderr at exit when the environment variable `TSNC_GC_STATS` is `1`, with no rebuild, the way `GODEBUG=gctrace=1` does in Go and `--trace-gc` in Node. It prints one line for the whole run:
 
 ```
-gc: 109 collections, 293.5 ms marking, 78.9 ms sweeping, 5.4 ms longest pause, 29447519 cells, 898.6 MB allocated, 10.6 MB live, 23.3 MB heap
+gc: 48 collections, 3 full, 15.4 ms marking, 51.6 ms sweeping, 8.3 ms longest pause, 29447519 cells, 674.0 MB allocated, 20.2 MB live, 45.4 MB heap
 ```
 
 | field | meaning |
 | --- | --- |
 | collections | how many times the collector ran |
+| full | how many of them took every mark off first and marked every live cell; the others marked only the cells made since the last collection and those the write barrier remembered |
 | marking | time spent marking: the stack, the roots and the cells they reach |
 | sweeping | time spent sweeping |
 | longest pause | the longest single collection, marking and sweeping |

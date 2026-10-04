@@ -173,6 +173,7 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 			{
 				"program",
 				"collections",
+				"full",
 				"marking, ms",
 				"sweeping, ms",
 				"longest pause, ms",
@@ -197,10 +198,10 @@ comparison :: proc(setup: Setup) -> (ok: bool) {
 }
 
 // gc_row takes the numbers of the TSNC_GC_STATS line by position, in the order gc.write_stats
-// writes them: "gc: 109 collections, 293.5 ms marking, ..., 23.3 MB heap".
+// writes them: "gc: 48 collections, 3 full, 15.4 ms marking, ..., 45.4 MB heap".
 gc_row :: proc(name, line: string) -> (row: []string, ok: bool) {
 	parts := strings.split(strings.trim_prefix(line, GC_PREFIX), ", ", context.temp_allocator)
-	if !strings.has_prefix(line, GC_PREFIX) || len(parts) != 8 {
+	if !strings.has_prefix(line, GC_PREFIX) || len(parts) != 9 {
 		fmt.eprintfln("bench: %s: no line of %s, but %q", name, GC_VARIABLE, line)
 		return nil, false
 	}

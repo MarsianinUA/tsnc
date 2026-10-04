@@ -107,6 +107,9 @@ Runtime_Proc :: enum u8 {
 	// only where Heap_Head gives it no cell.
 	Alloc, // (table) -> ^Cell_Header: a zero-filled cell of the table's size
 	Array_New, // (table, length) -> ^Array_Cell: `length` elements, each the zero of its kind
+	// (cell): the slow path of the write barrier codegen puts after an ir.Field_Store_Ref or
+	// ir.Element_Store_Ref, for a cell marked and not yet remembered (Cell_Flag)
+	Remember,
 	Fail, // (site: ^Fail_Site): a message to stderr, then exit code 1
 }
 
@@ -318,6 +321,9 @@ RUNTIME_EXPORTS :: [Runtime_Proc]Runtime_Export {
 		result = .Ptr,
 		effect = .Allocates,
 	},
+	// Allocates for the tag of the header it writes; it never collects, and codegen calls it with no
+	// IR instruction of its own.
+	.Remember = {symbol = "tsnc_remember", params = {.Ptr}, result = .Void, effect = .Allocates},
 	.Fail = {symbol = "tsnc_fail", params = {.Ptr}, result = .Void, diverges = true},
 }
 

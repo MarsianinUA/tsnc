@@ -110,12 +110,36 @@ a_header_names_its_problems :: proc(t: ^testing.T) {
 	defer gc.heap_destroy(&heap)
 	live := make_live(&heap)
 
-	live.text.flags = {.Marked}
-	expect_problem(t, &heap, .Stray_Mark, live.text)
+	live.text.flags = {.Remembered}
+	expect_problem(t, &heap, .Bad_Remembered_Set, live.text)
 	live.text.flags = {}
 
 	live.second.type_table = POINT + 100
 	expect_problem(t, &heap, .Unknown_Table, live.second)
+}
+
+// A minor collection scans no old cell but a remembered one, and the mark stack holds the remembered
+// cells and nothing else.
+@(test)
+an_old_cell_holds_a_young_one_only_once_remembered :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+	live := make_live(&heap)
+
+	live.first.flags = {.Marked}
+	expect_problem(t, &heap, .Missed_Barrier, live.first)
+	gc.write_barrier(&heap, live.first)
+	expect_problem(t, &heap, .None, nil)
+
+	// The buffer an old array grew into is young.
+	live.array.flags = {.Marked}
+	expect_problem(t, &heap, .Missed_Barrier, live.array)
+	gc.write_barrier(&heap, live.array)
+	expect_problem(t, &heap, .None, nil)
+
+	heap.marks.count -= 1
+	expect_problem(t, &heap, .Bad_Remembered_Set, heap.marks.cells)
 }
 
 @(test)
@@ -248,6 +272,7 @@ make_live :: proc(heap: ^gc.Heap) -> (live: Live) {
 	live.first = (^Point)(gc.alloc(heap, POINT, POINT_SIZE))
 	live.second = (^Point)(gc.alloc(heap, POINT, POINT_SIZE))
 	live.first.next = live.second
+	gc.write_barrier(heap, live.first)
 	live.second.next = live.first
 
 	live.text = (^abi.String_Cell)(gc.alloc(heap, STRING, size_of(abi.String_Cell) + 2 * 3))
@@ -256,6 +281,7 @@ make_live :: proc(heap: ^gc.Heap) -> (live: Live) {
 		tag = .String,
 		payload = {ref = live.text},
 	}
+	gc.write_barrier(heap, live.first)
 	live.second.value = {
 		tag = .String,
 		payload = {ref = &STATIC_TEXT},

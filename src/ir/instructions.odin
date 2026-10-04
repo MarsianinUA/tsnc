@@ -224,8 +224,8 @@ Field_Store :: struct {
 }
 
 // Field_Store_Ref writes a Ref or a Tagged slot, the two kinds the collector traces. Every
-// reference that enters a heap cell goes through a store that ends in _Ref, which is where the
-// write barrier of the concurrent collector lands in v2.
+// reference that enters a heap cell goes through a store that ends in _Ref, which is where codegen
+// puts the write barrier (build_barrier).
 Field_Store_Ref :: struct {
 	cell:  Value_ID,
 	field: i32,

@@ -13,7 +13,7 @@ import "str"
 import "value"
 
 // One export per abi.Runtime_Proc; add the export together with the row.
-#assert(len(abi.Runtime_Proc) == 37)
+#assert(len(abi.Runtime_Proc) == 38)
 
 // Generated code only needs these symbols to be external, and nothing imports them from the
 // executable, so they are kept with `require` and strong linkage rather than `@(export)`. That is
@@ -305,6 +305,12 @@ array_new :: proc "c" (table: u64, length: f64) -> ^abi.Array_Cell {
 	count := int(length)
 	ensure(f64(count) == length, "an array length that is no count")
 	return arr.new_zeroed(&heap, abi.Type_Table_ID(table), count)
+}
+
+@(require, linkage = "strong", link_name = abi.RUNTIME_EXPORTS[.Remember].symbol)
+remember :: proc "c" (cell: ^abi.Cell_Header) {
+	context = export_context()
+	gc.remember(&heap, cell)
 }
 
 @(private)

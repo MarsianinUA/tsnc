@@ -132,6 +132,34 @@ a_small_cell_calls_the_runtime_only_on_the_slow_path :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.count(text, "load ptr, ptr @heap"), calls)
 }
 
+// Two stores need the write barrier: into `inner` after a join, which may collect and so make it
+// old, and into the parameter. The fields of a literal follow its allocation, a field it computes
+// too, and a constant names no cell of the heap.
+@(test)
+only_a_store_into_a_cell_that_may_be_old_is_remembered :: proc(t: ^testing.T) {
+	source :=
+		"interface Box {\n" +
+		"  item: Box | null;\n" +
+		"  name: string;\n" +
+		"}\n" +
+		"function wrap(outer: Box): void {\n" +
+		"  const inner: Box = { item: null, name: outer.name + \"!\" };\n" +
+		"  inner.name = inner.name + \"?\";\n" +
+		"  outer.item = inner;\n" +
+		"  outer.name = \"x\";\n" +
+		"}\n" +
+		"const top: Box = { item: null, name: \"top\" };\n" +
+		"wrap(top);\n" +
+		"console.log(top.name);\n"
+	output := compile_text(t, source)
+	text := llvm_text(t, &output, "program-barrier")
+	if text == "" {
+		return
+	}
+	expect_text(t, text, []string{"declare void @tsnc_remember(ptr)", "and i32 ", "icmp eq i32 "})
+	testing.expect_value(t, strings.count(text, "call void @tsnc_remember("), 2)
+}
+
 // A cell past abi.MAX_SMALL takes whole pages, which only the runtime hands out.
 @(test)
 a_large_cell_calls_the_runtime_at_once :: proc(t: ^testing.T) {

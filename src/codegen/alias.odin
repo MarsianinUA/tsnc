@@ -17,8 +17,10 @@ reference element is traced below the length only, while pop leaves the slot pas
 call of an abi.Effect.Allocates export carries the Collector tag, so LLVM keeps those in order with
 a collection and may move any other place across it. The collector changes no live place, and it
 traces every field and global: one whose store moves past the call holds zero or a live reference
-meanwhile, and the new value stays in a register the conservative scan sees. Strings stay outside
-since generated code never writes one; String_Join, which appends in place, is an Any row.
+meanwhile, and the new value stays in a register the conservative scan sees. A store must not move
+above such a call, though: the collection could make its cell old with the value only there, and
+the write barrier after the store comes too late; LLVM hoists no store above a call. Strings stay
+outside since generated code never writes one; String_Join, which appends in place, is an Any row.
 
 An access with no tag may touch anything: a Tagged slot, whose tag word tells the collector whether
 the payload is a reference, the heap head and free slot an inline allocation takes, the zero fill
