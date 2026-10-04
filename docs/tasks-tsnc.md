@@ -1,6 +1,6 @@
 # Task board: tsnc
 
-Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: October 3, 2026.
+Source: `architecture-plan-tsnc.md` (section "Milestones") and `REQUIREMENTS.md` v0.1. Updated: October 4, 2026.
 
 Purpose. The operator gives the agent a task number. The agent reads the shared handoff kit and the task kit, makes a detailed plan and writes the code. Tasks do not change the architecture. If a task runs into a key block from the section [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the work stops and the question goes back to the operator.
 
@@ -604,20 +604,346 @@ Where: `docs/performance-review.md`; `bench/RESULTS.md`; [Risks and open questio
 After: T6.15 to T6.27.
 Done: the file is gone and nothing in the repository links to it; `bench/RESULTS.md` has the section; the plan holds what stayed open.
 
-## Milestone 7: v2 waves (epics)
+## Milestone 7: v2
 
-An actionable v2 task cannot be written before the v1 code exists. Each epic starts with the task "split per the row of the [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2) table". The agent reads its row and the code of the affected packages and proposes tasks for the board. The wave order is a recommendation. E7.1 and E7.11 moved to T6.7 and T6.8 on 2026-09-28 and took two of the §13 risks with them, the f64 gap and the derived pointers; the exact-type rule stays with E7.4. The other epics keep their numbers.
+Milestone goal: [Milestones](architecture-plan-tsnc.md#milestones), row 7; requirements §2.2, the v2 list. The tasks below were written on 2026-10-04 from the [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2) table and the code at 03f56f3, in place of epics E7.2 to E7.12; E7.1 and E7.11 had become T6.7 and T6.8. The operator added three constructs §2.2 does not list: tuples, which type `for (const [k, v] of map)` and `Object.entries`, default parameter values and `interface extends`. T7.1 comes first, since its numbers may move a task to another wave or add a construct. A task whose design is still open starts with a prototype or a measurement and brings its candidates to the operator before any code, as T6.23 to T6.27 did, and the operator's answer becomes its "Chosen" line. Every feature adds its diff programs (requirements §10). A construct a task supports stops reporting its T2xxx code: the code is retired and its number is not reused, its negative program goes, and each new code gets a negative program of its own. What the performance review left open stays in [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions) until a task here needs it.
 
-- [ ] E7.2 Classes, inheritance, `this`; user generics via monomorphization. Rows "Classes, inheritance...", "User generics...".
-- [ ] E7.3 `try`, `catch`, `throw`. Row "`try`, `catch`, `throw`".
-- [ ] E7.4 Full structural typing via fat pointers. Row "Full structural typing via fat pointers".
-- [ ] E7.5 Index signatures, `Object.keys`, `for...in`, `obj[key]`, `Map`, `Set`; package `rt/table`. Row "Index signatures...".
-- [ ] E7.6 Sugar: destructuring, spread, `?.`, `enum`, `export default`, getters and setters. Row "Destructuring, spread...".
-- [ ] E7.7 `async` and `await`; package `rt/sched`. Row "`async` and `await`".
-- [ ] E7.8 N codegen units and ThinLTO. Row "N codegen units and ThinLTO". `codegen.add_type_tables`, `add_roots` and `add_ascii_cells` emit `tsnc_type_tables`, `tsnc_roots` and `tsnc_ascii_cells` into every unit's module today, which N units would define N times. The runtime linked into the program's module as bitcode, so that its small exports inline, belongs to this epic too: the review of 2026-10-03 left it here.
-- [ ] E7.9 Cross-compiling for Linux from Windows; `wasm32-wasi`. Row "Cross-compilation and `wasm32-wasi`".
-- [ ] E7.10 PDB and DWARF debug info. Row "Debug info".
-- [ ] E7.12 `RegExp`, `bigint`, file I/O; hybrid Latin-1 and UTF-16. Rows "`RegExp`, `bigint`, file I/O", "Hybrid Latin-1 and UTF-16 storage".
+## v2 wave 0: what real programs need
+
+Requirements §10 ask for real programs run through `tsnc check` once per version, and §13 for the rejection rate of the exact-type rule before v2. Nothing in `tests/` or `bench/` does either yet.
+
+### [ ] T7.1 What the subset rejects in real programs
+
+What: pick five to ten small real TypeScript programs with no npm dependencies and no DOM: command-line tools, algorithms, game logic. The plan decides whether they are copied into the repository under a license that allows it, or named by URL and commit and kept outside. Run `tsnc check` on each and count the diagnostics by code, the T2021 ones by their `Construct` (`src/diag/codes.odin`), and those that come from the exact-type rule (`object_assignable` in `src/check/types.odin`, and T3011 for an extra field of a literal). The counts say which waves matter most, whether structural typing (T7.25) should come earlier, and which of the T2021 constructs left outside v2 (intersection types, labels, function overloads, `as const`, `satisfies`, `export *`) earn a task.
+Where: requirements §10 "Checks on third-party code", §13 (the row on the exact-type rule), §2.3; `src/diag/codes.odin`.
+After: none.
+Done: a report in `docs/` gives each program's size and its diagnostics by code; the operator confirms or reorders the waves of this milestone and names the constructs that join v2.
+
+## v2 wave 1: syntax over the IR that exists
+
+The [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2) row "Destructuring, spread, optional chaining, `enum`, `export default`" calls these pure sugar over existing IR instructions: they change `parse`, `bind`, `check` and `lower`, and none needs the runtime. The tuples, default values and `interface extends` the operator added belong here too.
+
+### [ ] T7.2 `interface extends` and default parameter values
+
+What: both are T2021 today, `Interface_Extends_Clauses` (`src/parse/statements.odin:334`) and `Default_Parameter_Values`. `interface B extends A, C` gives B the members of its bases, generic bases instantiated, and a member B declares again must fit the base's, as tsc requires; the layout stays a function of the fields. A parameter with a default is optional to the caller, and the callee evaluates the default when the argument is `undefined`, an explicit `undefined` too, in parameter order, so a default may read the parameters before it. Inside the function the parameter has its declared type; where a function with defaults flows into a function type, the signature class carries `T | undefined` in that position.
+Where: requirements §2.2, §3.5; `src/parse/statements.odin`, `src/parse/types.odin`, `src/check/objects.odin` (`read_interface`), `src/check/resolve.odin`, `src/lower/bindings.odin`.
+After: none.
+Done: diff programs extend interfaces in a chain and from two bases, and call functions and arrows with defaults omitted, passed and passed as `undefined`; requirements §2.2 list both constructs; their two T2021 rows are retired.
+
+### [ ] T7.3 Optional chaining `?.`
+
+What: the parser builds a chain of `Member` nodes and then discards it (`src/parse/expressions.odin`), reporting T2016 once per chain (`src/parse/expressions.odin:452`). `a?.b`, `a?.[i]`, `f?.()` and `o.m?.()`, where a `null` or `undefined` link skips the rest of the chain, side effects included, and gives `undefined`. The result has type `T | undefined`, a pointer of kind `Ref_Or_Undefined` where `T` is a reference (T6.5). As in tsc, `if (a?.b)` and `a?.kind === "x"` narrow `a` to non-null.
+Where: requirements §2.2, §3.4; `src/ast`, `src/parse/expressions.odin`, `src/check/narrow.odin`, `src/lower/unions.odin`.
+After: none.
+Done: a diff program puts `null` and `undefined` at each link of member, element and call chains, shows the side effects that are skipped and the narrowing through `?.`; T2016 is retired.
+
+### [ ] T7.4 Tuples
+
+What: T2021 `Tuple_Types` today. A fixed tuple type `[A, B]`, an array literal typed by it from its context, an index that is a literal typed by its position, a `.length` of a literal type, and a tuple passed where an array of a wider element is expected, as tsc allows. The representation goes to the operator before any code: an `Array` cell with a tagged slot where the element types differ, which the console, `for...of`, the Array methods and the widening classes of T6.13 and T6.24 already handle; or an object layout with the fields `0`, `1`, which reads an element with one load and no tag, but needs a case in every path that takes an array. Optional and rest elements stay out unless T7.1 asks for them. The task amends requirements §2.2 and §3.6.
+Where: requirements §2.2, §3.6; `src/parse/types.odin`, `src/check/types.odin`, `src/lower/types.odin` (`representation`), `src/lower/classes.odin`.
+After: none.
+Done: a diff program makes, indexes, passes, prints and iterates tuples of mixed types and passes one where an array is expected; requirements §2.2 and §3.6 say what a tuple is.
+
+### [ ] T7.5 Destructuring
+
+What: T2014 today (`src/parse/statements.odin:240`, `src/parse/expressions.odin:62` and :816); `parse_binding_name` skips a pattern and leaves the name empty, and `bind` declares one symbol per declarator. Object and array patterns in `const` and `let`, in parameters, in a `for...of` head and on the left of an assignment, with nesting, renaming (`{x: y}`), defaults by the rule of T7.2, and rest: `[a, ...r]` takes a slice, `{a, ...r}` a new object of the remaining fields, whose layout those fields give. An array pattern longer than the array reads out of range, which is the error of requirements §3.8 for `arr[i]`, where Node gives `undefined`.
+Where: requirements §2.2, §3.8; `src/parse`, `src/bind`, `src/check`, `src/lower/bindings.odin`.
+After: T7.2, T7.4.
+Done: diff programs destructure objects, arrays and tuples in each of the four places, with nesting, renaming, defaults and rest; an expect program pins the pattern longer than its array; T2014 is retired.
+
+### [ ] T7.6 Spread and rest parameters
+
+What: spread is T2015 today (`src/parse/expressions.odin:551` for arrays and calls, :768 for objects). Rest parameters of user functions pass `check` and stop in `lower` with T2027 (`src/lower/lower.odin:259`), while the lib uses them (`console.log`, `push`, `Math.max`). An array literal with spread `[...a, x, ...b]` makes one array, sized once where the lengths are known; a spread argument goes into a rest parameter, or fills fixed parameters from a tuple; a rest parameter of a declaration, an arrow or a function value gets a fresh array on every call, as in Node; an object spread `{...a, b: 1}` makes a new object whose fields are those of both sides, the later one winning, under the exact-type rule; a string spreads by code points, as `for...of` walks it. Spread into `Math.max` and `console.log` goes through the `Rest` C type of `abi`.
+Where: requirements §2.2, §3.5, §3.6; `src/parse/expressions.odin`, `src/lower/calls.odin`, `src/lower/arrays.odin`.
+After: T7.4.
+Done: diff programs spread arrays, strings and objects, call with spread arguments, and declare rest parameters on declarations, arrows and function values; T2015 and the rest-parameter case of T2027 are retired.
+
+### [ ] T7.7 `enum`
+
+What: T2013 today (`src/parse/statements.odin:641`). Numeric enums with auto-increment and constant initializers, string enums, `const enum`; an enum as a type (the union of its members) and as a value (`E.A`); the reverse mapping `E[E.A]` of a numeric enum from a static table, where a number with no member is a runtime error by requirements §3.8, since tsc types it `string` and Node gives `undefined`; a `switch` over the members, narrowed as a union of literals. Node's type stripping refuses an enum, so requirements §10 run the reference through tsc to JavaScript and then Node; Node 24 also has `--experimental-transform-types`. The plan picks one, and the diff runner learns it from the program's header; parameter properties of classes (T7.11) take the same path.
+Where: requirements §2.2, §10; `src/parse`, `src/bind`, `src/check`, `src/lower`, `tests/runner/diff.odin`; [Differential tests](development.md#differential-tests).
+After: none.
+Done: diff programs use numeric, string and `const` enums, the reverse mapping and a `switch` over an enum, against the reference the runner takes for them; the development guide says how such a program runs; T2013 is retired.
+
+### [ ] T7.8 `export default` and default imports
+
+What: T2017 today (`src/parse/statements.odin:455` for `export default`, :432 for a default import, :595 for a `default` specifier). `export default function f`, `export default` of an expression, `import x from "./m"`, `import x, { y } from "./m"`, `{ default as x }` and `export { x as default }`. `default` is an ordinary export name, and the module resolution of T2.8 does not change. `export default class` comes with T7.11.
+Where: requirements §2.2, §7; `src/parse/statements.odin`, `src/bind`, `src/check/modules.odin`.
+After: none.
+Done: a diff program over several modules exports a function, a constant and an expression as `default` and imports them under several names; a negative program pins a default import from a module without one, under a new T4xxx code; T2017 is retired.
+
+## v2 wave 2: generics and classes
+
+The rows "User generics via monomorphization" and "Classes, inheritance, `this`, getters and setters" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2). `check` already instantiates generic declarations for the lib, and `lower` interns layouts by structure, so an instance of a generic type is an ordinary object type. Classes need what the front end has nowhere yet: a class scope, `this` and `new`.
+
+### [ ] T7.9 Generic interfaces and type aliases
+
+What: `check` instantiates any declaration with type arguments (`interface_type`, `alias_type` and `bind_type_params` in `src/check/objects.odin`), and user files are held back in three places: `type_param_type` (`src/check/objects.odin`) and `resolve_type_params` (`src/check/resolve.odin`) answer nothing outside the lib, and `src/check/subset.odin` reports T2023. The task opens that for interfaces and type aliases, with constraints and defaults of type parameters (T2021 at `src/parse/types.odin:299` and :305), recursive generic types such as `List<T> = {head: T, tail: List<T> | null}`, `substitute` (`src/check/generics.odin`) instantiating a named generic object again, a cache for instances of an alias as `reserve_object` keeps one for interfaces, and a limit on the depth of instantiation, as tsc's TS2589 has. `lower` needs nothing new.
+Where: requirements §2.2, §5; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "User generics via monomorphization"; `src/check/objects.odin`, `src/check/generics.odin`, `src/check/resolve.odin`, `src/check/subset.odin`, `src/parse/types.odin`.
+After: none.
+Done: diff programs build and print values of generic interfaces and aliases, a generic discriminated union and a recursive generic list; a negative program pins the depth limit under a new code.
+
+### [ ] T7.10 Generic functions by monomorphization
+
+What: generic function declarations, generic arrows (T2021 at `src/parse/expressions.odin:418`), explicit type arguments at a call (T2021 at :514), arguments inferred by `check_signature_call` (`src/check/generics.odin`), and a constraint whose fields the body reads. `lower` makes one IR function per distinct layout key of the type arguments, so two types of one layout share a function. How the body gets its facts goes to the operator before any code, since it touches the key decision "Shape of check facts": `check` types the body once over its type parameters, as tsc does, and `lower` puts the instance's arguments into every fact it reads; or `check` records facts per instance. A generic function used as a value is instantiated where its context fixes the arguments, and is a compile error where nothing does; a recursion that grows its type arguments, as `f<T>(x: T) { f([x]) }`, is a compile error at a limit.
+Where: requirements §2.2, §3.5; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Shape of check facts"; `src/check/generics.odin`, `src/check/resolve.odin`, `src/lower/lower.odin` (`declare_functions`), `src/lower/types.odin`.
+After: T7.9.
+Done: diff programs call generic functions over numbers, strings, objects and arrays, with inferred and explicit arguments, through a constraint and as values; a lower test pins one function per layout of the arguments and one shared by two types of one layout; a negative program pins the growing recursion; the IR of every program of `bench/ts` is the same as before.
+
+### [ ] T7.11 Classes: fields, constructor, methods, `this`, `new`
+
+What: `parse_class` skips the body of a class (T2009 at `src/parse/statements.odin:634`), `this` is T2009 (`src/parse/expressions.odin:601`), `new` is T2010 (:865), `instanceof` is T2021, and `bind` has no class scope and no `this`. A class with fields and their initializers, a constructor, parameter properties (`constructor(private x: number)`, which Node's type stripping refuses, so they take the reference path of T7.7), methods, `this` in methods and in the arrows inside them, `static` fields and methods, `private`, `protected`, `readonly` and `#private`, `new`, `instanceof`, `export default class`, and the strict rule that a field is set before the constructor ends. An instance is an object cell and its methods live once per class, not in the cell. A class needs an identity beyond its layout, since the console prints `Point { x: 1, y: 2 }` with the class name and the fields in creation order, and `instanceof` must tell two classes of one layout apart. A candidate: a table row per class (the rows of T5.7, `Program_IR.base`) that carries the name and a table of methods; this goes to the operator before any code. A method read as a value loses its `this` in Node, so it is a compile error with a hint to use an arrow. Until T7.26 a class with methods passes into no interface of its fields alone, by the exact-type rule.
+Where: requirements §2.2, §3.3, §3.9; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Classes, inheritance, `this`, getters and setters"; `src/parse/statements.odin` (`parse_class`), `src/bind/bind.odin`, `src/check`, `src/lower`, `src/abi/abi.odin` (`Type_Table`, `Function_Info`), `src/runtime/console/inspect.odin`.
+After: T7.7.
+Done: diff programs make, change, pass and print instances, call methods and static members, use `this` in arrows inside methods and test `instanceof`; a negative program per new code; requirements §3.3 say how an instance is laid out; T2009 and T2010 keep only what stays outside the subset.
+
+### [ ] T7.12 Inheritance: `extends`, `super`, overriding
+
+What: `class B extends A`, `super(...)` in the constructor, `super.m()`, overriding methods, abstract classes and methods (T2009 at `src/parse/statements.odin:150`), an instance of B where an A is expected, a method call through A dispatched on the class of the cell, `instanceof` along the chain. A read of a field through A on a B goes to the operator with the numbers of a probe, since it amends the key block "the layout is a function of structure": B's layout keeps A's fields at A's offsets, as C++ and Java do; or a read through A tests the layout in the header, as a union of objects does since T6.23 and a view since T6.24. A method call is direct where the whole program has one implementation of it.
+Where: requirements §2.2, §3.3, §3.5; [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may); `src/lower/types.odin`, `src/lower/calls.odin`, `src/abi`.
+After: T7.11.
+Done: the numbers are recorded; diff programs run a hierarchy three levels deep with overriding, `super` calls and abstract methods, and an array of the base type holding several subclasses; a lower test pins the direct call where one class implements the method; requirements §3.3 and the key block say what changed.
+
+### [ ] T7.13 Generic classes and `implements`
+
+What: `class Stack<T>`, its type arguments inferred from the constructor's arguments or written out, its methods instantiated with the class by the monomorphization of T7.10, and `implements I` checked as assignability under the exact-type rule.
+Where: requirements §2.2; `src/check`, `src/lower`.
+After: T7.10, T7.11.
+Done: a diff program uses a generic container class over numbers, strings and objects; a lower test pins one class per layout of the type arguments.
+
+### [ ] T7.14 Getters and setters
+
+What: T2021 `Getters_And_Setters` today, in object literals (`src/parse/expressions.odin:784`) and in types (`src/parse/types.odin:473`). Class accessors, static ones, and accessors a subclass inherits or overrides. TypeScript gives an accessor and a field the same type, so a read of `.x` through an interface that a class with an accessor flows into has to call it. That goes to the operator before any code: the read dispatches on the layout, as a view does since T6.24; or a flow of a class with accessors into a type read as a field is a compile error. The same answer covers accessors in object literals.
+Where: requirements §2.2, §3.3; `src/parse`, `src/check`, `src/lower`.
+After: T7.12.
+Done: diff programs use class accessors, static, inherited and overridden ones, and the flows the operator accepts; the T2021 row is retired or narrowed to what stays out.
+
+## v2 wave 3: exceptions
+
+The row "`try`, `catch`, `throw`" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2): `ir`, `lower`, `codegen` and `rt/fail` change, and a block accepts unwind edges without a change of shape. A thrown error needs a class, so `Error` waits for T7.11 and T7.12.
+
+### [ ] T7.15 Exceptions: the mechanism, measured
+
+What: nothing unwinds today. `ir` has no exception edges, `codegen` marks every runtime function `nounwind`, and `src/llvm` declares no `LLVMBuildInvoke`, `LLVMBuildLandingPad` or `LLVMSetPersonalityFn`. Three candidates. LLVM landing pads cost nothing until a throw, but need a personality per platform (SEH on Windows, Itanium on Linux and macOS), unwind tables through the Odin frames of the runtime, and the exception-handling proposal on wasm. `setjmp` and `longjmp` per `try` cost something on entering every `try`, with one mechanism everywhere. A flag returned by every call that may throw, tested after the call as Swift and Go do, costs something on every such call, which a whole-program analysis limits to the calls that reach a `throw`, and works on wasm unchanged. The plan also answers which runtime errors become exceptions, those Node throws (`RangeError` for `Invalid string length`, `Invalid array length` and `Maximum call stack size exceeded`, `TypeError` for a `reduce` of an empty array), and which checks of requirements §3.8 stay fatal because Node runs on there; how the overflow handler, which runs on a stack of its own (T6.9), throws; and how a throw crosses the runtime when it calls back into the program (the sort comparator). A prototype measures the candidates on `raytracer` and on a `try` inside a hot loop, then the proposal goes to the operator.
+Where: requirements §2.2, §3.8 (its closing paragraph), §6; [Key decisions](architecture-plan-tsnc.md#key-decisions), row "Shape of our own IR"; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "`try`, `catch`, `throw`"; `src/ir/instructions.odin` (`Fail`), `src/codegen/module.odin`, `src/llvm`, `src/runtime/fail/fail.odin`, `src/runtime/overflow_windows.odin`, `src/runtime/overflow_posix.odin`.
+After: none.
+Done: the candidates and their numbers are recorded, and the operator's choice is on the board.
+
+### [ ] T7.16 `throw`, `try`, `catch`, `finally`
+
+What: T2011 today (`src/parse/statements.odin:739` for `throw`, :1050 for `try`). By the choice of T7.15: a `throw` of any value; `catch (e)` with `e` of type `unknown`, as `--strict` gives it, narrowed by `typeof` and `instanceof`; a `catch` without a binding; `finally` on every way out, `return`, `break` and `continue` included; a rethrow; a throw out of a closure, an inline loop of `map` or `filter`, and a sort comparator. `bind` and `check` carry the flow and the narrowing through `try`; the unwind edges of the IR are kept by every pass of `opt` and checked by `ir.verify`. A throw nobody catches writes one line through `fail` and exits with code 1; Node prints a stack instead, so expect programs pin it.
+Where: requirements §2.2, §3.8; `src/bind/flow.odin`, `src/check/narrow.odin`, `src/ir`, `src/lower`, `src/opt`, `src/codegen`, `src/runtime/fail`.
+After: T7.15, T7.11.
+Done: diff programs throw and catch across functions, closures, inline loops and a comparator, with nested `try` and `finally` on every exit, green at both `-o` levels, under stress and ASan too; expect programs pin an uncaught throw of an object and of a number; T2011 is retired.
+
+### [ ] T7.17 `Error` classes and catchable runtime errors
+
+What: the lib gains `Error`, `TypeError`, `RangeError` and `SyntaxError`, with `message` and `name`, and a program can subclass them. The runtime errors T7.15 chose throw such objects with Node's messages. Two answers go to the operator: `e.stack`, whose frames a compiled program cannot reproduce as Node prints them, and `console.log(err)`, for which Node prints the stack.
+Where: requirements §3.8 (its closing paragraph), §3.9; `src/lib/lib.d.ts`, `src/runtime/fail`, `src/runtime/console`.
+After: T7.16, T7.12.
+Done: diff programs catch `Invalid array length`, `Invalid string length` and `Maximum call stack size exceeded` as `RangeError` with Node's message, and subclass `Error`; expect programs pin the errors that stay fatal; requirements §3.8 say which errors a `catch` sees.
+
+## v2 wave 4: tables
+
+The row "Index signatures, `Object.keys`, `for...in`, `obj[key]`, `Map` and `Set`" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2): `rt/table`, `lower`, `abi` and `check` change, and `Runtime_Proc` grows by rows. `Map` and `Set` need `new` from T7.11 and their entries need the tuples of T7.4.
+
+### [ ] T7.18 `rt/table`: hash tables in the GC heap
+
+What: the runtime package [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime) lists as `table` (v2). `Map` and `Set` iterate in insertion order, an iteration sees the entries added during it, and an entry deleted during it is skipped, so the table is ordered, as Tyler Close's deterministic hash table and V8's OrderedHashTable are: entries in an array in insertion order, buckets of indices, deleted entries marked and dropped when the table is rebuilt. Keys compare by SameValueZero (`NaN` equals `NaN`, `-0` equals `0`), strings hash by their units, references by address, since a cell never moves. Whether entries are tagged slots or unboxed by the table's type, as the element tables of arrays are, goes to the operator. The table cell has a type table of its own, and `abi` gains its rows.
+Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `table`; requirements §4.5; `src/abi/abi.odin` (`Cell_Kind`, `Type_Table`), `src/abi/calls.odin`, `src/runtime/gc`.
+After: none.
+Done: a table test pins the order through deletes and growth, SameValueZero keys and an iteration that sees what was inserted during it; the collector traces keys and values under stress and ASan.
+
+### [ ] T7.19 `Map` and `Set`
+
+What: the lib declares `Map<K, V>` and `Set<T>`, which `new` creates as a built-in class. `get`, `set`, `has`, `delete`, `clear`, `size`, `forEach`, `keys`, `values` and `entries`; `for...of` over a map, whose entries are tuples (T7.4) a pattern takes apart (T7.5), and over a set; spread; `new Map(entries)` and `new Set(array)`. An iterator as a value goes to the operator: only where `for...of`, spread or a constructor consumes it, a compile error elsewhere; or an iterator cell in the runtime. The console prints `Map(2) { 'a' => 1, 'b' => 2 }` and `Set(1) { 1 }`, as Node does.
+Where: requirements §2.2, §3.9; `src/lib/lib.d.ts`, `src/lower/lib.odin` (`LIB_STRATEGIES`), `src/runtime/table`, `src/runtime/console/inspect.odin`.
+After: T7.18, T7.11, T7.5.
+Done: diff programs call every method with keys of each kind (numbers with `NaN` and `-0`, strings, objects), iterate while adding and deleting, and print maps and sets nested in objects and arrays; `bench/ts` gains a program over `Map` with its Go twin, and `bench/RESULTS.md` its row.
+
+### [ ] T7.20 Index signatures and `Record`
+
+What: T2021 `Index_Signatures` today (`src/parse/types.odin:464`), and `check_index` (`src/check/expressions.odin`) indexes only arrays and strings. `{[k: string]: T}` and `Record<string, T>` as a table cell: `d[k]` read and written, `k in d` (T2021 `In_Expressions`), enumeration in the order Node gives an object, keys that look like integers first, and an object literal given to such a type. Two answers go to the operator. A missing key: tsc types the read `T` and Node gives `undefined`, so it is a runtime error by requirements §3.8, or the read is typed `T | undefined`. And `delete d[k]`, which §2.2 lists under "never".
+Where: requirements §2.1, §2.2, §3.8; `src/parse/types.odin`, `src/check/expressions.odin` (`check_index`), `src/lower`, `src/runtime/table`.
+After: T7.18.
+Done: diff programs build, read, write, test, enumerate and print dictionaries with keys of both kinds; the requirements say what a missing key does; the T2021 row is retired.
+
+### [ ] T7.21 `Object.keys`, `Object.values`, `Object.entries`, `for...in`, `obj[key]`
+
+What: `for...in` is T2019 today (`src/parse/statements.odin:896` and :927), and `Object` is not in the lib. For an object of a fixed layout the keys are the field names of its type table in Node's order, which the console already follows, without an optional field that was never set; `for...in` walks them. `keyof T` (T2021 `Keyof_Types`) and `obj[k]` with `k: keyof T`: a switch over the names where the layout is known, a lookup in the type table where it is not. `Object.entries` gives `[string, T][]`. For a dictionary of T7.20 they walk the table.
+Where: requirements §2.2, §3.9; `src/lib/lib.d.ts`, `src/parse/statements.odin`, `src/check`, `src/lower`, `src/runtime/console/inspect.odin`.
+After: T7.20, T7.4.
+Done: diff programs enumerate objects with names that look like integers, optional fields set and unset, and dictionaries, and read fields by a `keyof` key; T2019 is retired.
+
+## v2 wave 5: `async`
+
+The row "`async` and `await`" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2): `lower`, `ir` and `rt/sched` change, and a continuation is a closure. Timers stay out (requirements §12), so the program itself settles every promise, and the queue of microtasks runs once the modules have run.
+
+### [ ] T7.22 `async`: the mechanism, measured
+
+What: two candidates. A state machine in `lower`: an async function becomes a closure whose environment on the heap holds its locals and the point to resume at, and each `await` returns to the scheduler, as C#, Rust and Hermes do. Or a stack of its own for each async call, switched by the runtime, which the conservative scan must walk for every suspended call, which takes memory per call, and which wasm cannot do without the stack-switching proposal. A rejected promise throws at the `await`, so the mechanism of T7.15 is part of it. The order of microtasks must be Node's exactly. A prototype measures both, then the proposal goes to the operator.
+Where: requirements §2.2, §6; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `sched`; `src/lower/closures.odin`, `src/runtime/gc/collect.odin` (`mark_stack`).
+After: T7.16.
+Done: the candidates and their numbers are recorded, and the operator's choice is on the board.
+
+### [ ] T7.23 `rt/sched`: promises and the queue of microtasks
+
+What: `Promise` in the lib with `new Promise`, `then`, `catch`, `finally`, `Promise.resolve`, `Promise.reject`, `Promise.all`, `Promise.allSettled` and `Promise.race`; the promise cell; the queue, which lives in the heap, the only runtime state, and which `rt.main` drains after `tsnc_main`. A rejection nobody handles ends the program with code 1. The console prints `Promise { 1 }` and `Promise { <pending> }`.
+Where: requirements §2.2, §3.9; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `sched`; [What must not change and what may](architecture-plan-tsnc.md#what-must-not-change-and-what-may), the item on the GC heap; `src/runtime/rt.odin`, `src/abi/calls.odin`, `src/lib/lib.d.ts`.
+After: T7.22, T7.11.
+Done: diff programs chain `then`, `catch` and `finally` and mix settled and rejected promises with `Promise.all`, printing in the order Node prints; an expect program pins an unhandled rejection.
+
+### [ ] T7.24 `async` functions and `await`
+
+What: T2012 today, at `src/parse/statements.odin:155`, :506 and :873 and at `src/parse/expressions.odin:380`, :788, :888 and :969. By the choice of T7.22: async declarations, arrows and methods, which return a `Promise<T>`; `await` in expressions, in loops, in `try` with a rejection, and in recursion. The plan weighs a top-level `await` in the entry module; `for await` stays T2012.
+Where: requirements §2.2; `src/parse`, `src/check`, `src/lower`.
+After: T7.23.
+Done: diff programs await in loops, in `try`, in recursion, and run two async functions whose steps interleave in Node's order; T2012 keeps only `for await`.
+
+## v2 wave 6: structural typing
+
+The row "Full structural typing via fat pointers" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2) and requirements §3.3: an object passes where a type of fewer fields is expected. T7.1 counts how often the exact-type rule rejects real code; classes add an instance passed where an interface of part of its members is expected.
+
+### [ ] T7.25 Structural typing: the representation, measured
+
+What: two candidates, measured on a probe and on `raytracer`. The fat pointer of requirements §3.3: a reference and a table of field offsets, 16 bytes, as Go's interface value with its itab, made where an object passes into a type of fewer fields. Or the views of T6.24 carried further: a place of the narrower type holds a cell of any layout that has its fields, and a read tests the layout in the header and loads at that layout's offset, 8 bytes and a test per read; the whole program bounds the set of layouts that reach a type. An extra field of a fresh object literal stays T3011, as tsc reports it. The proposal goes to the operator; it amends requirements §3.3 and maybe the row of the table.
+Where: requirements §3.3, §13; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Full structural typing via fat pointers"; `src/check/types.odin` (`object_assignable`), `src/lower/classes.odin`, `src/lower/unions.odin`.
+After: T7.1, T7.12.
+Done: the candidates and their numbers are recorded, and the operator's choice is on the board.
+
+### [ ] T7.26 An object where a type of fewer fields is expected
+
+What: by the choice of T7.25, `{x, y, z}` passes where `{x, y}` is expected through an assignment, an argument, a result and an array element, a write through either type shows through the other, and a class instance passes into an interface of part of its members. The exact-type rule keeps only the extra field of a fresh literal.
+Where: requirements §3.3; `src/check`, `src/lower`, and `src/ir` and `src/abi` if the choice adds a type.
+After: T7.25.
+Done: diff programs pass objects and instances through every flow and write through both types; `raytracer` and `objects` are measured before and after and lose nothing where layouts match; requirements §3.3 say what changed and §13 loses the row on the exact-type rule.
+
+## v2 wave 7: tools and the collector
+
+The rows "Debug info", "N codegen units and ThinLTO", "Cross-compilation and `wasm32-wasi`", "Concurrent GC with write barriers" and "NaN-boxing, precise roots, shadow stack" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2). Debug info, codegen units and the Linux build from Windows touch no language code and can start beside the earlier waves; wasm needs the exceptions of wave 3.
+
+### [ ] T7.27 Debug info: line tables
+
+What: every IR instruction keeps its span for this (`src/ir/instructions.odin`), `codegen` never reads it, and `src/llvm` declares nothing of `DebugInfo.h`. A `-debug` flag, as Odin has; a compile unit, a file per module, a subprogram per function, a location per instruction, and `inlinedAt` for a body `opt` inlined (T6.20), whose spans are the callee's. On Windows `lld-link` writes a PDB under `/DEBUG`; elsewhere the object carries DWARF, and the plan weighs `dsymutil` on macOS, where the debug map points into the temporary object, and a runtime object built with debug info.
+Where: requirements §9 (artifacts); [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Debug info"; `src/codegen`, `src/llvm`, `src/link/link.odin`, `src/target`, `src/main.odin`.
+After: none.
+Done: a codegen test pins the location of each kind of instruction in `-emit-llvm`; a breakpoint on a TypeScript line stops there in the debugger of each OS, checked by hand and recorded; the development guide says how to debug a program.
+
+### [ ] T7.28 Debug info: variables and types
+
+What: locals and parameters through the debug records of LLVM 20, with a type per IR type: `double` for f64, a string with its units, an object as a struct of the fields its type table lists, a tagged value as its tag and payload. At `-o:none` every local is visible.
+Where: `src/codegen`, `src/llvm`.
+After: T7.27.
+Done: a codegen test pins one variable of each IR type; a local of each type shows its value in a debugger, checked by hand.
+
+### [ ] T7.29 N codegen units
+
+What: `ir.finish` makes one unit of every function (`src/ir/build.odin`), and `driver` passes `p.units[0]` (`src/driver/build.odin`); `declare_funcs` already declares a function outside the unit as external. `add_type_tables`, `add_roots`, `add_ascii_cells` and `add_heap` define `tsnc_type_tables`, `tsnc_roots`, `tsnc_ascii_cells` and `tsnc_heap` in every module, which N units would define N times: one unit defines them and the others declare them, and globals and string cells that several units read get hidden linkage. The split is a function of the program, not of `-j`, so the executable stays the same at any thread count. `codegen.emit` runs per unit on the pool, each with its own context, module and target machine (requirements §8), and `link.link` already takes a list of objects. The task measures compile time at `-o:speed` with `bench/runner compile` and `raytracer`, and the run time the split loses where LLVM no longer inlines across units; `opt` has inlined small callees before the split.
+Where: requirements §8; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "N codegen units and ThinLTO"; [Interaction map](architecture-plan-tsnc.md#interaction-map), the `driver` to `codegen` row; `src/ir/build.odin`, `src/codegen/module.odin`, `src/driver/build.odin`.
+After: none.
+Done: the determinism test gives a byte-identical executable at `-j:1` and `-j:8` with several units; compile time and run time are measured before and after and go to the PR.
+
+### [ ] T7.30 The runtime as bitcode in the program's module
+
+What: the review of 2026-10-03 left this to the codegen units: a small export (`String_Equal`, `String_Char_Code_At`, the `Math` rows) still costs a call, where the runtime built as LLVM bitcode and linked into the program's module (`LLVMLinkModules2`, which `src/llvm` does not declare) lets LLVM inline it. The exports keep `@(require)` and the runtime keeps `main`; the ASan build needs the same path. A prototype measures `chars`, `strings` and `raytracer`, then the proposal goes to the operator.
+Where: [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `rt`; requirements §4.3; `src/codegen`, `src/llvm`, `src/link`, `tests/all.sh`, the CI workflow.
+After: T7.29.
+Done: the numbers are recorded; if the operator accepts the change, the corpora are green in all passes, under stress and ASan too, and the three benchmarks are measured before and after.
+
+### [ ] T7.31 ThinLTO across codegen units
+
+What: once the units exist, ThinLTO would inline across them again. LLVM-C 20 has no ThinLTO API: it writes no module summary, and libLTO is a library of its own. LLD runs ThinLTO itself over bitcode objects that carry a summary, but Linux and macOS link through `cc`. The task first proves a path with a prototype, and may close by recording that LLVM-C offers none; `opt` already inlines across modules before the split.
+Where: requirements §8; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "N codegen units and ThinLTO"; `src/codegen`, `src/llvm`, `src/link`.
+After: T7.29.
+Done: the result of the prototype is recorded; if a path exists and pays, it is built, the executable stays byte-identical at any `-j`, and compile and run time are measured.
+
+### [ ] T7.32 Linux executables from Windows
+
+What: `link` refuses a target other than the host and `driver` reports `Cross_Link`. `E:/Odin/dist/bin` has no `ld.lld`, but `lld-link.exe` is the one LLD binary, which links ELF in its GNU flavor; Odin cross-builds the runtime object with `-target:linux_amd64`. Where the C runtime files and libc come from goes to the operator: a static musl that a sysroot names, a sysroot copied from Linux, or a runtime that needs no libc. macOS stays a native build only (requirements §9).
+Where: requirements §9; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Cross-compilation and `wasm32-wasi`"; `src/target/target.odin`, `src/link/link.odin`, `src/driver/build.odin`; [Linking](development.md#linking); the CI workflow.
+After: none.
+Done: CI builds a program on Windows for `linux_amd64` and runs it on Linux with the output of the native build; the development guide says what such a build needs.
+
+### [ ] T7.33 `abi` sizes from `Target`
+
+What: the contract of [ABI](architecture-plan-tsnc.md#abi-package-abi) says that for wasm32 a procedure of `Target` computes sizes and offsets, and the runtime checks its structs against it with `#assert`. Today `codegen` takes them from `size_of` and `offset_of` of the host's structs (the asserts in `src/codegen/module.odin`): the cell header, `String_Cell.length` as an `int`, slots, the offsets of the type tables. Every size and offset that generated code uses becomes a function of the target's `pointer_size`, the rows of the host unchanged.
+Where: [Contracts](architecture-plan-tsnc.md#contracts), ABI, "Ownership"; `src/abi`, `src/ir/build.odin`, `src/lower/types.odin`, `src/codegen/module.odin`, `src/target`.
+After: none.
+Done: an abi test pins the wasm32 layout of every cell kind; the IR and the object of every corpus program on the host are the same as before.
+
+### [ ] T7.34 Precise roots through a shadow stack
+
+What: the fallback of requirements §6, which wasm needs: the locals of a wasm function live outside its linear memory, so the conservative scan finds none, and `src/runtime/gc/registers.odin` builds only on amd64 and arm64. Codegen keeps each reference a function holds across a call that may collect in a frame record, pushed on entry and popped on return and on unwinding (T7.16); `mark_stack` walks the records instead of the stack. LLVM's `llvm.gcroot` stays rejected. How the corpora test it on a native target without a new mode flag goes to the operator.
+Where: requirements §6, §13, §3.4; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "NaN-boxing, precise roots, shadow stack"; `src/codegen`, `src/runtime/gc/collect.odin`, `src/abi`.
+After: T7.16.
+Done: on a native target the corpora pass with the shadow stack as the only roots on the stack, under stress too; its cost on `trees`, `objects` and `raytracer` is measured; requirements §6 say where it is used.
+
+### [ ] T7.35 `wasm32-wasi`
+
+What: `Target` reserves `wasm32_wasi` with no row in `SPECS`, and `wasm-ld.exe` is in `E:/Odin/dist/bin`. The runtime for WASI: a heap that grows linear memory, where the native one reserves 64 GiB of address space (`src/runtime/gc/heap.odin`); no stack overflow handler; arguments, environment and exit through WASI; the console without its Windows paths; exceptions by the mechanism of T7.15, roots by T7.34. Node runs a wasm32-wasi program through `node:wasi`, so the runner can run the corpora under it.
+Where: requirements §2.2, §9; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Cross-compilation and `wasm32-wasi`"; `src/target`, `src/link`, `src/runtime`, `tests/runner`.
+After: T7.33, T7.34, T7.16.
+Done: the diff and expect corpora pass on wasm32-wasi under Node in CI, and the plan lists what stays out and why.
+
+### [ ] T7.36 `gc`: concurrent marking
+
+What: requirements §6 name concurrent tri-color marking for v2, as in Go, with a barrier of its own beside the generational one. T6.8 left it out: it hides pauses rather than saving work, and the longest pause was 11 ms. A marker thread ends "one mutator" in §6, touches the key block on the GC heap, and has no thread to run on under wasm. The task first measures pauses on `trees`, `objects`, `raytracer` and a program with a large live heap, then brings them and a proposal to the operator.
+Where: requirements §6; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Concurrent GC with write barriers"; [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions), the item on the cost of the collector; `src/runtime/gc`, `src/codegen` (`build_barrier`).
+After: none.
+Done: the pauses are recorded; for what the operator accepts, a gc test pins each new invariant and the corpora are green under stress and ASan.
+
+### [ ] T7.37 NaN-boxing
+
+What: requirements §3.4 allow a tagged value in 8 bytes for v2, only together with precise roots, since a boxed pointer is hidden from the conservative scan (§6). The plan's risk item counts about 250 references in `abi`, `lower`, `codegen` and the runtime, and the 16 bytes of a number that may be `undefined`. The task first measures what tagged slots cost in memory and time on the benchmarks, then brings a proposal to the operator.
+Where: requirements §3.4, §6; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "NaN-boxing, precise roots, shadow stack"; `src/abi`, `src/lower`, `src/codegen`, `src/runtime`.
+After: T7.34.
+Done: the measurement is recorded; for what the operator accepts, the corpora are green in all passes, under stress and ASan too, and the benchmarks are measured before and after.
+
+## v2 wave 8: RegExp, bigint, files, strings
+
+The rows "`RegExp`, `bigint`, file I/O" and "Hybrid Latin-1 and UTF-16 storage" of [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2): new runtime packages and lib declarations. Each of them throws Node's errors, so they come after wave 3.
+
+### [ ] T7.38 Files and stdin
+
+What: requirements §2.2 give v2 reading and writing a whole file and reading stdin. The API is Node's, so diff programs compare: `readFileSync(path, "utf8")`, `readFileSync(0, "utf8")` for stdin and `writeFileSync(path, text)` from `node:fs`. `node:fs` is a bare specifier, which §7 does not resolve, so a built-in module declares it; how goes to the operator. A file that is missing throws Node's `ENOENT` error (T7.17). The runtime package `fs` does the work, and the diff runner gains a header that feeds stdin.
+Where: requirements §1, §2.2, §7, §12; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `regex`, `bigint`, `fs`; `src/lib`, `src/driver` (module resolution), `src/runtime`, `tests/runner/diff.odin`.
+After: T7.17.
+Done: diff programs write a file and read it back, read stdin, and catch the error of a missing file with Node's message; the development guide documents the header.
+
+### [ ] T7.39 `bigint`
+
+What: `10n` is T1005 today (`src/parse/tokenize.odin:288`) and the type `bigint` T2021 (`src/parse/types.odin:217`). Literals, `+ - * / % **`, unary `-`, comparisons between bigints and with numbers, `===`, bitwise operators and shifts, `BigInt(n)`, `toString(radix)`, `Number(b)`, `typeof`, and the console's `10n`. A `BigInt` tag joins `abi.Tag`. Division by `0n` throws a `RangeError`. The runtime package `bigint` keeps an immutable cell of digits, with `core:math/big` as the engine on a scratch allocator and the digits copied into the cell (requirements §4.5).
+Where: requirements §2.2, §4.5; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `regex`, `bigint`, `fs`; `src/parse/tokenize.odin`, `src/abi`, `src/lower`, `src/runtime/value`, `src/runtime/console`.
+After: T7.17.
+Done: diff programs compute past 2^64, divide and take remainders of both signs, compare bigints with numbers, and print in several radixes and nested in objects.
+
+### [ ] T7.40 `rt/regex` and `RegExp`
+
+What: requirements §4.5 rule out `core:text/regex`, which has no lookahead, lookbehind or backreferences. An engine of our own for the ECMAScript dialect, backtracking as Node's is: classes, greedy and lazy quantifiers, groups and named groups, backreferences, lookahead and lookbehind, anchors, the flags `g i m s u y`, case folding from tables generated as T5.3's are. A literal's pattern is parsed at compile time, so a bad one is a compile error, as Node reports it before running; the tokenizer, which reads every `/` as division (`src/parse/tokenize.odin`), has to tell a pattern from a division by context, and T2020 (`src/parse/expressions.odin:920`) goes. `new RegExp(s)` throws `SyntaxError` at run time. `test`, `exec`, `lastIndex`, `source`, `flags`, and the console's `/a+/g`; the match array of `exec`, an array with `index` and `groups`, goes to the operator.
+Where: requirements §2.2, §4.5; [Package boundaries: runtime](architecture-plan-tsnc.md#package-boundaries-runtime), row `regex`, `bigint`, `fs`; `src/parse`, `src/lib/lib.d.ts`, `src/runtime`.
+After: T7.11, T7.17.
+Done: a regex test runs the engine over a table of patterns and subjects whose answers came from Node; diff programs use literals and `new RegExp`; T2020 is retired.
+
+### [ ] T7.41 String methods with `RegExp`
+
+What: `match`, `matchAll` by the iterator rule of T7.19, `replace` and `replaceAll` with string and regex patterns, `$1`, `$&` and `$<name>` in the replacement and a function as replacer, `split` by a regex with a limit, and `search`.
+Where: requirements §2.2; `src/lib/lib.d.ts`, `src/lower/lib.odin`, `src/runtime/str`, `src/runtime/regex`.
+After: T7.40, T7.19.
+Done: diff programs run each method over ASCII, Cyrillic and emoji subjects with every flag.
+
+### [ ] T7.42 Strings of Latin-1 units
+
+What: requirements §3.2 give v2 strings of one byte per unit where every unit fits, as V8 stores them, with the semantics unchanged. A string is read in many places: `String_Cell` in `abi`, `str`, the inline `Unit_Load` and the static cells of `codegen`, `Ascii_Cell`, `String_Join`, and fifteen calls of `str.units` in the console; every inline read would test a width flag in the header. The task first measures memory and time with a prototype on `strings`, `chars` and the parser of `raytracer`, then brings a proposal to the operator.
+Where: requirements §3.2; [Provisions for v2](architecture-plan-tsnc.md#provisions-for-v2), row "Hybrid Latin-1 and UTF-16 storage"; `src/abi/abi.odin` (`String_Cell`), `src/runtime/str`, `src/codegen/instructions.odin`, `src/runtime/console`.
+After: none.
+Done: the measurement is recorded; for what the operator accepts, the corpora are green in all passes, under stress and ASan too, and requirements §3.2 say what changed.
+
+### [ ] T7.43 Close milestone 7
+
+What: run the programs of T7.1 again and put the counts beside the first ones. The v2 list of requirements §2.2 matches what was built, the README's Status says that v2 is done, and what the waves left open moves to [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions).
+Where: the report of T7.1; requirements §2.2; `README.md`; [Risks and open questions](architecture-plan-tsnc.md#risks-and-open-questions).
+After: every other task of milestone 7.
+Done: the report has its second run; the README and the requirements agree with the code.
 
 ## v1 critical path
 
@@ -626,3 +952,5 @@ T1.1 → T1.3 → T1.5 → T1.6 → T1.7 → T1.8 → T1.9 → T2.2 → T2.3 →
 Running in parallel with the critical path: T1.2 and T1.4 (after T1.1), T2.1 and T2.6, T4.6 (after T1.5), T5.6, T6.3. T5.11 to T5.17 run between T5.10 and T6.1: they change tests, the runner and comments, not what the compiler does. T6.4 to T6.8 come after T6.3 and before the v2 waves; T6.4 and T6.5 share no code and can run in parallel; T6.7 and T6.8 both follow T6.6 and both change `codegen`, so they run one after the other.
 
 T6.15 to T6.28 come from the review of 2026-10-03 and run before the v2 waves too. T6.16, T6.17, T6.20 and T6.21 all change `opt` and run one after the other; so do T6.15 and T6.25 in `codegen`, and T6.22 to T6.24 in `lower`. T6.18, T6.26 and T6.27 are runtime work that shares no code with the compiler tasks, apart from the element size T6.26 changes in `codegen`.
+
+The waves of milestone 7 run in numeric order, T7.1 first. T7.27, T7.29, T7.32, T7.33 and T7.42 touch no language code and can run beside the language waves. Tasks that change one package run one after the other, as in milestone 6: most language tasks change `check` and `lower`, and T7.16, T7.27 to T7.30 and T7.34 all change `codegen`.
