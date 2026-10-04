@@ -345,8 +345,9 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_result(c, VOID)
 
 	case Length:
-		// A string or an array: element_of reports anything else, and the kind is nothing here.
-		if type, known := operand(c, v.value); known && type != STR {
+		// A string, an array or an Any_Ref of arrays: element_of reports anything else, and the
+		// kind is nothing here.
+		if type, known := operand(c, v.value); known && type != STR && type != ANY_REF {
 			element_of(c, type)
 		}
 		expect_result_of(c, {F64, I64})
@@ -363,7 +364,7 @@ verify_instruction :: proc(c: ^Checker) {
 		expect_result(c, VOID)
 
 	case Bounds_Check:
-		if type, known := operand(c, v.array); known && type != STR {
+		if type, known := operand(c, v.array); known && type != STR && type != ANY_REF {
 			element_of(c, type)
 		}
 		expect_index(c, v.index)

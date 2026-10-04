@@ -177,9 +177,10 @@ load_view_element :: proc(
 	return merged if complete else ir.NO_VALUE
 }
 
-// whole_array types an array of a view as one of its layouts for what reads only the header and the
-// length, which every array keeps in one place: Length and Bounds_Check. Any other array is itself.
-// The cell is tested first: an `any` given to the view's type is checked only where it is used.
+// whole_array proves an array of a view one of its layouts and answers it as the Any_Ref that
+// Length and Bounds_Check take; an element is read through the cell's own layout
+// (load_view_element). Any other array is itself. The cell is tested first: an `any` given to the
+// view's type is checked only where it is used.
 @(private)
 whole_array :: proc(
 	s: ^Func_State,
@@ -197,10 +198,10 @@ whole_array :: proc(
 	for &hit in hits {
 		hit = passed
 	}
-	dispatch_layouts(s, array, layouts, hits, failed, span)
+	cell := dispatch_layouts(s, array, layouts, hits, failed, span)
 	fail_block(s, failed, .Tagged_Holds_Other_Kind, span)
 	ir.use_block(&s.fb, passed)
-	return as_layout(s, array, layouts[0], span)
+	return cell
 }
 
 @(private)

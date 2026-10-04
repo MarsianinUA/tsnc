@@ -12,15 +12,15 @@ sibling kinds never overlap; a parent overlaps its children. A field has a node 
 ir.verify reads a field only through the layout of the cell that holds it.
 
 Under Collector sit the places a collection reads to find the references a cell holds: the header
-names its table, an array's length, capacity and elements pointer bound its elements, and a
-reference element is traced below the length only, while pop leaves the slot past it as it was. A
-call of an abi.Effect.Allocates export carries the Collector tag, so LLVM keeps those in order with
-a collection and may move any other place across it. The collector changes no live place, and it
-traces every field and global: one whose store moves past the call holds zero or a live reference
-meanwhile, and the new value stays in a register the conservative scan sees. A store must not move
-above such a call, though: the collection could make its cell old with the value only there, and
-the write barrier after the store comes too late; LLVM hoists no store above a call. Strings stay
-outside since generated code never writes one; String_Join, which appends in place, is an Any row.
+names its table, an array's length, capacity and elements pointer bound its elements, a reference
+element is traced below the length only, while pop leaves the slot past it as it was, and a
+reference field or element of an old cell is traced only once the write barrier after its store
+ran. A call of an abi.Effect.Allocates export carries the Collector tag, so LLVM keeps those in
+order with a collection, though it is free to hoist a store above a call that does not alias it.
+What moves across the call holds a number or a boolean, or is a global, which every collection
+marks as a root: one whose store moves past the call holds zero or a live reference meanwhile, and
+the new value stays in a register the conservative scan sees. Strings stay outside since generated
+code never writes one; String_Join, which appends in place, is an Any row.
 
 An access with no tag may touch anything: a Tagged slot, whose tag word tells the collector whether
 the payload is a reference, the heap head and free slot an inline allocation takes, the zero fill
@@ -86,7 +86,8 @@ add_alias_tags :: proc(m: ^Module) {
 		for field, i in layout.fields {
 			if field.kind != .Tagged {
 				name := fmt.tprintf("field %d.%d", id, i)
-				m.field_tags[id][i] = access_tag(m, type_node(m, name, root))
+				parent := nodes[.Collector] if ir.traced(field.kind) else root
+				m.field_tags[id][i] = access_tag(m, type_node(m, name, parent))
 			}
 		}
 	}

@@ -291,13 +291,3 @@ in_heap :: proc(heap: ^Heap, p: rawptr) -> bool {
 	base := uintptr(heap.base)
 	return address >= base && address - base < uintptr(heap.page_limit * PAGE_SIZE)
 }
-
-// slot_of is the room the slot of a live cell gives it: its class, or its run of pages.
-@(private = "file")
-slot_of :: proc(heap: ^Heap, cell: ^abi.Cell_Header) -> int {
-	page := heap.pages[int(uintptr(cell) - uintptr(heap.base)) / PAGE_SIZE]
-	if page.kind == .Small {
-		return abi.CLASS_SIZE[page.class]
-	}
-	return int(page.run) * PAGE_SIZE
-}

@@ -124,6 +124,32 @@ a_result_the_input_already_is_takes_no_cell :: proc(t: ^testing.T) {
 	testing.expect_value(t, str.to_upper(&heap, dotted), dotted)
 }
 
+// An owned join appends in place only within its target's slot. The first target is no cell an
+// owned join made, as a wrong ownership proof would hand one: room(3) admits eight units, its slot
+// of 24 bytes holds four.
+@(test)
+an_owned_join_writes_in_place_only_within_the_slot :: proc(t: ^testing.T) {
+	heap: gc.Heap
+	init_heap(t, &heap)
+	defer gc.heap_destroy(&heap)
+
+	entry := cell(&heap, {'a', 'b'})
+	short := cell(&heap, {'a', 'b', 'c'})
+	pieces := [?]abi.Tagged {
+		{tag = .String, payload = {ref = entry}},
+		{tag = .String, payload = {ref = short}},
+		{tag = .String, payload = {ref = cell(&heap, {'d', 'e', 'f', 'g', 'h'})}},
+	}
+	joined := str.join(&heap, true, pieces[:])
+	testing.expect(t, joined != short, "eight units went into a slot of four")
+	testing.expect_value(t, short.length, 3)
+	expect_units(t, joined, {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'})
+
+	pieces[1].payload.ref = joined
+	testing.expect_value(t, str.join(&heap, true, pieces[:]), joined)
+	expect_units(t, joined, {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'd', 'e', 'f', 'g', 'h'})
+}
+
 // A digit count out of range is num's refusal, which to_fixed passes on for the runtime to fail
 // with.
 @(test)

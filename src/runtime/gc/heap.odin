@@ -341,6 +341,15 @@ in_pages :: #force_inline proc(heap: ^Heap, p: rawptr) -> bool {
 	return uintptr(p) - uintptr(heap.base) < uintptr(heap.page_count * PAGE_SIZE)
 }
 
+// slot_of is the room the slot of a live cell gives it: its class, or its run of pages.
+slot_of :: proc "contextless" (heap: ^Heap, cell: ^abi.Cell_Header) -> int {
+	page := heap.pages[int(uintptr(cell) - uintptr(heap.base)) / PAGE_SIZE]
+	if page.kind == .Small {
+		return abi.CLASS_SIZE[page.class]
+	}
+	return int(page.run) * PAGE_SIZE
+}
+
 // owner is the object start map: the live cell that holds the address `p`, or nil when `p` lies
 // outside the heap, past the frontier, in a free slot or in the unused tail of a page. The
 // conservative stack scan hands in any word that might be a pointer, hence the rawptr.

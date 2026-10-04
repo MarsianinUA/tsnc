@@ -135,7 +135,9 @@ next_rune :: proc "contextless" (text: string) -> (r: rune, width: int) {
 // join is a chain of `+` or a template: one cell for the pieces, each a String or a Number, whose
 // digits go straight into it. Owned, the first piece is what the variable held when its loop was
 // entered and the second what it holds now: once the two differ, the second is a cell an earlier
-// owned join of the loop made, which the other pieces fill in place where its room allows.
+// owned join of the loop made, which the other pieces fill in place where its room allows. Its slot
+// is read from the heap too, so a wrong ownership proof could change a string but never write past
+// the slot. The slot alone is no bound: ASan poisons it past the size alloc was given.
 join :: proc(heap: ^gc.Heap, owned: bool, pieces: []abi.Tagged) -> ^abi.String_Cell {
 	text := pieces[1:] if owned else pieces
 	// Only the counts need their zero.
@@ -162,7 +164,12 @@ join :: proc(heap: ^gc.Heap, owned: bool, pieces: []abi.Tagged) -> ^abi.String_C
 	if owned {
 		entry := (^abi.String_Cell)(pieces[0].payload.ref)
 		target := (^abi.String_Cell)(text[0].payload.ref)
-		if target != entry && gc.in_pages(heap, target) && length <= room(target.length) {
+		in_place :=
+			target != entry &&
+			gc.in_pages(heap, target) &&
+			length <= room(target.length) &&
+			size_of(abi.String_Cell) + length * size_of(u16) <= gc.slot_of(heap, target)
+		if in_place {
 			write_pieces(target, target.length, &digits, text[1:])
 			target.length = length
 			return target

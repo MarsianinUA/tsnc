@@ -233,7 +233,9 @@ Field_Store_Ref :: struct {
 }
 
 // Length answers the length of a Str or of an array Ref as F64, or as I64 once opt narrowed it: one
-// load, since abi puts the two at the same offset.
+// load, since abi puts the two at the same offset. An Any_Ref that a Layout_Test proved one of
+// several array layouts passes too, as every array keeps its length at that offset; an element
+// instruction still wants the Ref of its own layout.
 Length :: struct {
 	value: Value_ID,
 }
@@ -252,7 +254,8 @@ Set_Length :: struct {
 }
 
 // Bounds_Check answers the index again, in the index's number type, once it has proved that the
-// index is an integer inside the array, or inside the string, whose unit Unit_Load then reads.
+// index is an integer inside the array, or inside the string, whose unit Unit_Load then reads. The
+// array may be an Any_Ref, as for Length.
 // The element instructions take that answer, so the check cannot drift away from the access it
 // guards, and opt, which proves checks away, has an edge to follow.
 Bounds_Check :: struct {
