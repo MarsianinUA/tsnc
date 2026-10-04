@@ -262,6 +262,7 @@ check_unary :: proc(c: ^Checker, node: ast.Unary) -> Type_ID {
 @(private)
 check_update :: proc(c: ^Checker, node: ast.Update) -> Type_ID {
 	operand := check_expression(c, node.operand)
+	note_write(c, node.operand, NUMBER)
 	_ = check_mutable(c, node.operand)
 	if operand == ANY {
 		report_any(c, span_of(c, node.operand), operand_text(c, UPDATE_TEXTS[node.op]))
@@ -735,16 +736,17 @@ check_non_null :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Non_Null) -> Type
 //
 // The operand is checked with the target as its context first, as an initializer is with the type
 // its declaration writes (declarator_type), so `["a", "b"] as K[]` is a `K[]` as in tsc. Where that
-// reports anything, the attempt is undone, the flows it recorded too, and the operand is checked on
-// its own, which leaves a mismatch to T3020.
+// reports anything, the attempt is undone, the flows and writes it recorded too, and the operand
+// is checked on its own, which leaves a mismatch to T3020.
 @(private)
 check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 	target := resolve_type(c, node.type)
-	reported, widened := len(c.diagnostics), len(c.widenings)
+	reported, widened, written := len(c.diagnostics), len(c.widenings), len(c.writes)
 	value := check_expression(c, node.expr, target)
 	if len(c.diagnostics) > reported {
 		resize(&c.diagnostics, reported)
 		resize(&c.widenings, widened)
+		resize(&c.writes, written)
 		value = check_expression(c, node.expr)
 	}
 
@@ -754,9 +756,16 @@ check_as :: proc(c: ^Checker, node: ast.As) -> Type_ID {
 	}
 	// One of the two conversions has to be the whole of it, and nothing in between. That is
 	// narrower than comparable, which lets two unions through where they merely share a member.
-	if !fits(c, value, target) && !fits(c, target, value) {
-		report_types(c, .Unrelated_Assertion, span_of(c, node.expr), value, target)
+	if fits(c, value, target) {
+		return target
 	}
+	if !fits(c, target, value) {
+		report_types(c, .Unrelated_Assertion, span_of(c, node.expr), value, target)
+		return target
+	}
+	// A narrowing: the value may be a cell made as the wider type, which reads as the narrower one
+	// only where the two share a layout, as a write through the wider type makes them.
+	append(&c.writes, Write{through = value, slot = value})
 	return target
 }
 
@@ -786,6 +795,7 @@ check_target :: proc(c: ^Checker, id: ast.Node_ID) -> (narrowed, declared: Type_
 @(private)
 check_assign :: proc(c: ^Checker, node: ast.Assign) -> Type_ID {
 	narrowed, declared := check_target(c, node.target)
+	note_write(c, node.target, declared)
 	if node.op != .Assign {
 		// `x += y` means `x = x + y`, so the target is read as well; check_target went through
 		// check_ident, which is not where a read is counted.
@@ -941,6 +951,7 @@ check_call :: proc(c: ^Checker, id: ast.Node_ID, node: ast.Call) -> Type_ID {
 		if arity_fits(c.table.types[signature].(Function), len(node.args)) {
 			result := check_signature_call(c, id, node, signature)
 			check_string_call(c, node)
+			note_array_write(c, node.callee)
 			return result
 		}
 	}

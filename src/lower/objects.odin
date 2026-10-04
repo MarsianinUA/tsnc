@@ -32,7 +32,7 @@ lower_object_literal :: proc(
 	span := s.tree.nodes[id].span
 	declared := s.typed.node_types[id]
 	object, is_object := s.types[declared].(check.Object)
-	type, ok := ir_type(s.low, s.types, declared)
+	type, ok := made_type(s.low, s.types, declared)
 	if !is_object || !ok {
 		return later(s, span, construct_text(s.types, declared))
 	}
@@ -202,6 +202,26 @@ slot_type :: proc(kind: abi.Slot_Kind, type: ir.Type) -> ir.Type {
 		return ir.nullable(present, held.nullish)
 	}
 	return type
+}
+
+// view_slot_type is what a slot of one of the layouts of a view gives: held is what the types of
+// that layout declare the slot holds, and declared what the view does. The slot may hold less than
+// the view declares, a number where the view has a number or a string, which the read then boxes.
+@(private)
+view_slot_type :: proc(kind: abi.Slot_Kind, held, declared: ir.Type) -> ir.Type {
+	#partial switch kind {
+	case .Number:
+		return ir.F64
+	case .Boolean:
+		return ir.BOOL
+	case .Tagged:
+		return ir.TAGGED
+	}
+	present := ir.non_null(held)
+	if is_object_reference(held) {
+		present = ir.non_null(declared) if is_object_reference(declared) else ir.ANY_REF
+	}
+	return slot_type(kind, present)
 }
 
 // store_field boxes into a widened slot what the declared type holds unboxed.

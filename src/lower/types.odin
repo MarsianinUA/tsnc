@@ -28,19 +28,24 @@ before Node is known, and a walk into it would never end. A reference with one o
 is a pointer where 0 stands for it (Ref_Or_Null, Ref_Or_Undefined), and so is an optional field of a
 reference type, since a missing one reads as undefined; any other optional field is Tagged. Objects
 and arrays of several types are a slot of their own (Any_Ref and its two kinds that may hold null),
-so the key tells `{p: Circle}` from `{p: Circle | Rect}`.
+so the key tells `{p: Circle}` from `{p: Circle | Rect}`. The key of a class also says whether a
+reference slot holds a string, a function or an object (object_key), which the layout does not.
 
 Widening. A value of type A that check accepted where B was expected is the same object after the
-flow, with no copy, as in Node, so A and B need one layout. lower joins the shallow keys of every
-such pair (Check_Result.widenings) into classes before any body is built. The class of a key has
-one slot per field: the kind every member agrees on, the one that may hold null where the other
-holds a present reference, the one of several layouts where the other holds one, or Tagged where
-they differ otherwise. A read through the narrower type then checks the tag, the layout, or for
-null (objects.odin).
+flow, with no copy, as in Node. Where the program writes through B, or through a type B flows into,
+A and B need one layout: lower joins their keys into a class before any body is built, and the
+class has one slot per field, the kind every member agrees on, the one that may hold null where the
+other holds a present reference, the one of several layouts where the other holds one, or Tagged
+where they differ otherwise. A read through the narrower type then checks the tag, the layout, or
+for null (objects.odin). Where nothing writes through B, A keeps its layout, and B is a view: its
+places hold a cell of its own layout or of any that flows in, a reference of several layouts whose
+reads test the layout and box what it holds (Check_Result.writes, build_classes). So the narrow
+side pays nothing for a flow only read.
 
 Arrays. An array layout is the kind of its element slot. An array that check accepted where an
 array of a wider element was expected is the same array after the flow too, so the two types need
-one slot. Their classes are built the way the widening classes are, joining the slot kinds, and
+one slot where the wide one is written through, push, pop and sort included, and are a view
+otherwise. Their classes are built the way the widening classes are, joining the slot kinds, and
 keyed by the element below the slot: the class fields of an object, the element of an inner array.
 So a flow of `Triangle[]` into `(Sphere | Triangle)[]` leaves `string[]` alone. A read through the
 narrower element checks the slot (arrays.odin).
@@ -137,8 +142,14 @@ map_type :: proc(
 	representation(types, id) or_return
 	#partial switch v in types[id] {
 	case check.Object:
+		if _, is_view := object_view(low, types, v); is_view {
+			return ir.ANY_REF, true
+		}
 		return ir.ref(object_layout(low, types, v)), true
 	case check.Array:
+		if _, is_view := array_view(low, types, v); is_view {
+			return ir.ANY_REF, true
+		}
 		return ir.ref(ir.array_layout(&low.builder, array_slot(low, types, v))), true
 	case check.Union:
 		if member, nullish, held := nullable_member(types, v); held {
@@ -147,6 +158,84 @@ map_type :: proc(
 		}
 	}
 	return shallow_type(types, id)
+}
+
+// made_type is the type of a cell made as this object or array type: the layout of its own class,
+// where the type is a view too, whose places also hold the layouts that flow in.
+@(private)
+made_type :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+) -> (
+	type: ir.Type,
+	ok: bool,
+) {
+	type = ir_type(low, types, id) or_return
+	#partial switch v in types[id] {
+	case check.Object:
+		return ir.ref(object_layout(low, types, v)), true
+	case check.Array:
+		return ir.ref(ir.array_layout(&low.builder, array_slot(low, types, v))), true
+	}
+	return type, true
+}
+
+// object_view answers the layouts a place of an object type holds where it holds more than one.
+@(private)
+object_view :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	object: check.Object,
+) -> (
+	[]Object_View,
+	bool,
+) {
+	slots, _ := object_slots(types, object)
+	views, found := low.object_views[object_key(types, object, slots)]
+	return views, found
+}
+
+@(private)
+array_view :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	array: check.Array,
+) -> (
+	[]Array_View,
+	bool,
+) {
+	views, found := low.array_views[element_key(low, types, array.element)]
+	return views, found
+}
+
+// view_layouts interns and answers the layouts of an object or array type that is a view.
+@(private)
+view_layouts :: proc(
+	low: ^Lowering,
+	types: []check.Type,
+	id: check.Type_ID,
+) -> (
+	layouts: []ir.Layout_ID,
+	is_view: bool,
+) {
+	#partial switch v in types[id] {
+	case check.Object:
+		views := object_view(low, types, v) or_return
+		layouts = make([]ir.Layout_ID, len(views), context.temp_allocator)
+		for view, i in views {
+			layouts[i] = ir.object_layout(&low.builder, view.slots)
+		}
+		return layouts, true
+	case check.Array:
+		views := array_view(low, types, v) or_return
+		layouts = make([]ir.Layout_ID, len(views), context.temp_allocator)
+		for view, i in views {
+			layouts[i] = ir.array_layout(&low.builder, view.element)
+		}
+		return layouts, true
+	}
+	return nil, false
 }
 
 // construct_text feeds the Not_Lowered message. It names the part with no representation, since
@@ -402,10 +491,42 @@ object_layout :: proc(low: ^Lowering, types: []check.Type, object: check.Object)
 @(private)
 class_slots :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -> []ir.Slot {
 	slots, _ := object_slots(types, object)
-	if joined, found := class_value(&low.objects, slots_key(slots)); found {
+	if joined, found := class_value(&low.objects, object_key(types, object, slots)); found {
 		return joined
 	}
 	return slots
+}
+
+// object_key is the key of an object type's class: its slots, and what each reference slot holds, a
+// string, a function or an object, which the slot kind does not tell. So `{pos: string}` and
+// `{pos: Vec}`, one layout, are two classes, and a flow of the one leaves the other alone.
+@(private)
+object_key :: proc(types: []check.Type, object: check.Object, slots: []ir.Slot) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for slot, i in slots {
+		strings.write_quoted_string(&b, slot.name)
+		strings.write_byte(&b, '?' if slot.optional else ':')
+		strings.write_int(&b, int(slot.kind))
+		if held, _ := slot_reference(slot.kind); held.kind == .Ref {
+			kind, _ := shallow_kind(types, object.fields[i].type)
+			strings.write_byte(&b, '/')
+			strings.write_int(&b, int(kind))
+		}
+		strings.write_byte(&b, ',')
+	}
+	return strings.to_string(b)
+}
+
+// object_held is what each field of an object type holds as the type declares it, in the order of
+// its slots.
+@(private)
+object_held :: proc(types: []check.Type, object: check.Object) -> []ir.Type {
+	held := make([]ir.Type, len(object.fields), context.temp_allocator)
+	for field, i in object.fields {
+		type, _ := shallow_type(types, field.type)
+		held[i] = optional_type(type) if field.optional else type
+	}
+	return held
 }
 
 // Classes is a union-find over string keys, each node holding a value. join_classes gives every
@@ -413,6 +534,7 @@ class_slots :: proc(low: ^Lowering, types: []check.Type, object: check.Object) -
 // strings, so the Type_IDs of two checkers never meet.
 Classes :: struct($V: typeid) {
 	nodes:  map[string]int,
+	keys:   [dynamic]string, // by node
 	links:  [dynamic]int,
 	values: [dynamic]V,
 	joined: bool, // join_classes ran, so what class_value answers is final
@@ -422,6 +544,7 @@ Classes :: struct($V: typeid) {
 make_classes :: proc($V: typeid) -> Classes(V) {
 	return {
 		nodes = make(map[string]int, context.temp_allocator),
+		keys = make([dynamic]string, context.temp_allocator),
 		links = make([dynamic]int, context.temp_allocator),
 		values = make([dynamic]V, context.temp_allocator),
 	}
@@ -434,6 +557,7 @@ class_node :: proc(classes: ^Classes($V), key: string, value: V) -> int {
 		return node
 	}
 	node := len(classes.links)
+	append(&classes.keys, key)
 	append(&classes.links, node)
 	append(&classes.values, value)
 	classes.nodes[key] = node
@@ -474,16 +598,42 @@ class_value :: proc(classes: ^Classes($V), key: string) -> (value: V, found: boo
 	return classes.values[class_root(classes, node)], true
 }
 
-// build_classes joins the shallow keys of every widening of every result, then the arrays, then the
-// signatures of every pair of function types a flow recorded. The key of an array names the class
-// fields of an object element, and the key of a signature the full IR types, layouts included, so
-// each pass comes after the classes it reads are final.
+// build_classes joins the keys of the widenings a write may reach, objects first, then arrays, then
+// the signatures of every pair of function types a flow recorded. The key of an array names the
+// class fields of an object element, and the key of a signature the full IR types, layouts
+// included, so each pass comes after the classes it reads are final.
 @(private)
 build_classes :: proc(low: ^Lowering, results: []check.Check_Result) {
-	union_widenings(low, results, &low.objects, object_node)
-	join_classes(&low.objects, join_slots)
-	union_widenings(low, results, &low.arrays, array_node)
-	join_classes(&low.arrays, join_slot_kind)
+	written := written_types(results)
+	objects := object_flows(low, results)
+	for result, i in results {
+		for id in written[i] {
+			if node, found := object_node(low, result.types, id, &objects); found {
+				expose(&objects, node)
+			}
+		}
+	}
+	for {
+		join_exposed(&low.objects, &objects, join_slots)
+		if object_views(low, &objects) {
+			break
+		}
+	}
+
+	arrays := array_flows(low, results)
+	for result, i in results {
+		for id in written[i] {
+			if node, found := array_node(low, result.types, id, &arrays); found {
+				expose(&arrays, node)
+			}
+		}
+	}
+	for {
+		join_exposed(&low.arrays, &arrays, join_slot_kind)
+		if array_views(low, &arrays) {
+			break
+		}
+	}
 
 	intern_signature_layouts(low, results)
 	interned := len(low.builder.layouts)
@@ -512,6 +662,278 @@ union_widenings :: proc(
 			}
 		}
 	}
+}
+
+// written_types answers, for each check result, the types a write stores into: the one written
+// through, and every object and array type the stored value may hold, however deep, since `o.p = x`
+// through `{p: X}` puts an X where a `{p: Y}` that flowed in reads a Y unchecked.
+@(private)
+written_types :: proc(results: []check.Check_Result) -> [][]check.Type_ID {
+	written := make([][]check.Type_ID, len(results), context.temp_allocator)
+	for result, i in results {
+		found := make([dynamic]check.Type_ID, context.temp_allocator)
+		seen := make(map[check.Type_ID]bool, context.temp_allocator)
+		for write in result.writes {
+			for member in members_of(result.types, write.through) {
+				append(&found, member)
+			}
+			if write.slot != check.VOID {
+				reach_stored(result.types, write.slot, &found, &seen)
+			}
+		}
+		written[i] = found[:]
+	}
+	return written
+}
+
+@(private)
+reach_stored :: proc(
+	types: []check.Type,
+	id: check.Type_ID,
+	found: ^[dynamic]check.Type_ID,
+	seen: ^map[check.Type_ID]bool,
+) {
+	if seen[id] {
+		return
+	}
+	seen[id] = true
+	#partial switch v in types[id] {
+	case check.Object:
+		append(found, id)
+		for field in v.fields {
+			reach_stored(types, field.type, found, seen)
+		}
+	case check.Array:
+		append(found, id)
+		reach_stored(types, v.element, found, seen)
+	case check.Union:
+		for member in v.members {
+			reach_stored(types, member, found, seen)
+		}
+	}
+}
+
+// Flows is the graph of the widenings between the nodes of one kind of class, with what the own
+// type of each node declares its slots hold. An exposed node is one a write may reach a cell of.
+@(private)
+Flows :: struct($H: typeid) {
+	into:    map[int][dynamic]int, // by node, the other nodes that flow into it, each once
+	held:    map[int]H,
+	exposed: map[int]bool,
+}
+
+@(private)
+object_flows :: proc(low: ^Lowering, results: []check.Check_Result) -> Flows([]ir.Type) {
+	flows := make_flows([]ir.Type)
+	for result in results {
+		for widening in result.widenings {
+			source, source_ok := object_node(low, result.types, widening.source, &flows)
+			target, target_ok := object_node(low, result.types, widening.target, &flows)
+			if source_ok && target_ok {
+				add_flow(&flows, source, target)
+			}
+		}
+	}
+	return flows
+}
+
+@(private)
+array_flows :: proc(low: ^Lowering, results: []check.Check_Result) -> Flows(ir.Type) {
+	flows := make_flows(ir.Type)
+	for result in results {
+		for widening in result.widenings {
+			source, source_ok := array_node(low, result.types, widening.source, &flows)
+			target, target_ok := array_node(low, result.types, widening.target, &flows)
+			if source_ok && target_ok {
+				add_flow(&flows, source, target)
+			}
+		}
+	}
+	return flows
+}
+
+@(private)
+make_flows :: proc($H: typeid) -> Flows(H) {
+	return {
+		into = make(map[int][dynamic]int, context.temp_allocator),
+		held = make(map[int]H, context.temp_allocator),
+		exposed = make(map[int]bool, context.temp_allocator),
+	}
+}
+
+@(private)
+add_flow :: proc(flows: ^Flows($H), source, target: int) {
+	if source == target {
+		return
+	}
+	sources := flows.into[target] or_else make([dynamic]int, context.temp_allocator)
+	if !slice.contains(sources[:], source) {
+		append(&sources, source)
+	}
+	flows.into[target] = sources
+}
+
+// expose marks a node and every node that flows into it, through any number of flows: a cell of
+// any of them may sit in a place of the node's type.
+@(private)
+expose :: proc(flows: ^Flows($H), node: int) {
+	if flows.exposed[node] {
+		return
+	}
+	flows.exposed[node] = true
+	// A local: ranging over the map element itself takes its address, nil for a missing key.
+	sources := flows.into[node]
+	for source in sources {
+		expose(flows, source)
+	}
+}
+
+// join_exposed joins the two ends of every flow into an exposed node, as every flow was joined
+// before writes were told apart from reads. Called again after more are exposed, it only adds.
+@(private)
+join_exposed :: proc(classes: ^Classes($V), flows: ^Flows($H), join: proc(a, b: V) -> V) {
+	for target, sources in flows.into {
+		if flows.exposed[target] {
+			for source in sources {
+				class_union(classes, source, target)
+			}
+		}
+	}
+	join_classes(classes, join)
+}
+
+// viewed answers the nodes other nodes flow into and that no write reaches, each with itself and
+// the nodes that flow into it, through any number of flows.
+@(private)
+viewed :: proc(flows: ^Flows($H)) -> map[int][dynamic]int {
+	out := make(map[int][dynamic]int, context.temp_allocator)
+	for node in flows.into {
+		if flows.exposed[node] {
+			continue
+		}
+		sources := make([dynamic]int, context.temp_allocator)
+		seen := make(map[int]bool, context.temp_allocator)
+		append(&sources, node)
+		seen[node] = true
+		for i := 0; i < len(sources); i += 1 {
+			into := flows.into[sources[i]]
+			for source in into {
+				if !seen[source] {
+					seen[source] = true
+					append(&sources, source)
+				}
+			}
+		}
+		out[node] = sources
+	}
+	return out
+}
+
+// Object_View is one layout a place of an object type only read through may hold, with what each
+// field holds as the types of that layout declare it: that tells what a reference slot holds.
+Object_View :: struct {
+	slots: []ir.Slot,
+	held:  []ir.Type,
+}
+
+// object_views gives each object key only read through, which others flow into, the layouts its
+// places hold, its own first. Two that differ only in what a reference slot holds, which a test
+// of the header cannot tell apart, expose the key instead, and false joins the classes again.
+@(private)
+object_views :: proc(low: ^Lowering, flows: ^Flows([]ir.Type)) -> (settled: bool) {
+	clear(&low.object_views)
+	settled = true
+	for node, sources in viewed(flows) {
+		views := make([dynamic]Object_View, context.temp_allocator)
+		apart := true
+		for source in sources {
+			root := class_root(&low.objects, source)
+			view := Object_View {
+				slots = low.objects.values[root],
+				held  = flows.held[source],
+			}
+			apart &&= add_object_view(&views, view)
+		}
+		if !apart {
+			expose(flows, node)
+			settled = false
+		} else if len(views) > 1 {
+			slice.sort_by(views[1:], proc(a, b: Object_View) -> bool {
+				return slots_key(a.slots) < slots_key(b.slots)
+			})
+			low.object_views[low.objects.keys[node]] = views[:]
+		}
+	}
+	return settled
+}
+
+// add_object_view answers false where the views already hold the layout with another kind of
+// reference in one of its slots.
+@(private)
+add_object_view :: proc(views: ^[dynamic]Object_View, view: Object_View) -> bool {
+	for one in views {
+		if !slice.equal(one.slots, view.slots) {
+			continue
+		}
+		for slot, i in view.slots {
+			if held, _ := slot_reference(slot.kind); held.kind == .Ref {
+				if one.held[i].kind != view.held[i].kind {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	append(views, view)
+	return true
+}
+
+// Array_View is one array layout a place of an array type only read through may hold, with what its
+// element holds as the types of that layout declare it.
+Array_View :: struct {
+	element: abi.Slot_Kind,
+	held:    ir.Type,
+}
+
+// array_views is object_views for arrays.
+@(private)
+array_views :: proc(low: ^Lowering, flows: ^Flows(ir.Type)) -> (settled: bool) {
+	clear(&low.array_views)
+	settled = true
+	for node, sources in viewed(flows) {
+		views := make([dynamic]Array_View, context.temp_allocator)
+		apart := true
+		for source in sources {
+			view := Array_View {
+				element = low.arrays.values[class_root(&low.arrays, source)],
+				held    = flows.held[source],
+			}
+			apart &&= add_array_view(&views, view)
+		}
+		if !apart {
+			expose(flows, node)
+			settled = false
+		} else if len(views) > 1 {
+			slice.sort_by(views[1:], proc(a, b: Array_View) -> bool {
+				return a.element < b.element
+			})
+			low.array_views[low.arrays.keys[node]] = views[:]
+		}
+	}
+	return settled
+}
+
+@(private)
+add_array_view :: proc(views: ^[dynamic]Array_View, view: Array_View) -> bool {
+	for one in views {
+		if one.element != view.element {
+			continue
+		}
+		held, _ := slot_reference(view.element)
+		return held.kind != .Ref || one.held.kind == view.held.kind
+	}
+	append(views, view)
+	return true
 }
 
 // intern_signature_layouts interns the layouts of the signature pass in key order. That pass meets
@@ -581,10 +1003,14 @@ collect_layout :: proc(
 	representation(types, id) or_return
 	#partial switch v in types[id] {
 	case check.Object:
-		slots := class_slots(low, types, v)
-		append(&wanted.objects, Object_Shape{key = slots_key(slots), slots = slots})
+		if _, is_view := object_view(low, types, v); !is_view {
+			slots := class_slots(low, types, v)
+			append(&wanted.objects, Object_Shape{key = slots_key(slots), slots = slots})
+		}
 	case check.Array:
-		wanted.arrays += {array_slot(low, types, v)}
+		if _, is_view := array_view(low, types, v); !is_view {
+			wanted.arrays += {array_slot(low, types, v)}
+		}
 	case check.Union:
 		if member, _, held := nullable_member(types, v); held {
 			collect_layout(low, types, member, wanted)
@@ -593,20 +1019,23 @@ collect_layout :: proc(
 	return true
 }
 
-// object_node answers the node of an object type's key. A type with no representation takes part
-// in nothing: it is reported where it is used.
+// object_node answers the node of an object type's key, and notes what its fields hold. A type with
+// no representation takes part in nothing: it is reported where it is used.
 @(private)
 object_node :: proc(
 	low: ^Lowering,
 	types: []check.Type,
 	id: check.Type_ID,
+	flows: ^Flows([]ir.Type),
 ) -> (
 	node: int,
 	ok: bool,
 ) {
 	object := types[id].(check.Object) or_return
 	slots := object_slots(types, object) or_return
-	return class_node(&low.objects, slots_key(slots), slots), true
+	node = class_node(&low.objects, object_key(types, object, slots), slots)
+	flows.held[node] = object_held(types, object)
+	return node, true
 }
 
 // join_slots joins each field. Every member of a class has the same fields, since check widens only
@@ -680,13 +1109,16 @@ array_node :: proc(
 	low: ^Lowering,
 	types: []check.Type,
 	id: check.Type_ID,
+	flows: ^Flows(ir.Type),
 ) -> (
 	node: int,
 	ok: bool,
 ) {
 	array := types[id].(check.Array) or_return
 	slot := element_slot(types, array.element) or_return
-	return class_node(&low.arrays, element_key(low, types, array.element), slot), true
+	node = class_node(&low.arrays, element_key(low, types, array.element), slot)
+	flows.held[node], _ = shallow_type(types, array.element)
+	return node, true
 }
 
 @(private)
@@ -714,7 +1146,7 @@ write_element_key :: proc(
 	#partial switch v in types[below] {
 	case check.Object:
 		strings.write_byte(b, '{')
-		strings.write_string(b, slots_key(class_slots(low, types, v)))
+		strings.write_string(b, object_key(types, v, class_slots(low, types, v)))
 		strings.write_byte(b, '}')
 	case check.Array:
 		strings.write_byte(b, '[')

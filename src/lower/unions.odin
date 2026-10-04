@@ -839,7 +839,13 @@ check_members :: proc(
 		if !ok {
 			continue // a type with no representation was reported where it was declared
 		}
-		if member_type.kind == .Ref {
+		if views, is_view := view_layouts(s.low, s.types, member); is_view {
+			for layout in views {
+				if !slice.contains(layouts[:], layout) {
+					append(&layouts, layout)
+				}
+			}
+		} else if member_type.kind == .Ref {
 			if !slice.contains(layouts[:], member_type.layout) {
 				append(&layouts, member_type.layout)
 			}
@@ -1046,13 +1052,14 @@ Union_Field :: struct {
 	mixed:  bool, // the members of the layout disagree on the field's type
 }
 
-// Union_Field_Place is a field of a value typed as a union of objects: one entry per layout its
-// members have. type is what a read answers.
+// Union_Field_Place is a field of a value typed as a union of objects, or as an object type only
+// read through (a view): one entry per layout its members have. type is what a read answers.
 @(private)
 Union_Field_Place :: struct {
-	value:   ir.Value_ID,
-	members: []Union_Field,
-	type:    ir.Type,
+	value:     ir.Value_ID,
+	members:   []Union_Field,
+	type:      ir.Type,
+	read_only: bool, // a member is a view, which check recorded no write through
 }
 
 // is_union_value says whether a value of a union type is held as one: tagged, or a reference of
@@ -1081,11 +1088,12 @@ is_object_union :: proc(types: []check.Type, id: check.Type_ID) -> bool {
 	return true
 }
 
-// union_field_place groups the members by layout. A layout whose members agree on the field's IR
-// type reads it as that type. One whose members disagree reads the slot at its own kind, which
-// works for a tagged slot and for a reference slot where every member holds an object or an array,
-// since the box of either is an object; anything else is reported. A read of the whole answers the
-// type the members agree on, or a tagged value, as check has the field.
+// union_field_place groups the members by layout, a view member giving one entry per layout it
+// holds. A layout whose members agree on the field's IR type reads it as that type. One whose
+// members disagree reads the slot at its own kind, which works for a tagged slot and for a
+// reference slot where every member holds an object or an array, since the box of either is an
+// object; anything else is reported. A read of the whole answers the type the members declare
+// where they agree, or a tagged value, as check has the field.
 @(private)
 union_field_place :: proc(
 	s: ^Func_State,
@@ -1100,36 +1108,49 @@ union_field_place :: proc(
 	Member_Field :: struct {
 		layout:   ir.Layout_ID,
 		field:    i32,
-		type:     ir.Type,
+		type:     ir.Type, // what a load of the slot gives
+		wanted:   ir.Type, // what the member declares
 		declared: check.Type_ID,
 	}
-	members := members_of(s.types, union_type)
-	found := make([]Member_Field, len(members), context.temp_allocator)
-	for member, i in members {
+	found := make([dynamic]Member_Field, context.temp_allocator)
+	read_only := false
+	for member in members_of(s.types, union_type) {
 		object_type, representable := ir_type(s.low, s.types, member)
 		if !representable {
 			later(s, span, construct_text(s.types, member))
 			return nil, false
 		}
 		object := s.types[member].(check.Object)
-		field, type := field_in(s, object_type.layout, object, name) or_return
 		declared, _ := find_field(object, name)
-		found[i] = {object_type.layout, field, type, declared.type}
+		views, is_view := object_view(s.low, s.types, object)
+		if !is_view {
+			field, type := field_in(s, object_type.layout, object, name) or_return
+			append(&found, Member_Field{object_type.layout, field, type, type, declared.type})
+			continue
+		}
+		read_only = true
+		for view in views {
+			layout := ir.object_layout(&s.low.builder, view.slots)
+			field, wanted := field_in(s, layout, object, name) or_return
+			type := view_slot_type(view.slots[field].kind, view.held[field], wanted)
+			append(&found, Member_Field{layout, field, type, wanted, declared.type})
+		}
 	}
 
 	// check holds a union of two object types tagged even where they share a layout, so members that
 	// read a reference agree only on one declared type.
 	agree := true
 	for member in found[1:] {
-		same := member.type == found[0].type
-		if member.type.kind == .Ref {
+		same := member.wanted == found[0].wanted
+		if member.wanted.kind == .Ref {
 			same &&= member.declared == found[0].declared
 		}
 		agree &&= same
 	}
 	out := Union_Field_Place {
-		value = value,
-		type  = found[0].type if agree else ir.TAGGED,
+		value     = value,
+		type      = found[0].wanted if agree else ir.TAGGED,
+		read_only = read_only,
 	}
 
 	groups := make([dynamic]Union_Field, 0, len(found), context.temp_allocator)
@@ -1212,6 +1233,7 @@ store_union_field :: proc(
 	value: ir.Value_ID,
 	span: source.Span,
 ) -> bool {
+	ensure(!place.read_only, "a write check did not record")
 	for member in place.members {
 		slot := s.low.builder.layouts[member.layout].fields[member.field].kind
 		if member.mixed && slot != .Tagged {
@@ -1284,8 +1306,14 @@ union_length :: proc(
 			if !ok {
 				return later(s, span, construct_text(s.types, member))
 			}
-			if !slice.contains(layouts[:], array_type.layout) {
-				append(&layouts, array_type.layout)
+			held := []ir.Layout_ID{array_type.layout}
+			if views, is_view := view_layouts(s.low, s.types, member); is_view {
+				held = views
+			}
+			for layout in held {
+				if !slice.contains(layouts[:], layout) {
+					append(&layouts, layout)
+				}
 			}
 		case:
 			return later(s, span, "the length of this union")

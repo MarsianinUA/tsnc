@@ -76,8 +76,9 @@ push_and_pop_call_no_runtime :: proc(t: ^testing.T) {
 	testing.expectf(t, len(instructions_of(body, ir.Set_Length)) > 0, "%s", result.text)
 }
 
-// A flow of one array type into a wider one changes the slot of those two only: the class is keyed
-// by the element below its slot, so the other arrays of references keep theirs.
+// A flow of one array type into a wider one that is written through changes the slot of those two
+// only: the class is keyed by the element below its slot, so the other arrays of references keep
+// theirs.
 @(test)
 an_array_flow_widens_its_own_class_only :: proc(t: ^testing.T) {
 	result := lower_text(
@@ -87,6 +88,7 @@ an_array_flow_widens_its_own_class_only :: proc(t: ^testing.T) {
 		interface Square { side: number; }
 		const discs: Disc[] = [{ r: 1 }];
 		const shapes: (Disc | Square)[] = discs;
+		shapes.push({ side: 3 });
 		const squares: Square[] = [{ side: 2 }];
 		const words: string[] = ["a"];
 		const grid: number[][] = [[1]];
@@ -115,4 +117,37 @@ an_array_flow_widens_its_own_class_only :: proc(t: ^testing.T) {
 			result.text,
 		)
 	}
+}
+
+// A flow into a wider array type that nothing writes through leaves the array that flows in as it
+// is: sum reads f64 elements, and only describe, the wide side, has a pointer of several layouts.
+@(test)
+an_array_type_only_read_through_keeps_what_flows_in :: proc(t: ^testing.T) {
+	result := lower_text(
+		t,
+		`
+		function sum(a: number[]): number {
+			let s = 0;
+			for (let i = 0; i < a.length; i++) s += a[i];
+			return s;
+		}
+		function describe(items: (number | string)[]): number {
+			return items.length;
+		}
+		const a: number[] = [];
+		a.push(0.5);
+		console.log(sum(a), describe(a));
+	`,
+	)
+	sum := harness.func_named(t, result.output, "m1.sum")
+	loads := 0
+	for value in sum.values {
+		if _, is_load := value.variant.(ir.Element_Load); is_load {
+			loads += 1
+			testing.expectf(t, value.type == ir.F64, "sum loads %v:\n%s", value.type, result.text)
+		}
+	}
+	testing.expectf(t, loads > 0, "sum reads no element:\n%s", result.text)
+	describe := harness.func_named(t, result.output, "m1.describe")
+	testing.expectf(t, describe.params[0] == ir.ANY_REF, "%s", result.text)
 }

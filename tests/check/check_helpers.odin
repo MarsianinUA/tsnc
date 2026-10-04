@@ -372,6 +372,22 @@ check_typed :: proc(t: ^testing.T, c: Checked, loc := #caller_location) {
 		)
 	}
 
+	for write, i in c.result.writes {
+		if i == 0 {
+			continue
+		}
+		previous := c.result.writes[i - 1]
+		ascending :=
+			previous.through < write.through ||
+			previous.through == write.through && previous.slot < write.slot
+		testing.expectf(
+			t,
+			ascending,
+			"the writes are not sorted, or one is there twice",
+			loc = loc,
+		)
+	}
+
 	for type in c.result.types {
 		if object, is_object := type.(check.Object); is_object {
 			check_object(t, c, object, loc)

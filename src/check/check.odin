@@ -85,6 +85,10 @@ Check_Result :: struct {
 	// functions one signature and two arrays one element slot, so the value that flows is the same
 	// value with no copy, as in Node.
 	widenings: []Widening,
+	// Every store through an object or an array type, sorted by (through, slot) with no repeats.
+	// lower joins the layouts of what flows into a type written through; one only read through
+	// keeps them.
+	writes:    []Write,
 }
 
 // Widening is an object type accepted where another object type was expected, a function type where
@@ -94,6 +98,14 @@ Check_Result :: struct {
 Widening :: struct {
 	source: Type_ID,
 	target: Type_ID,
+}
+
+// Write is a store into a cell through the type `through`: `o.f = v`, `o.f++`, `a[i] = v`, push,
+// pop and sort, and an `as` that narrows, which needs the layouts joined as a store does. slot is
+// the declared type of what is stored, VOID where nothing new is (pop, sort).
+Write :: struct {
+	through: Type_ID,
+	slot:    Type_ID,
 }
 
 // check reports every mistake it sees rather than stopping at the first, and always returns a whole
@@ -123,6 +135,7 @@ check :: proc(
 		pending      = make([dynamic]Pending, context.temp_allocator),
 		trail        = make(Trail, 0, 8, context.temp_allocator),
 		widenings    = make([dynamic]Widening, context.temp_allocator),
+		writes       = make([dynamic]Write, context.temp_allocator),
 		narrowing    = make_narrowing(context.temp_allocator),
 		diagnostics  = make([dynamic]diag.Diagnostic, allocator),
 	}
@@ -178,6 +191,7 @@ Checker :: struct {
 	// The widenings fits found so far, in the order it found them; freeze sorts them. The list is
 	// also the visited set of the walk that fills it.
 	widenings:    [dynamic]Widening,
+	writes:       [dynamic]Write,
 	narrowing:    Narrowing,
 	diagnostics:  [dynamic]diag.Diagnostic,
 	at:           Place,
@@ -266,7 +280,17 @@ freeze :: proc(c: ^Checker, partition: []source.File_ID, files: []Typed_File) ->
 	slice.sort_by(widenings, proc(a, b: Widening) -> bool {
 		return a.source < b.source || a.source == b.source && a.target < b.target
 	})
-	return {partition = owned, types = c.table.types[:], files = files, widenings = widenings}
+	writes := slice.clone(c.writes[:], c.allocator)
+	slice.sort_by(writes, proc(a, b: Write) -> bool {
+		return a.through < b.through || a.through == b.through && a.slot < b.slot
+	})
+	return {
+		partition = owned,
+		types = c.table.types[:],
+		files = files,
+		widenings = widenings,
+		writes = slice.unique(writes),
+	}
 }
 
 // free_scratch matters only to an allocator that frees, such as the tracking allocator of the
@@ -297,6 +321,7 @@ free_scratch :: proc(c: ^Checker) {
 	delete(c.pending)
 	delete(c.trail)
 	delete(c.widenings)
+	delete(c.writes)
 	delete(c.narrowing.answers)
 	delete(c.narrowing.loops)
 	delete(c.narrowing.partial)
@@ -393,6 +418,41 @@ fits :: proc(c: ^Checker, source, target: Type_ID, functions := true) -> bool {
 	}
 	list_widenings(c.table.types[:], source, target, &c.widenings, &c.trail, functions)
 	return true
+}
+
+// note_write records a store into a field or an element; an assignment to a variable stores into no
+// cell. The list repeats freely, since freeze drops the repeats once.
+@(private)
+note_write :: proc(c: ^Checker, target: ast.Node_ID, slot: Type_ID) {
+	if c.at.node_types == nil {
+		return
+	}
+	#partial switch v in c.at.tree.nodes[target].variant {
+	case ast.Member:
+		append(&c.writes, Write{through = c.at.node_types[v.object], slot = slot})
+	case ast.Index:
+		append(&c.writes, Write{through = c.at.node_types[v.object], slot = slot})
+	}
+}
+
+// note_array_write records push, pop and sort, the methods of the lib that change their array.
+@(private)
+note_array_write :: proc(c: ^Checker, callee: ast.Node_ID) {
+	member, is_member := c.at.tree.nodes[callee].variant.(ast.Member)
+	if !is_member || c.at.node_types == nil {
+		return
+	}
+	through := c.at.node_types[member.object]
+	array, is_array := c.table.types[through].(Array)
+	if !is_array {
+		return
+	}
+	switch member.name.text {
+	case "push":
+		append(&c.writes, Write{through = through, slot = array.element})
+	case "pop", "sort":
+		append(&c.writes, Write{through = through, slot = VOID})
+	}
 }
 
 // comparable reports whether two types have a value in common, which is what `===` and a `switch`
